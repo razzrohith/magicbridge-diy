@@ -78,7 +78,7 @@ button:hover{opacity:.83}
   </form>
   <p class="hint">
     After connecting, MagicBridge will reboot into normal KVM mode.<br>
-    Access it at <strong>http://raj.local/</strong> or via Tailscale.
+    Access it at <strong>http://magicbridge.local/</strong> or via Tailscale.
   </p>
 </div>
 </main>
@@ -113,7 +113,7 @@ strong{color:#888}
     MagicBridge is connecting to <strong>SSID_PLACEHOLDER</strong>.<br>
     This AP will disappear in a few seconds.<br><br>
     Reconnect your device to your main network, then open:<br>
-    <strong>http://raj.local/</strong>
+    <strong>http://magicbridge.local/</strong>
   </p>
 </div>
 </main>
