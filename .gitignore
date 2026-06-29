@@ -6,3 +6,7 @@ __pycache__/
 *.log
 /tmp/
 node_modules/
+push_now.bat
+git_push_log.txt
+deploy_log.txt
+push_now.bat
