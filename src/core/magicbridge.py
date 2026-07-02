@@ -735,19 +735,47 @@ async def api_wifi(request):
 
 
 async def api_update(request):
-    """POST /api/update — git pull and restart service."""
+    """POST /api/update — pull latest from GitHub and redeploy.
+
+    Design note: /opt/magicbridge is a *flat* runtime directory that
+    install.sh populates by copying files out of a git clone — it is not
+    itself a git repo (confirmed: no .git there). The real clone lives at
+    /opt/magicbridge-repo, matching install.sh's own convention. The old
+    version of this handler ran `git -C /opt/magicbridge pull`, which always
+    failed (no .git to pull in) — the Update button was a silent no-op.
+    Fixed to pull the actual repo clone, then re-run the same file-copy step
+    install.sh uses to deploy into /opt/magicbridge.
+    """
     import subprocess as _sp
+    import shutil as _shutil
+
+    REPO_DIR = "/opt/magicbridge-repo"
+    REPO_URL = "https://github.com/razzrohith/MagicBridge.git"
+    BRANCH = "main"
+    INSTALL_DIR = "/opt/magicbridge"
+
     d = {}
     try: d = await request.json()
     except: pass
     action = d.get("action", "update")
 
+    def _ensure_clone():
+        if not os.path.isdir(os.path.join(REPO_DIR, ".git")):
+            r = _sp.run(["git", "clone", "--branch", BRANCH, REPO_URL, REPO_DIR],
+                        capture_output=True, text=True, timeout=60)
+            return r.returncode == 0, (r.stdout + r.stderr).strip()
+        return True, ""
+
+    cloned_ok, clone_out = _ensure_clone()
+    if not cloned_ok:
+        return web.json_response({"ok": False, "error": "clone failed: " + clone_out})
+
     if action == "status":
-        ver = _sp.run(["git", "-C", "/opt/magicbridge", "log", "--oneline", "-1"],
+        ver = _sp.run(["git", "-C", REPO_DIR, "log", "--oneline", "-1"],
                      capture_output=True, text=True, timeout=10)
-        branch = _sp.run(["git", "-C", "/opt/magicbridge", "rev-parse", "--abbrev-ref", "HEAD"],
+        branch = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "--abbrev-ref", "HEAD"],
                         capture_output=True, text=True, timeout=10)
-        fetch = _sp.run(["git", "-C", "/opt/magicbridge", "fetch", "--dry-run"],
+        fetch = _sp.run(["git", "-C", REPO_DIR, "fetch", "--dry-run"],
                        capture_output=True, text=True, timeout=20)
         return web.json_response({
             "ok": True,
@@ -757,16 +785,64 @@ async def api_update(request):
         })
 
     # action == "update"
-    r = _sp.run(["git", "-C", "/opt/magicbridge", "pull", "--ff-only"],
+    r = _sp.run(["git", "-C", REPO_DIR, "pull", "--ff-only"],
                 capture_output=True, text=True, timeout=60)
     out = (r.stdout + r.stderr).strip()
     ok = r.returncode == 0
-    restarted = False
-    if ok and "Already up to date" not in out:
-        _sp.run(["systemctl", "restart", "magicbridge.service"],
-                capture_output=True, timeout=10)
-        restarted = True
-    return web.json_response({"ok": ok, "out": out, "restarted": restarted})
+    if not ok:
+        return web.json_response({"ok": False, "out": out, "restarted": False})
+
+    if "Already up to date" in out:
+        return web.json_response({"ok": True, "out": out, "restarted": False})
+
+    try:
+        # Mirror install.sh's file layout exactly (flat copy, no "src/" prefix,
+        # no .git — /opt/magicbridge stays a plain runtime dir)
+        for sub in ("core", "web", "dashboard", "provision"):
+            os.makedirs(os.path.join(INSTALL_DIR, sub), exist_ok=True)
+
+        copy_pairs = [
+            (f"{REPO_DIR}/src/core/magicbridge.py",  f"{INSTALL_DIR}/core/magicbridge.py"),
+            (f"{REPO_DIR}/src/core/hid.py",           f"{INSTALL_DIR}/core/hid.py"),
+            (f"{REPO_DIR}/src/core/video.py",         f"{INSTALL_DIR}/core/video.py"),
+            (f"{REPO_DIR}/src/web/index.html",        f"{INSTALL_DIR}/web/index.html"),
+            (f"{REPO_DIR}/src/dashboard/stealth-dashboard.py", f"{INSTALL_DIR}/dashboard/stealth-dashboard.py"),
+            (f"{REPO_DIR}/src/provision/mb-setup-ui.py", f"{INSTALL_DIR}/provision/mb-setup-ui.py"),
+            (f"{REPO_DIR}/src/core/mb-gadget.sh",      "/usr/local/bin/mb-gadget.sh"),
+            (f"{REPO_DIR}/src/provision/mb-provision.sh", "/usr/local/bin/mb-provision.sh"),
+            (f"{REPO_DIR}/src/nginx/magicbridge.conf", "/etc/nginx/sites-available/magicbridge"),
+        ]
+        for src, dst in copy_pairs:
+            if os.path.isfile(src):
+                _shutil.copyfile(src, dst)
+
+        static_src = f"{REPO_DIR}/src/web/static"
+        if os.path.isdir(static_src):
+            _shutil.copytree(static_src, f"{INSTALL_DIR}/web/static", dirs_exist_ok=True)
+
+        os.chmod("/usr/local/bin/mb-gadget.sh", 0o755)
+        os.chmod("/usr/local/bin/mb-provision.sh", 0o755)
+    except Exception as e:
+        return web.json_response({"ok": False, "out": out + "\ncopy step failed: " + str(e), "restarted": False})
+
+    # Validate nginx config before reloading — never reload on a broken config
+    nginx_test = _sp.run(["nginx", "-t"], capture_output=True, text=True, timeout=10)
+    nginx_ok = nginx_test.returncode == 0
+    if nginx_ok:
+        _sp.run(["systemctl", "reload", "nginx"], capture_output=True, timeout=10)
+
+    # Restart the app services only — deliberately NOT mb-gadget.service, so an
+    # active USB HID session to the target PC isn't interrupted by an update.
+    _sp.run(["systemctl", "restart", "stealth-dashboard.service"], capture_output=True, timeout=10)
+    _sp.run(["systemctl", "restart", "magicbridge.service"], capture_output=True, timeout=10)
+
+    return web.json_response({
+        "ok": True,
+        "out": out,
+        "restarted": True,
+        "nginx_ok": nginx_ok,
+        "nginx_out": (nginx_test.stdout + nginx_test.stderr).strip(),
+    })
 
 
 async def api_stealth_logs(request):
