@@ -3,7 +3,7 @@
    bcrypt auth · CSRF protection · WCAG AA UI
    USB identity · MAC spoofing · WiFi · Tailscale · DuckDNS · logs · backup
 """
-import json, os, re, subprocess, secrets, time, datetime, hashlib, logging
+import json, os, re, subprocess, secrets, time, datetime, hashlib, hmac, logging
 from pathlib import Path
 from flask import (Flask, jsonify, request, render_template_string,
                    session, redirect, Response)
@@ -30,6 +30,15 @@ GADGET_SH       = "/usr/local/bin/mb-gadget.sh"
 AUTH_LOG        = "/var/log/magicbridge-auth.log"
 SESS_LOG        = "/var/log/magicbridge-sessions.log"
 SESSION_TIMEOUT = 1800   # 30 min idle
+
+# Cross-service cookie: logging in here also unlocks the main KVM page
+# (core/magicbridge.py verifies the same HMAC token against the same secret_key).
+KVM_COOKIE = "mb_sess"
+
+def _make_kvm_token(secret: str) -> str:
+    ts = str(int(time.time()))
+    sig = hmac.new(secret.encode(), ts.encode(), hashlib.sha256).hexdigest()
+    return ts + "." + sig
 
 # Default USB identity (Logitech K120 — what install.sh sets up)
 ORIG = {
@@ -136,14 +145,30 @@ def _fresh_login_csrf() -> str:
     return t
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
+def _check_kvm_token(token: str, secret: str) -> bool:
+    try:
+        ts, sig = token.split(".", 1)
+        expected = hmac.new(secret.encode(), ts.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return False
+        return (time.time() - int(ts)) <= SESSION_TIMEOUT
+    except Exception:
+        return False
+
 def _authed() -> bool:
-    if not session.get("ok"):
-        return False
-    if time.time() - session.get("t", 0) > SESSION_TIMEOUT:
-        session.clear()
-        return False
-    session["t"] = time.time()
-    return True
+    if session.get("ok"):
+        if time.time() - session.get("t", 0) > SESSION_TIMEOUT:
+            session.clear()
+        else:
+            session["t"] = time.time()
+            return True
+    # Fall back to the shared cookie set by a login on the main KVM page.
+    token = request.cookies.get(KVM_COOKIE, "")
+    if token:
+        secret = _load().get("auth", {}).get("secret_key", "")
+        if secret and _check_kvm_token(token, secret):
+            return True
+    return False
 
 def _stealth(path: str = "") -> str:
     return "https://" + request.host + "/stealth/" + path.lstrip("/")
@@ -965,12 +990,22 @@ async function loadSavedWifi() {
   const el = document.getElementById('wifi-saved');
   if (!r || !r.length) { el.textContent = 'No saved networks.'; return; }
   el.innerHTML = r.map(n =>
-    '<div style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
+    '<div data-net="'+esc(n.name)+'" style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
     + '<span style="flex:1;color:var(--t2)">'+(n.active?'● ':'')+n.name+'</span>'
+    + '<span class="psk-out" style="font-size:10px;color:var(--t3);font-family:monospace"></span>'
+    + '<button class="btn" style="font-size:10px;padding:2px 7px" onclick="revealPsk(this)">Show</button>'
     + (n.active ? '' : '<button class="btn" style="font-size:10px;padding:2px 7px" onclick="connectWifi(\''+esc(n.name)+'\')">Connect</button>')
     + '<button class="btn btn-d" style="font-size:10px;padding:2px 7px" onclick="removeWifi(\''+esc(n.name)+'\')">Remove</button>'
     + '</div>'
   ).join('');
+}
+
+async function revealPsk(btn) {
+  const row = btn.closest('[data-net]');
+  const name = row.dataset.net;
+  const out = row.querySelector('.psk-out');
+  const r = await api('/stealth/api/wifi/psk-auth?name='+encodeURIComponent(name));
+  out.textContent = r.ok ? (r.psk || '(open network)') : (r.error || 'Error');
 }
 
 async function addWifi() {
@@ -1085,7 +1120,13 @@ def login():
             session["csrf"] = secrets.token_hex(32)
             _al.info(f"Login OK from {ip}")
             _log_sess(f"Login from {ip}")
-            return redirect(_stealth())
+            resp = redirect(_stealth())
+            secret = cfg.get("auth", {}).get("secret_key", "")
+            if secret:
+                resp.set_cookie(KVM_COOKIE, _make_kvm_token(secret),
+                                 max_age=SESSION_TIMEOUT, httponly=True,
+                                 secure=True, samesite="Lax", path="/")
+            return resp
         _record_fail(ip)
         n = _login_fails.get(ip, 0)
         _al.info(f"Failed login from {ip} (attempt {n})")
@@ -1184,7 +1225,9 @@ def api_lock():
     if not _csrf_ok(): return jsonify({"error":"csrf"}), 403
     _log_sess(f"Panel locked by {_client_ip()}")
     session.clear()
-    return jsonify({"ok": True})
+    resp = jsonify({"ok": True})
+    resp.delete_cookie(KVM_COOKIE, path="/")
+    return resp
 
 
 @app.route("/api/randomize")
@@ -1440,6 +1483,19 @@ def api_wifi_connect():
 def api_wifi_status_auth():
     if not _authed(): return jsonify({"error":"auth"}), 401
     return api_wifi_status()
+
+
+@app.route("/api/wifi/psk-auth")
+def api_wifi_psk_auth():
+    """Authenticated saved-WiFi-password reveal (stealth panel only)."""
+    if not _authed(): return jsonify({"error":"auth"}), 401
+    name = (request.args.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "psk": ""})
+    r = _nm("-s", "-t", "-f", "802-11-wireless-security.psk",
+            "connection", "show", name, timeout=8)
+    psk = r.stdout.strip().split(":")[-1] if r.returncode == 0 else ""
+    return jsonify({"ok": True, "psk": psk})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

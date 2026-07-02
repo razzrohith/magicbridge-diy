@@ -124,14 +124,22 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # Suppress access log spam
 
-    def _send(self, code, body, ct="text/html; charset=utf-8"):
+    def _send(self, code, body, ct="text/html; charset=utf-8", extra_headers=None):
         b = body.encode() if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ct)
         self.send_header("Content-Length", len(b))
         self.send_header("Cache-Control", "no-store")
+        for k, v in (extra_headers or {}).items():
+            self.send_header(k, v)
         self.end_headers()
         self.wfile.write(b)
+
+    def _redirect(self, location="/"):
+        # Location header must be sent BEFORE end_headers() — sending it after
+        # (as this used to) is a no-op, so captive-portal auto-detection on some
+        # OSes never got told where to go.
+        self._send(302, b"", extra_headers={"Location": location})
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -139,12 +147,11 @@ class Handler(BaseHTTPRequestHandler):
                            "/connecttest.txt", "/success.txt", "/ncsi.txt"):
             self._send(200, HTML.replace("MSGBLOCK", ""))
         else:
-            self._send(302, b"")
-            self.send_header("Location", "/")
+            self._redirect("/")
 
     def do_POST(self):
         if self.path != "/setup":
-            self._send(302, b""); return
+            self._redirect("/"); return
         length  = int(self.headers.get("Content-Length", 0))
         raw     = self.rfile.read(length).decode()
         params  = parse_qs(raw)

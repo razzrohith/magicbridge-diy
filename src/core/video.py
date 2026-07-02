@@ -34,9 +34,9 @@ class VideoManager:
     def __init__(self):
         self.process    = None
         self.device     = None
-        self.resolution = "1280x720"
+        self.resolution = "1920x1080"
         self.fps        = 30
-        self.quality    = 80      # MJPEG quality 1–100
+        self.quality    = 90      # MJPEG quality 1–100
         self.mode       = "mjpeg" # "mjpeg" | "h264" (h264 needs ffmpeg)
         self.port       = STREAM_PORT
         self._lock      = threading.Lock()
@@ -225,6 +225,24 @@ class VideoManager:
           --host address    (long form; short form is -s, NOT -H)
           --persistent      (keep running if HDMI unplugged)
         """
+        # If ustreamer.service (systemd) owns the process, stop it first so we can
+        # launch our own subprocess with the actual requested device/resolution/fps/
+        # quality. Previously this just skipped straight to "return True" whenever
+        # the systemd unit was active, which meant changing settings from the UI
+        # silently did nothing — the systemd unit kept running with its original
+        # hardcoded flags while /api/status reported the (unapplied) new settings.
+        try:
+            import subprocess as _sp
+            _r = _sp.run(['systemctl', 'is-active', 'ustreamer.service'],
+                         capture_output=True, text=True, timeout=2)
+            if _r.stdout.strip() == 'active':
+                log.info("Stopping systemd-managed ustreamer.service to apply settings directly")
+                _sp.run(['systemctl', 'stop', 'ustreamer.service'],
+                        capture_output=True, timeout=5)
+                time.sleep(0.3)
+        except Exception:
+            pass
+        self._running = False
         cmd = [
             "ustreamer",
             "--device",         self.device,
@@ -236,7 +254,7 @@ class VideoManager:
             "--port",           str(self.port),
             "--workers",        "2",
             "--persistent",
-            "--drop-same-frames", "30",
+            # drop-same-frames removed
         ]
         try:
             self.process = subprocess.Popen(
@@ -427,6 +445,9 @@ class VideoManager:
     # ── Status & watchdog ──────────────────────────────────────────────────────
 
     def is_running(self) -> bool:
+        # Also return True if ustreamer.service manages the stream
+        if getattr(self, '_running', False):
+            return True
         return self.process is not None and self.process.poll() is None
 
     def status(self) -> dict:
@@ -449,10 +470,13 @@ class VideoManager:
         def _watch():
             while True:
                 time.sleep(5)
+                needs_restart = False
                 with self._lock:
                     if self.device and not self.is_running():
                         log.info("Stream died — restarting…")
-                self.restart()
+                        needs_restart = True
+                if needs_restart:
+                    self.restart()
         t = threading.Thread(target=_watch, daemon=True, name="mb-video-watchdog")
         t.start()
         self._mon_thr = t

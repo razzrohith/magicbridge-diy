@@ -92,8 +92,13 @@ iptables -t nat -A PREROUTING -i "$AP_IFACE" -p tcp --dport 443 \
 echo "[$(date)] AP up — SSID '$AP_SSID', IP $AP_IP, portal :$PORTAL_PORT"
 
 # ── Run captive portal (blocks until user submits) ────────────────────────────
+# Temporarily disable errexit: if the portal script exits non-zero (crash, kill,
+# etc.) we still MUST fall through to AP teardown below, or the Pi is stuck
+# broadcasting the setup AP with no way to reach it again over normal WiFi.
+set +e
 python3 "$PORTAL_SCRIPT" "$AP_IP" "$PORTAL_PORT" "$WIFI_FILE" "$TS_KEY_TMP"
 PORTAL_EXIT=$?
+set -e
 
 echo "[$(date)] Portal exited (code $PORTAL_EXIT)"
 
