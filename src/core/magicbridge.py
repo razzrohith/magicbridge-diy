@@ -44,11 +44,12 @@ HOST        = "127.0.0.1"
 PORT        = 8080
 VERSION     = "1.0.0"
 
-# ── Shared session auth (same password/secret as the /stealth/ panel) ────────
-# A successful login on EITHER this page or /stealth/ sets a cookie signed with
-# the same secret_key from config.json, so one login unlocks both surfaces.
+# ── Session auth (independent from /stealth/ — separate password, separate
+# secret, separate cookie/session). Logging into one no longer unlocks the
+# other, so a leaked main-page password can't be used to reach the admin panel.
 SESSION_COOKIE  = "mb_sess"
 SESSION_TIMEOUT = 1800  # 30 min idle, matches stealth-dashboard.py
+DEFAULT_PASSWORD = "magicbridge"
 
 # ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -93,17 +94,18 @@ def _check_token(token: str, secret: str) -> bool:
         return False
 
 def _is_authed(request: web.Request) -> bool:
-    secret = _auth_cfg().get("secret_key", "")
+    secret = _auth_cfg().get("main_secret_key", "")
     if not secret:
         return False
     token = request.cookies.get(SESSION_COOKIE, "")
     return bool(token) and _check_token(token, secret)
 
 def _ensure_auth_defaults():
-    """Bootstrap auth.password_hash/secret_key if config.json doesn't have them
-    yet (e.g. first boot before stealth-dashboard.service has run). Idempotent
-    and safe to call even if stealth-dashboard.py already set these — same
-    config.json, same keys, first writer wins and the other just reads it."""
+    """Bootstrap auth.main_password_hash/main_secret_key if config.json
+    doesn't have them yet (e.g. first boot). These are namespaced under
+    "main_*" specifically so they never collide with /stealth/'s own
+    auth.password_hash/secret_key — the two panels have fully independent
+    credentials by design."""
     import secrets as _secrets
     try:
         cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
@@ -111,20 +113,20 @@ def _ensure_auth_defaults():
         cfg = {}
     auth = cfg.setdefault("auth", {})
     changed = False
-    if not auth.get("password_hash"):
+    if not auth.get("main_password_hash"):
         if _HAS_BCRYPT:
-            auth["password_hash"] = _bcrypt.hashpw(b"lol", _bcrypt.gensalt()).decode()
+            auth["main_password_hash"] = _bcrypt.hashpw(DEFAULT_PASSWORD.encode(), _bcrypt.gensalt()).decode()
         else:
-            auth["password_hash"] = "sha256:" + hashlib.sha256(b"lol").hexdigest()
+            auth["main_password_hash"] = "sha256:" + hashlib.sha256(DEFAULT_PASSWORD.encode()).hexdigest()
         changed = True
-    if not auth.get("secret_key"):
-        auth["secret_key"] = _secrets.token_hex(32)
+    if not auth.get("main_secret_key"):
+        auth["main_secret_key"] = _secrets.token_hex(32)
         changed = True
     if changed:
         try:
             Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
             Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
-            log.info("Bootstrapped auth defaults in %s", CONFIG_PATH)
+            log.info("Bootstrapped main-page auth defaults in %s", CONFIG_PATH)
         except Exception as e:
             log.warning("Could not write auth defaults: %s", e)
 
@@ -135,24 +137,54 @@ LOGIN_HTML = """<!DOCTYPE html>
 <title>MagicBridge</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{min-height:100%;background:#060606;
-  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#ddd}
-body{display:flex;align-items:center;justify-content:center;padding:1.5rem}
-.card{background:#0f0f0f;border:0.5px solid #222;border-radius:12px;
-      padding:2rem;width:100%;max-width:310px}
-h1{font-size:15px;font-weight:600;letter-spacing:.4px;margin-bottom:2px;color:#fff}
-.sub{font-size:11px;color:#444;margin-bottom:1.5rem}
-label{display:block;font-size:11px;color:#555;margin-bottom:4px}
-input[type=password]{width:100%;padding:9px 11px;background:#080808;
-  border:0.5px solid #222;border-radius:7px;color:#ddd;font-size:13px;outline:none}
-input[type=password]:focus{border-color:#4a9eff}
-button{margin-top:.85rem;width:100%;padding:9px;background:#4a9eff;border:none;
-  border-radius:7px;color:#fff;font-size:13px;font-weight:500;cursor:pointer}
-button:hover{opacity:.82}
-.err{margin-top:.7rem;padding:8px 10px;background:rgba(224,80,80,.08);
-  border:0.5px solid rgba(224,80,80,.3);border-radius:6px;font-size:12px;color:#e05050}
+html,body{min-height:100%;background:#05060b;
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#eef1f8}
+body{display:flex;align-items:center;justify-content:center;padding:1.5rem;position:relative;overflow:hidden}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(ellipse 900px 620px at 10% -10%, rgba(34,211,200,.16), transparent 60%),
+    radial-gradient(ellipse 760px 560px at 110% 15%, rgba(139,92,246,.15), transparent 60%),
+    radial-gradient(ellipse 820px 640px at 50% 120%, rgba(34,211,238,.08), transparent 62%),
+    linear-gradient(180deg,#05060b 0%,#080a14 55%,#05060b 100%);}
+.card{position:relative;z-index:1;background:rgba(20,26,44,.62);backdrop-filter:blur(20px) saturate(140%);
+      -webkit-backdrop-filter:blur(20px) saturate(140%);
+      border:0.5px solid rgba(255,255,255,.1);border-radius:16px;
+      padding:2.1rem 2rem;width:100%;max-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.brand svg{width:30px;height:30px;flex-shrink:0}
+h1{font-size:17px;font-weight:700;letter-spacing:-.3px;
+   background:linear-gradient(135deg,#22d3c8 0%,#6ee0d8 22%,#8b5cf6 100%);
+   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.sub{font-size:11.5px;color:#8b93a8;margin:4px 0 1.6rem}
+label{display:block;font-size:11px;color:#8b93a8;margin-bottom:5px;font-weight:500}
+input[type=password]{width:100%;padding:10px 12px;background:rgba(5,6,11,.7);
+  border:0.5px solid rgba(255,255,255,.12);border-radius:9px;color:#eef1f8;font-size:13px;outline:none;
+  transition:border-color .15s}
+input[type=password]:focus{border-color:#22d3c8}
+button{margin-top:1rem;width:100%;padding:10px;
+  background:linear-gradient(135deg,#22d3c8 0%,#6ee0d8 22%,#8b5cf6 100%);
+  border:none;border-radius:9px;color:#04140f;font-size:13px;font-weight:700;cursor:pointer;
+  transition:filter .15s,transform .1s}
+button:hover{filter:brightness(1.08)}
+button:active{transform:scale(.98)}
+.err{margin-top:.8rem;padding:9px 11px;background:rgba(244,63,94,.1);
+  border:0.5px solid rgba(244,63,94,.3);border-radius:8px;font-size:12px;color:#fb7185}
 </style></head><body><main><div class="card">
-<h1>MagicBridge</h1><p class="sub">Sign in to control this device</p>
+<div class="brand">
+  <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
+    <defs><linearGradient id="lg1" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#22d3c8"/><stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient></defs>
+    <rect x="4.5" y="17" width="6" height="18" rx="3" fill="url(#lg1)"/>
+    <rect x="29.5" y="17" width="6" height="18" rx="3" fill="url(#lg1)"/>
+    <rect x="4.5" y="17" width="31" height="5" rx="2.5" fill="url(#lg1)"/>
+    <path d="M8 17 Q20 3 32 17" stroke="url(#lg1)" stroke-width="2.3" fill="none" stroke-linecap="round"/>
+    <circle cx="20" cy="9.3" r="3" fill="url(#lg1)"/>
+    <circle cx="20" cy="9.3" r="3" fill="none" stroke="#fff" stroke-opacity=".4" stroke-width=".7"/>
+  </svg>
+  <h1>MagicBridge</h1>
+</div>
+<p class="sub">Sign in to control this device</p>
 __ERROR__
 <form method="POST" action="/login">
 <label for="pw">Password</label>
@@ -169,8 +201,8 @@ async def login_handler(request: web.Request) -> web.Response:
         except Exception:
             pw = ""
         auth = _auth_cfg()
-        if pw and _check_pw(pw, auth.get("password_hash", "")):
-            secret = auth.get("secret_key", "")
+        if pw and _check_pw(pw, auth.get("main_password_hash", "")):
+            secret = auth.get("main_secret_key", "")
             resp = web.HTTPFound("/")
             if secret:
                 resp.set_cookie(SESSION_COOKIE, _make_token(secret),
@@ -187,6 +219,42 @@ async def logout_handler(request: web.Request) -> web.Response:
     resp = web.HTTPFound("/login")
     resp.del_cookie(SESSION_COOKIE, path="/")
     return resp
+
+
+async def api_change_password(request: web.Request) -> web.Response:
+    """POST /api/auth/change-password — change the MAIN KVM page password.
+    Requires the current password (not just an active session) so a
+    left-open browser tab can't be used to silently lock everyone else out."""
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    current = str(d.get("current", ""))
+    new_pw  = str(d.get("new", ""))
+    if len(new_pw) < 4:
+        return web.json_response({"ok": False, "error": "New password must be at least 4 characters"}, status=400)
+
+    try:
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+    except Exception:
+        cfg = {}
+    auth = cfg.setdefault("auth", {})
+    if not _check_pw(current, auth.get("main_password_hash", "")):
+        return web.json_response({"ok": False, "error": "Current password is incorrect"}, status=403)
+
+    if _HAS_BCRYPT:
+        auth["main_password_hash"] = _bcrypt.hashpw(new_pw.encode(), _bcrypt.gensalt()).decode()
+    else:
+        auth["main_password_hash"] = "sha256:" + hashlib.sha256(new_pw.encode()).hexdigest()
+
+    try:
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
+
+    log.info("Main-page password changed")
+    return web.json_response({"ok": True})
 
 
 @web.middleware
@@ -976,6 +1044,7 @@ def build_app() -> web.Application:
     app.router.add_get("/login",  login_handler)
     app.router.add_post("/login", login_handler)
     app.router.add_post("/logout", logout_handler)
+    app.router.add_post("/api/auth/change-password", api_change_password)
 
     app.router.add_get("/",                      index_handler)
     app.router.add_get("/ws",                    ws_handler)

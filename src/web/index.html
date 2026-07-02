@@ -6,19 +6,31 @@
 <title>MagicBridge</title>
 <style>
 :root{
-  --bg:#07070f;--surf:#0d0d1a;--surf2:#111120;--card:#161625;--card2:#1c1c2e;
-  --border:rgba(255,255,255,.055);--border2:rgba(255,255,255,.12);
-  --accent:#6366f1;--accent-d:#4f51cf;--accent-l:#818cf8;
-  --green:#10b981;--red:#ef4444;--yellow:#eab308;--purple:#a78bfa;--cyan:#22d3ee;
-  --text:#e2e8f0;--sub:#8892a4;--muted:#3d4760;
-  --r:7px;--r2:12px;--sh:0 8px 32px rgba(0,0,0,.7);
+  --bg:#05060b;--surf:#0b0e17;--surf2:#101526;--card:#141a2c;--card2:#1a2138;
+  --border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.14);
+  --accent:#22d3c8;--accent2:#8b5cf6;--accent-d:#14b8ac;--accent-l:#5eead4;
+  --brand:linear-gradient(135deg,#22d3c8 0%,#6ee0d8 22%,#8b5cf6 100%);
+  --green:#10b981;--red:#f43f5e;--yellow:#f59e0b;--purple:#a78bfa;--cyan:#22d3ee;
+  --text:#eef1f8;--sub:#8b93a8;--muted:#454f66;
+  --r:8px;--r2:13px;--sh:0 8px 32px rgba(0,0,0,.7);
   --topH:46px;--botH:50px;--sideW:310px;
 }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;height:100dvh;overflow:hidden}
 body{background:var(--bg);color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
-  font-size:13px;display:flex;flex-direction:column;}
+  font-size:13px;display:flex;flex-direction:column;position:relative}
+/* ── Fluid gradient-mesh backdrop ── soft color pools behind the whole app,
+   fixed so it never scrolls; every surface above sits on top of it. */
+body::before{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(ellipse 900px 620px at 12% -8%,  rgba(34,211,200,.14), transparent 60%),
+    radial-gradient(ellipse 760px 560px at 108% 18%, rgba(139,92,246,.13), transparent 60%),
+    radial-gradient(ellipse 820px 640px at 46% 118%, rgba(34,211,238,.07), transparent 62%),
+    linear-gradient(180deg,#05060b 0%,#080a14 55%,#05060b 100%);
+}
+#topbar,#botbar,#sidebar,#main,#relbar,#recapture,#vkbd,#toast{position:relative;z-index:1}
 button,select,input,textarea{font-family:inherit;color:inherit}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--muted);border-radius:2px}
@@ -50,13 +62,16 @@ button,select,input,textarea{font-family:inherit;color:inherit}
 .rc-timer{font-size:10px;color:rgba(255,255,255,.22)}
 
 /* ── Top bar ── */
-#topbar{flex-shrink:0;height:var(--topH);background:var(--surf);
+#topbar{flex-shrink:0;height:var(--topH);background:rgba(11,14,23,.72);
+  backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);
   border-bottom:1px solid var(--border);display:flex;align-items:center;
   gap:8px;padding:0 14px;z-index:60;transition:opacity .2s;}
 body.fs #topbar,body.fs #botbar,body.fs #sidebar{display:none!important}
+#logo-mark{width:24px;height:24px;flex-shrink:0;display:block}
+#logo-lockup{display:flex;align-items:center;gap:8px;flex-shrink:0}
 #logo{font-size:15px;font-weight:700;letter-spacing:-.5px;flex-shrink:0;
-  background:linear-gradient(135deg,#818cf8,#a78bfa);
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+  background:var(--brand);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
 #connpill{display:flex;align-items:center;gap:5px;padding:3px 10px;
   background:var(--card);border:1px solid var(--border);border-radius:20px;
   font-size:11px;color:var(--sub);white-space:nowrap;flex-shrink:0}
@@ -75,7 +90,7 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar{display:none!important}
 .tbtn:hover{background:var(--card2);color:var(--text);border-color:var(--border2)}
 .tbtn:active{filter:brightness(.8)}
 .tbtn.icon{width:28px;padding:0;justify-content:center;font-size:15px}
-.tbtn.active{background:#1f2055;border-color:#6366f133;color:#a5b4fc}
+.tbtn.active{background:#0c3230;border-color:#22d3c840;color:#5eead4}
 #cwrap{position:relative}
 #cmenu{position:absolute;top:calc(100% + 5px);left:0;background:var(--surf2);
   border:1px solid var(--border2);border-radius:var(--r2);padding:4px;
@@ -141,7 +156,8 @@ body:not(.fs) .fs-hud{display:none!important}
 /* ── Sidebar ── */
 #sidebar{width:0;flex-shrink:0;overflow:hidden;
   transition:width .22s cubic-bezier(.4,0,.2,1);
-  background:var(--surf);border-left:1px solid var(--border);display:flex;flex-direction:column}
+  background:rgba(11,14,23,.78);backdrop-filter:blur(20px) saturate(140%);-webkit-backdrop-filter:blur(20px) saturate(140%);
+  border-left:1px solid var(--border);display:flex;flex-direction:column}
 #sidebar.open{width:var(--sideW)}
 #sidenav{flex-shrink:0;display:flex;border-bottom:1px solid var(--border);padding:0 8px;gap:2px}
 .snav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
@@ -174,8 +190,8 @@ body:not(.fs) .fs-hud{display:none!important}
 .sbtn:last-child{margin-bottom:0}
 .sbtn:hover{background:var(--card);color:var(--text);border-color:var(--border2)}
 .sbtn:active{filter:brightness(.8)}
-.sbtn.pri{background:#1f2055;border-color:#6366f133;color:#a5b4fc}
-.sbtn.pri:hover{background:#252569}
+.sbtn.pri{background:#0c3230;border-color:#22d3c840;color:#5eead4}
+.sbtn.pri:hover{background:#123c39}
 .sbtn.suc{background:#0c2e20;border-color:#10b98133;color:#6ee7b7}
 .sbtn.dan{background:#2a0f0f;border-color:#ef444433;color:#fca5a5}
 .sbtn.warn{background:#2a1a07;border-color:#eab30833;color:#fcd34d}
@@ -193,16 +209,34 @@ body:not(.fs) .fs-hud{display:none!important}
 .snote{font-size:10px;color:var(--muted);line-height:1.6;
   padding:7px 9px;background:rgba(255,255,255,.02);border:1px solid var(--border);
   border-radius:var(--r);margin-bottom:8px}
+
+/* ── WiFi add/update network — bigger, clearer, easier to hit on touch ── */
+.wifi-add{border-top:1px solid var(--border);padding-top:12px;margin-top:4px}
+.wifi-add-title{font-size:10px;letter-spacing:.07em;color:var(--accent-l);font-weight:700;
+  text-transform:uppercase;margin-bottom:10px}
+.wifi-label{display:block;font-size:11px;color:var(--sub);font-weight:600;margin-bottom:5px}
+.wifi-label-hint{font-size:10px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0}
+.wifi-field{height:40px;font-size:13px;padding:0 13px;border-radius:10px;margin-bottom:12px}
+.wifi-psk-row{display:flex;gap:8px;align-items:stretch;margin-bottom:14px}
+.wifi-psk-input{flex:1;margin:0!important}
+.wifi-eye{width:44px;flex-shrink:0;background:var(--card2);border:1px solid var(--border);
+  border-radius:10px;color:var(--sub);font-size:16px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;transition:background .12s,border-color .12s,color .12s}
+.wifi-eye:hover{background:var(--card);color:var(--text);border-color:var(--border2)}
+.wifi-eye:active{filter:brightness(.85)}
+.wifi-save-btn{height:38px;font-size:12.5px;font-weight:700;border-radius:10px;
+  background:var(--brand);border:none;color:#04140f}
+.wifi-save-btn:hover{background:var(--brand);filter:brightness(1.08)}
 .tag{display:inline-flex;align-items:center;padding:1px 7px;border-radius:10px;font-size:10px;font-weight:600}
 .tag-ok{background:#0c2e20;color:#6ee7b7;border:1px solid #10b98133}
 .tag-err{background:#2a0f0f;color:#fca5a5;border:1px solid #ef444433}
 .tag-warn{background:#2a1a07;color:#fcd34d;border:1px solid #eab30833}
-.tag-info{background:#1f2055;color:#a5b4fc;border:1px solid #6366f133}
+.tag-info{background:#0c3230;color:#5eead4;border:1px solid #22d3c840}
 .tag-pur{background:#1e1040;color:#c4b5fd;border:1px solid #a78bfa33}
 .cur-opts{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
 .cur-opt{height:26px;padding:0 10px;background:var(--card2);border:1px solid var(--border);
   border-radius:20px;color:var(--muted);font-size:10px;cursor:pointer;transition:all .12s}
-.cur-opt.active{background:#1f2055;border-color:#6366f133;color:#a5b4fc}
+.cur-opt.active{background:#0c3230;border-color:#22d3c840;color:#5eead4}
 .id-table{width:100%;border-collapse:collapse;font-size:11px}
 .id-table th{color:var(--muted);font-weight:600;text-align:left;
   padding:4px 6px;border-bottom:1px solid var(--border);font-size:10px;letter-spacing:.3px;text-transform:uppercase}
@@ -358,7 +392,22 @@ body:not(.fs) .fs-hud{display:none!important}
 
 <!-- Top bar -->
 <div id="topbar">
-  <span id="logo">⚡ MagicBridge</span>
+  <div id="logo-lockup">
+    <svg id="logo-mark" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
+      <defs>
+        <linearGradient id="mbg1" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stop-color="#22d3c8"/><stop offset="1" stop-color="#8b5cf6"/>
+        </linearGradient>
+      </defs>
+      <rect x="4.5" y="17" width="6" height="18" rx="3" fill="url(#mbg1)"/>
+      <rect x="29.5" y="17" width="6" height="18" rx="3" fill="url(#mbg1)"/>
+      <rect x="4.5" y="17" width="31" height="5" rx="2.5" fill="url(#mbg1)"/>
+      <path d="M8 17 Q20 3 32 17" stroke="url(#mbg1)" stroke-width="2.3" fill="none" stroke-linecap="round"/>
+      <circle cx="20" cy="9.3" r="3" fill="url(#mbg1)"/>
+      <circle cx="20" cy="9.3" r="3" fill="none" stroke="#fff" stroke-opacity=".4" stroke-width=".7"/>
+    </svg>
+    <span id="logo">MagicBridge</span>
+  </div>
   <div id="connpill"><div id="cdot" class="info"></div><span id="cdtxt">Connecting…</span></div>
   <div id="cwrap">
     <button class="tbtn" onclick="toggleCombos()">⌨ Combos ▾</button>
@@ -383,7 +432,7 @@ body:not(.fs) .fs-hud{display:none!important}
 
 <!-- FS HUD Top -->
 <div class="fs-hud" id="fs-top">
-  <span style="font-size:13px;font-weight:700;background:linear-gradient(135deg,#818cf8,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent">⚡ MB</span>
+  <span style="font-size:13px;font-weight:700;background:var(--brand);-webkit-background-clip:text;-webkit-text-fill-color:transparent">MB</span>
   <div style="width:6px;height:6px;border-radius:50%;background:var(--green)" id="fs-dot"></div>
   <div class="fh-sep"></div>
   <button class="fh-btn" onclick="fhCombo(['ControlLeft','AltLeft','Delete'])">Ctrl+Alt+Del</button>
@@ -537,14 +586,16 @@ body:not(.fs) .fs-hud{display:none!important}
           <div id="wifi-list" style="margin:4px 0 8px"></div>
 
           <!-- Add / Update section -->
-          <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:2px">
-            <div style="font-size:9px;letter-spacing:.06em;color:var(--muted);font-weight:600;margin-bottom:6px">ADD / UPDATE NETWORK</div>
-            <input class="sinput" type="text" id="wifi-ssid" placeholder="Network name (SSID)" autocomplete="off" spellcheck="false">
-            <div style="display:flex;gap:5px;align-items:center;margin-bottom:5px">
-              <input class="sinput" type="password" id="wifi-psk" placeholder="Password (blank = open)" style="flex:1;margin:0" autocomplete="new-password">
-              <button class="sbtn" style="margin:0;height:28px;padding:0 8px;flex-shrink:0" onclick="wifiTogglePsk()" title="Show/hide">👁</button>
+          <div class="wifi-add">
+            <div class="wifi-add-title">Add / Update Network</div>
+            <label class="wifi-label" for="wifi-ssid">Network name (SSID)</label>
+            <input class="sinput wifi-field" type="text" id="wifi-ssid" placeholder="e.g. Home-WiFi-5G" autocomplete="off" spellcheck="false">
+            <label class="wifi-label" for="wifi-psk">Password <span class="wifi-label-hint">— leave blank for open networks</span></label>
+            <div class="wifi-psk-row">
+              <input class="sinput wifi-field wifi-psk-input" type="password" id="wifi-psk" placeholder="Enter WiFi password" autocomplete="new-password">
+              <button class="wifi-eye" onclick="wifiTogglePsk()" title="Show/hide password" aria-label="Show or hide password">👁</button>
             </div>
-            <button class="sbtn suc" onclick="wifiAdd()">+ Save Network</button>
+            <button class="sbtn suc wifi-save-btn" onclick="wifiAdd()">+ Save Network</button>
           </div>
           <div id="wifi-msg" style="display:none;margin-top:6px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
@@ -652,6 +703,18 @@ body:not(.fs) .fs-hud{display:none!important}
       <!-- System tab -->
       <div class="tab" id="panel-system">
         <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>Account</div>
+          <div class="snote" style="margin-bottom:8px">Change the password for this KVM page. This is separate from the /stealth/ admin panel password.</div>
+          <label class="wifi-label" for="pw-current">Current password</label>
+          <input class="sinput wifi-field" type="password" id="pw-current" placeholder="Current password" autocomplete="current-password" style="margin-bottom:8px">
+          <label class="wifi-label" for="pw-new1">New password</label>
+          <input class="sinput wifi-field" type="password" id="pw-new1" placeholder="New password" autocomplete="new-password" style="margin-bottom:8px">
+          <label class="wifi-label" for="pw-new2">Confirm new password</label>
+          <input class="sinput wifi-field" type="password" id="pw-new2" placeholder="Confirm new password" autocomplete="new-password" style="margin-bottom:10px">
+          <button class="sbtn wifi-save-btn" onclick="changeMainPassword()" style="width:100%">🔑 Change Password</button>
+          <div id="pw-change-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+        </div>
+        <div class="scard">
           <div class="scard-title"><span class="dot-yel"></span>Pi Status</div>
           <div class="srow"><span class="sk">CPU temp</span><span class="sv" id="ss-temp">—</span></div>
           <div class="srow"><span class="sk">Uptime</span><span class="sv" id="ss-uptime">—</span></div>
@@ -669,10 +732,10 @@ body:not(.fs) .fs-hud{display:none!important}
           <button class="sbtn dan" onclick="piPower('shutdown')" style="margin-top:4px">⏻ Shutdown Pi</button>
         </div>
         <div class="scard">
-          <div class="scard-title"><span class="dot-yel" style="background:var(--acc)"></span>MagicBridge Update</div>
+          <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>MagicBridge Update</div>
           <div class="srow"><span class="sk">Commit</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:10px">—</span></div>
           <div class="srow"><span class="sk">Branch</span><span class="sv" id="sys-branch">—</span></div>
-          <div id="sys-update-out" style="display:none;font-size:10px;background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:6px;margin:6px 0;white-space:pre-wrap;max-height:120px;overflow:auto;font-family:monospace;color:var(--muted)"></div>
+          <div id="sys-update-out" style="display:none;font-size:10px;background:var(--surf2);border:1px solid var(--border);border-radius:4px;padding:6px;margin:6px 0;white-space:pre-wrap;max-height:120px;overflow:auto;font-family:monospace;color:var(--muted)"></div>
           <button class="sbtn" onclick="sysCheckVer()" style="margin-top:6px">↺ Check Status</button>
           <button class="sbtn suc" onclick="sysUpdate()" style="margin-top:4px">⬆ Pull & Update from GitHub</button>
         </div>
@@ -779,6 +842,36 @@ body:not(.fs) .fs-hud{display:none!important}
 <script>
 // ── Auth ───────────────────────────────────────────────────────────────────────
 function mbLogout(){ fetch('/logout',{method:'POST'}).finally(()=>{ location.href='/login'; }); }
+
+async function changeMainPassword(){
+  const cur=document.getElementById('pw-current').value;
+  const nw =document.getElementById('pw-new1').value;
+  const cf =document.getElementById('pw-new2').value;
+  const msg=document.getElementById('pw-change-msg');
+  const show=(text,ok)=>{
+    msg.textContent=text;
+    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
+      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+  };
+  if(!cur){show('Enter your current password',false);return;}
+  if(nw.length<4){show('New password must be at least 4 characters',false);return;}
+  if(nw!==cf){show('New passwords do not match',false);return;}
+  try{
+    const r=await fetch('/api/auth/change-password',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({current:cur,new:nw})});
+    const d=await r.json();
+    if(d.ok){
+      show('✓ Password changed',true);
+      document.getElementById('pw-current').value='';
+      document.getElementById('pw-new1').value='';
+      document.getElementById('pw-new2').value='';
+      toast('Password changed ✓');
+    }else{
+      show(d.error||'Failed to change password',false);
+    }
+  }catch(e){show('Error: '+e,false);}
+}
 
 let _wsAuthFails=0;
 
@@ -1197,11 +1290,11 @@ async function wifiRefresh(){
       const isActive=n===active;
       const esc=n.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
       return `<div data-net="${esc}" style="border:1px solid var(--border);border-radius:6px;margin-bottom:6px;overflow:hidden">
-        <div style="display:flex;align-items:center;gap:6px;padding:7px 8px;background:${isActive?'rgba(0,200,100,.07)':'var(--bg2)'}">
+        <div style="display:flex;align-items:center;gap:6px;padding:7px 8px;background:${isActive?'rgba(0,200,100,.07)':'var(--surf2)'}">
           <div style="width:7px;height:7px;border-radius:50%;background:${isActive?'var(--green)':'var(--border)'};flex-shrink:0"></div>
-          <span style="flex:1;font-size:12px;font-weight:${isActive?'600':'400'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${isActive?'var(--green)':'var(--fg)'}">${esc}</span>
+          <span style="flex:1;font-size:12px;font-weight:${isActive?'600':'400'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:${isActive?'var(--green)':'var(--text)'}">${esc}</span>
           ${isActive?'<span style="font-size:9px;background:var(--green);color:#000;padding:1px 6px;border-radius:8px;font-weight:700">ACTIVE</span>':''}
-          ${!isActive?`<button title="Connect" onclick="wifiConnect(this)" style="background:var(--acc);border:none;border-radius:4px;color:#000;cursor:pointer;padding:2px 8px;font-size:11px;font-weight:600">▶ Use</button>`:''}
+          ${!isActive?`<button title="Connect" onclick="wifiConnect(this)" style="background:var(--accent);border:none;border-radius:4px;color:#000;cursor:pointer;padding:2px 8px;font-size:11px;font-weight:600">▶ Use</button>`:''}
           <button title="Edit / update password" onclick="wifiEdit(this)" style="background:none;border:1px solid var(--border);border-radius:4px;color:var(--muted);cursor:pointer;padding:2px 7px;font-size:11px">Edit</button>
           <button title="Forget this network" onclick="wifiRemove(this)" style="background:var(--red);border:none;border-radius:4px;color:#fff;cursor:pointer;padding:2px 7px;font-size:11px">✕</button>
         </div>

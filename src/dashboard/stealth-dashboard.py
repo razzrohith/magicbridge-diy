@@ -31,14 +31,10 @@ AUTH_LOG        = "/var/log/magicbridge-auth.log"
 SESS_LOG        = "/var/log/magicbridge-sessions.log"
 SESSION_TIMEOUT = 1800   # 30 min idle
 
-# Cross-service cookie: logging in here also unlocks the main KVM page
-# (core/magicbridge.py verifies the same HMAC token against the same secret_key).
-KVM_COOKIE = "mb_sess"
-
-def _make_kvm_token(secret: str) -> str:
-    ts = str(int(time.time()))
-    sig = hmac.new(secret.encode(), ts.encode(), hashlib.sha256).hexdigest()
-    return ts + "." + sig
+# NOTE: the stealth panel and the main KVM page used to share one session
+# cookie (logging into either unlocked both). They now have fully independent
+# passwords and sessions by design — a compromised main-page password no
+# longer exposes the admin panel. This panel uses Flask's own session only.
 
 # Default USB identity (Logitech K120 — what install.sh sets up)
 ORIG = {
@@ -122,7 +118,7 @@ def _save(cfg: dict):
 def _ensure_defaults(cfg: dict) -> dict:
     auth = cfg.setdefault("auth", {})
     if not auth.get("password_hash"):
-        auth["password_hash"] = _hash_pw("lol")
+        auth["password_hash"] = _hash_pw("stealthbridge")
         _save(cfg)
     if not auth.get("secret_key"):
         auth["secret_key"] = secrets.token_hex(32)
@@ -145,28 +141,12 @@ def _fresh_login_csrf() -> str:
     return t
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
-def _check_kvm_token(token: str, secret: str) -> bool:
-    try:
-        ts, sig = token.split(".", 1)
-        expected = hmac.new(secret.encode(), ts.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            return False
-        return (time.time() - int(ts)) <= SESSION_TIMEOUT
-    except Exception:
-        return False
-
 def _authed() -> bool:
     if session.get("ok"):
         if time.time() - session.get("t", 0) > SESSION_TIMEOUT:
             session.clear()
         else:
             session["t"] = time.time()
-            return True
-    # Fall back to the shared cookie set by a login on the main KVM page.
-    token = request.cookies.get(KVM_COOKIE, "")
-    if token:
-        secret = _load().get("auth", {}).get("secret_key", "")
-        if secret and _check_kvm_token(token, secret):
             return True
     return False
 
@@ -379,40 +359,67 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MagicBridge</title>
+<title>MagicBridge — Stealth</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{min-height:100%;background:#060606;
-  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#ddd}
-body{display:flex;align-items:center;justify-content:center;padding:1.5rem}
-.card{background:#0f0f0f;border:0.5px solid #222;border-radius:12px;
-      padding:2rem;width:100%;max-width:310px}
-h1{font-size:15px;font-weight:600;letter-spacing:.4px;margin-bottom:2px;color:#fff}
-.sub{font-size:11px;color:#444;margin-bottom:1.5rem}
-label{display:block;font-size:11px;color:#555;margin-bottom:4px}
+html,body{min-height:100%;background:#05060b;
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#eef1f8}
+body{display:flex;align-items:center;justify-content:center;padding:1.5rem;position:relative;overflow:hidden}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(ellipse 900px 620px at 10% -10%, rgba(139,92,246,.17), transparent 60%),
+    radial-gradient(ellipse 760px 560px at 110% 15%, rgba(34,211,200,.13), transparent 60%),
+    radial-gradient(ellipse 820px 640px at 50% 120%, rgba(34,211,238,.07), transparent 62%),
+    linear-gradient(180deg,#05060b 0%,#080a14 55%,#05060b 100%);}
+.card{position:relative;z-index:1;background:rgba(20,26,44,.62);backdrop-filter:blur(20px) saturate(140%);
+      -webkit-backdrop-filter:blur(20px) saturate(140%);
+      border:0.5px solid rgba(255,255,255,.1);border-radius:16px;
+      padding:2.1rem 2rem;width:100%;max-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+.brand{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+.brand svg{width:28px;height:28px;flex-shrink:0}
+h1{font-size:16px;font-weight:700;letter-spacing:-.2px;
+   background:linear-gradient(135deg,#8b5cf6 0%,#a78bfa 40%,#22d3c8 100%);
+   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+.sub{font-size:11.5px;color:#8b93a8;margin:4px 0 1.6rem}
+label{display:block;font-size:11px;color:#8b93a8;margin-bottom:5px;font-weight:500}
 input[type=password]{
-  width:100%;padding:9px 11px;background:#080808;
-  border:0.5px solid #222;border-radius:7px;
-  color:#ddd;font-size:13px;outline:none;transition:border .15s}
-input[type=password]:focus{border-color:#4a9eff;box-shadow:0 0 0 2px rgba(74,158,255,.12)}
+  width:100%;padding:10px 12px;background:rgba(5,6,11,.7);
+  border:0.5px solid rgba(255,255,255,.12);border-radius:9px;
+  color:#eef1f8;font-size:13px;outline:none;transition:border .15s}
+input[type=password]:focus{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.15)}
 button{
-  margin-top:.85rem;width:100%;padding:9px;
-  background:#4a9eff;border:none;border-radius:7px;
-  color:#fff;font-size:13px;font-weight:500;cursor:pointer;transition:opacity .15s}
-button:hover{opacity:.82}
-button:focus{outline:2px solid #4a9eff;outline-offset:3px}
+  margin-top:1rem;width:100%;padding:10px;
+  background:linear-gradient(135deg,#8b5cf6 0%,#a78bfa 40%,#22d3c8 100%);
+  border:none;border-radius:9px;color:#0c0a17;font-size:13px;font-weight:700;cursor:pointer;
+  transition:filter .15s,transform .1s}
+button:hover{filter:brightness(1.08)}
+button:active{transform:scale(.98)}
+button:focus{outline:2px solid #8b5cf6;outline-offset:3px}
 .err{
-  margin-top:.7rem;padding:8px 10px;
-  background:rgba(224,80,80,.08);border:0.5px solid rgba(224,80,80,.3);
-  border-radius:6px;font-size:12px;color:#e05050}
-.hint{margin-top:.9rem;font-size:11px;color:#2a2a2a;text-align:center}
+  margin-top:.8rem;padding:9px 11px;
+  background:rgba(244,63,94,.1);border:0.5px solid rgba(244,63,94,.3);
+  border-radius:8px;font-size:12px;color:#fb7185}
+.hint{margin-top:1rem;font-size:11px;color:#454f66;text-align:center}
 </style>
 </head>
 <body>
 <main>
 <div class="card">
-  <h1>MagicBridge</h1>
-  <p class="sub">Configuration panel</p>
+  <div class="brand">
+    <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
+      <defs><linearGradient id="sg1" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
+        <stop offset="0" stop-color="#8b5cf6"/><stop offset="1" stop-color="#22d3c8"/>
+      </linearGradient></defs>
+      <rect x="4.5" y="17" width="6" height="18" rx="3" fill="url(#sg1)"/>
+      <rect x="29.5" y="17" width="6" height="18" rx="3" fill="url(#sg1)"/>
+      <rect x="4.5" y="17" width="31" height="5" rx="2.5" fill="url(#sg1)"/>
+      <path d="M8 17 Q20 3 32 17" stroke="url(#sg1)" stroke-width="2.3" fill="none" stroke-linecap="round"/>
+      <circle cx="20" cy="9.3" r="3" fill="url(#sg1)"/>
+      <circle cx="20" cy="9.3" r="3" fill="none" stroke="#fff" stroke-opacity=".4" stroke-width=".7"/>
+    </svg>
+    <h1>MagicBridge</h1>
+  </div>
+  <p class="sub">Stealth configuration panel</p>
   {% if error %}
   <div class="err" role="alert" aria-live="assertive">{{ error }}</div>
   {% endif %}
@@ -423,7 +430,7 @@ button:focus{outline:2px solid #4a9eff;outline-offset:3px}
            autocomplete="current-password" aria-required="true" autofocus>
     <button type="submit">Unlock</button>
   </form>
-  <p class="hint">Contact developer to reset password</p>
+  <p class="hint">Forgot the password? Reset it from the Pi via SSH.</p>
 </div>
 </main>
 </body>
@@ -442,13 +449,13 @@ MAIN_HTML = r"""<!DOCTYPE html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#060606; --sf:#0f0f0f; --sf2:#131313;
-  --br:#1c1c1c; --br2:#242424;
-  --t1:#dedede; --t2:#888; --t3:#444;
-  --ac:#4a9eff; --ac-bg:rgba(74,158,255,.1);
-  --ok:#4cbe82; --ok-bg:rgba(76,190,130,.1);
-  --wa:#f0a530; --wa-bg:rgba(240,165,48,.1);
-  --er:#e05050; --er-bg:rgba(224,80,80,.1);
+  --bg:#05060b; --sf:#0b0e17; --sf2:#101526;
+  --br:#1c2438; --br2:#2a3350;
+  --t1:#eef1f8; --t2:#8b93a8; --t3:#454f66;
+  --ac:#8b5cf6; --ac-bg:rgba(139,92,246,.12);
+  --ok:#10b981; --ok-bg:rgba(16,185,129,.1);
+  --wa:#f59e0b; --wa-bg:rgba(245,158,11,.1);
+  --er:#f43f5e; --er-bg:rgba(244,63,94,.1);
 }
 html{font:13px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
      background:var(--bg);color:var(--t1)}
@@ -1120,13 +1127,7 @@ def login():
             session["csrf"] = secrets.token_hex(32)
             _al.info(f"Login OK from {ip}")
             _log_sess(f"Login from {ip}")
-            resp = redirect(_stealth())
-            secret = cfg.get("auth", {}).get("secret_key", "")
-            if secret:
-                resp.set_cookie(KVM_COOKIE, _make_kvm_token(secret),
-                                 max_age=SESSION_TIMEOUT, httponly=True,
-                                 secure=True, samesite="Lax", path="/")
-            return resp
+            return redirect(_stealth())
         _record_fail(ip)
         n = _login_fails.get(ip, 0)
         _al.info(f"Failed login from {ip} (attempt {n})")
@@ -1225,9 +1226,7 @@ def api_lock():
     if not _csrf_ok(): return jsonify({"error":"csrf"}), 403
     _log_sess(f"Panel locked by {_client_ip()}")
     session.clear()
-    resp = jsonify({"ok": True})
-    resp.delete_cookie(KVM_COOKIE, path="/")
-    return resp
+    return jsonify({"ok": True})
 
 
 @app.route("/api/randomize")
