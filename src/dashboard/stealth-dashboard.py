@@ -1492,4 +1492,4 @@ def api_wifi_psk_auth():
 _boot()
 
 if __name__ == "__main__":
-    app.ru
+    app.run(host="127.0.0.1", port=7777, debug=False, use_reloader=False)

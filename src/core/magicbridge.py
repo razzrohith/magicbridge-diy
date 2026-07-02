@@ -1114,4 +1114,8 @@ async def main():
         keyboard.release_all()
         mouse.release_all()
         video.stop()
-        await runner
+        await runner.cleanup()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
