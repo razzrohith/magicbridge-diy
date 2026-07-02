@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-#  MagicBridge — WiFi Provisioning AP
+#  MagicBridge WiFi Provisioning AP
 #
 #  Runs as a systemd service (mb-provision.service).
 #  Starts a hostapd access point "MagicBridge-Setup" when no
@@ -25,38 +25,38 @@ TS_KEY_TMP="/tmp/mb-ts-key"
 exec >> "$LOG" 2>&1
 echo "[$(date)] mb-provision.sh starting"
 
-# ── Already provisioned? ──────────────────────────────────────────────────────
+# Already provisioned?
 if [[ -f "$FLAG_FILE" ]]; then
-    echo "[$(date)] Flag found — already provisioned, exiting"
+    echo "[$(date)] Flag found, already provisioned, exiting"
     exit 0
 fi
 
-# ── Check for live WiFi ───────────────────────────────────────────────────────
+# Check for live WiFi
 sleep 8   # give NetworkManager time to connect saved networks
 CONNECTED=$(nmcli -t -f STATE general 2>/dev/null | grep -c "^connected$" || true)
 if [[ "$CONNECTED" -gt 0 ]]; then
-    echo "[$(date)] WiFi already connected — marking provisioned"
+    echo "[$(date)] WiFi already connected, marking provisioned"
     touch "$FLAG_FILE"
     exit 0
 fi
 
-echo "[$(date)] No WiFi — starting provisioning AP: $AP_SSID"
+echo "[$(date)] No WiFi, starting provisioning AP: $AP_SSID"
 
-# ── Dependencies ─────────────────────────────────────────────────────────────
+# Dependencies
 for pkg in hostapd dnsmasq python3 python3-flask; do
     dpkg -s "$pkg" &>/dev/null || apt-get install -y "$pkg"
 done
 
-# ── Stop NM on wlan0 temporarily ─────────────────────────────────────────────
+# Stop NM on wlan0 temporarily
 nmcli device disconnect "$AP_IFACE" 2>/dev/null || true
 sleep 1
 
-# ── Bring up static IP on wlan0 ──────────────────────────────────────────────
+# Bring up static IP on wlan0
 ip link set "$AP_IFACE" up
 ip addr flush dev "$AP_IFACE" 2>/dev/null || true
 ip addr add "${AP_IP}/24" dev "$AP_IFACE"
 
-# ── hostapd config ───────────────────────────────────────────────────────────
+# hostapd config
 cat > /tmp/mb-hostapd.conf <<HOSTCONF
 interface=$AP_IFACE
 driver=nl80211
@@ -67,7 +67,7 @@ auth_algs=1
 wmm_enabled=0
 HOSTCONF
 
-# ── dnsmasq (DHCP + captive redirect) ────────────────────────────────────────
+# dnsmasq (DHCP + captive redirect)
 cat > /tmp/mb-dnsmasq.conf <<DNSCONF
 interface=$AP_IFACE
 dhcp-range=192.168.73.10,192.168.73.50,12h
@@ -83,15 +83,15 @@ hostapd -B /tmp/mb-hostapd.conf -P /tmp/mb-hostapd.pid
 sleep 1
 dnsmasq -C /tmp/mb-dnsmasq.conf --pid-file=/tmp/mb-dnsmasq.pid
 
-# ── iptables redirect all port 80 to portal ───────────────────────────────────
+# iptables redirect all port 80 to portal
 iptables -t nat -A PREROUTING -i "$AP_IFACE" -p tcp --dport 80 \
          -j DNAT --to-destination "${AP_IP}:${PORTAL_PORT}" 2>/dev/null || true
 iptables -t nat -A PREROUTING -i "$AP_IFACE" -p tcp --dport 443 \
          -j DNAT --to-destination "${AP_IP}:${PORTAL_PORT}" 2>/dev/null || true
 
-echo "[$(date)] AP up — SSID '$AP_SSID', IP $AP_IP, portal :$PORTAL_PORT"
+echo "[$(date)] AP up, SSID '$AP_SSID', IP $AP_IP, portal :$PORTAL_PORT"
 
-# ── Run captive portal (blocks until user submits) ────────────────────────────
+# Run captive portal (blocks until user submits)
 # Temporarily disable errexit: if the portal script exits non-zero (crash, kill,
 # etc.) we still MUST fall through to AP teardown below, or the Pi is stuck
 # broadcasting the setup AP with no way to reach it again over normal WiFi.
@@ -102,14 +102,14 @@ set -e
 
 echo "[$(date)] Portal exited (code $PORTAL_EXIT)"
 
-# ── Tear down AP ─────────────────────────────────────────────────────────────
+# Tear down AP
 pkill -F /tmp/mb-hostapd.pid 2>/dev/null || true
 pkill -F /tmp/mb-dnsmasq.pid 2>/dev/null || true
 iptables -t nat -F PREROUTING 2>/dev/null || true
 ip addr flush dev "$AP_IFACE" 2>/dev/null || true
 sleep 1
 
-# ── Connect saved WiFi via NetworkManager ─────────────────────────────────────
+# Connect saved WiFi via NetworkManager
 if [[ -f "$WIFI_FILE" ]]; then
     SSID=$(sed -n '1p' "$WIFI_FILE")
     PASS=$(sed -n '2p' "$WIFI_FILE")
@@ -127,7 +127,7 @@ if [[ -f "$WIFI_FILE" ]]; then
     rm -f "$WIFI_FILE"
 fi
 
-# ── Tailscale auth key (if provided) ─────────────────────────────────────────
+# Tailscale auth key (if provided)
 if [[ -f "$TS_KEY_TMP" ]]; then
     TS_KEY=$(cat "$TS_KEY_TMP")
     rm -f "$TS_KEY_TMP"

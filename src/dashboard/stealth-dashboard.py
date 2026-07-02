@@ -8,14 +8,14 @@ from pathlib import Path
 from flask import (Flask, jsonify, request, render_template_string,
                    session, redirect, Response)
 
-# ── bcrypt (preferred) with SHA-256 fallback ──────────────────────────────────
+# bcrypt (preferred) with SHA-256 fallback
 try:
     import bcrypt as _bcrypt
     _HAS_BCRYPT = True
 except ImportError:
     _HAS_BCRYPT = False
 
-# ── App ───────────────────────────────────────────────────────────────────────
+# App
 app = Flask(__name__)
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
@@ -23,7 +23,7 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,
 )
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+# Constants
 CONFIG_PATH     = "/etc/magicbridge/config.json"
 USB_DIR         = "/sys/kernel/config/usb_gadget/g1"
 GADGET_SH       = "/usr/local/bin/mb-gadget.sh"
@@ -33,10 +33,10 @@ SESSION_TIMEOUT = 1800   # 30 min idle
 
 # NOTE: the stealth panel and the main KVM page used to share one session
 # cookie (logging into either unlocked both). They now have fully independent
-# passwords and sessions by design — a compromised main-page password no
+# passwords and sessions by design. A compromised main-page password no
 # longer exposes the admin panel. This panel uses Flask's own session only.
 
-# Default USB identity (Logitech K120 — what install.sh sets up)
+# Default USB identity (Logitech K120, what install.sh sets up)
 ORIG = {
     "manufacturer": "Logitech",
     "product":      "USB Keyboard K120",
@@ -63,7 +63,7 @@ LOG_SOURCES = {
     "magicbridge": "/var/log/magicbridge.log",
 }
 
-# ── Auth logging ──────────────────────────────────────────────────────────────
+# Auth logging
 _al = logging.getLogger("magicbridge.stealth")
 _al.setLevel(logging.INFO)
 try:
@@ -73,7 +73,7 @@ try:
 except Exception:
     pass
 
-# ── Progressive login delay ───────────────────────────────────────────────────
+# Progressive login delay
 _login_fails: dict = {}
 
 def _client_ip() -> str:
@@ -92,7 +92,7 @@ def _record_fail(ip: str):
 def _record_ok(ip: str):
     _login_fails.pop(ip, None)
 
-# ── Password helpers ──────────────────────────────────────────────────────────
+# Password helpers
 def _hash_pw(pw: str) -> str:
     if _HAS_BCRYPT:
         return _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt()).decode()
@@ -104,7 +104,7 @@ def _check_pw(pw: str, stored: str) -> bool:
     raw = stored.removeprefix("sha256:")
     return hashlib.sha256(pw.encode()).hexdigest() == raw
 
-# ── Config helpers ────────────────────────────────────────────────────────────
+# Config helpers
 def _load() -> dict:
     try:
         return json.loads(Path(CONFIG_PATH).read_text())
@@ -130,7 +130,7 @@ def _boot():
     _ensure_defaults(cfg)
     app.secret_key = cfg["auth"]["secret_key"]
 
-# ── CSRF ──────────────────────────────────────────────────────────────────────
+# CSRF
 def _csrf_ok() -> bool:
     tok = (request.headers.get("X-CSRF-Token") or request.form.get("_csrf", ""))
     return tok == session.get("csrf")
@@ -140,7 +140,7 @@ def _fresh_login_csrf() -> str:
     session["login_csrf"] = t
     return t
 
-# ── Auth helpers ──────────────────────────────────────────────────────────────
+# Auth helpers
 def _authed() -> bool:
     if session.get("ok"):
         if time.time() - session.get("t", 0) > SESSION_TIMEOUT:
@@ -153,7 +153,7 @@ def _authed() -> bool:
 def _stealth(path: str = "") -> str:
     return "https://" + request.host + "/stealth/" + path.lstrip("/")
 
-# ── USB helpers ───────────────────────────────────────────────────────────────
+# USB helpers
 def _usb_r(rel: str) -> str:
     try:
         return Path(f"{USB_DIR}/{rel}").read_text().strip()
@@ -195,7 +195,7 @@ def _apply_usb(mfr: str, prod: str, ser: str, vid: str = None, pid: str = None):
 def _rand_serial(pfx: str = "MB") -> str:
     return pfx + secrets.token_hex(4).upper()
 
-# ── Network helpers ───────────────────────────────────────────────────────────
+# Network helpers
 def _cur_mac(iface: str = "eth0") -> str:
     try:
         return Path(f"/sys/class/net/{iface}/address").read_text().strip()
@@ -324,7 +324,7 @@ def _log_sess(msg: str):
     except Exception:
         pass
 
-# ── DuckDNS ───────────────────────────────────────────────────────────────────
+# DuckDNS
 def _ddns_update(host: str, token: str) -> bool:
     try:
         r = subprocess.run(
@@ -351,71 +351,69 @@ def _ddns_cron(host: str, token: str):
     except Exception:
         pass
 
-# ══════════════════════════════════════════════════════════════════════════════
-# HTML — Login
-# ══════════════════════════════════════════════════════════════════════════════
+# HTML: Login
 LOGIN_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MagicBridge — Stealth</title>
+<title>MagicBridge Stealth</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{min-height:100%;background:#05060b;
-  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#eef1f8}
+html,body{min-height:100%;background:#05070d;
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f3ecdd}
 body{display:flex;align-items:center;justify-content:center;padding:1.5rem;position:relative;overflow:hidden}
 body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   background:
-    radial-gradient(ellipse 900px 620px at 10% -10%, rgba(139,92,246,.17), transparent 60%),
-    radial-gradient(ellipse 760px 560px at 110% 15%, rgba(34,211,200,.13), transparent 60%),
-    radial-gradient(ellipse 820px 640px at 50% 120%, rgba(34,211,238,.07), transparent 62%),
-    linear-gradient(180deg,#05060b 0%,#080a14 55%,#05060b 100%);}
-.card{position:relative;z-index:1;background:rgba(20,26,44,.62);backdrop-filter:blur(20px) saturate(140%);
+    radial-gradient(ellipse 900px 620px at 10% -10%, rgba(201,161,92,.16), transparent 60%),
+    radial-gradient(ellipse 760px 560px at 110% 15%, rgba(240,214,152,.11), transparent 60%),
+    radial-gradient(ellipse 820px 640px at 50% 120%, rgba(138,106,47,.08), transparent 62%),
+    linear-gradient(180deg,#05070d 0%,#080b16 55%,#05070d 100%);}
+.card{position:relative;z-index:1;background:rgba(19,26,44,.62);backdrop-filter:blur(20px) saturate(140%);
       -webkit-backdrop-filter:blur(20px) saturate(140%);
-      border:0.5px solid rgba(255,255,255,.1);border-radius:16px;
+      border:0.5px solid rgba(240,214,152,.12);border-radius:16px;
       padding:2.1rem 2rem;width:100%;max-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:4px}
 .brand svg{width:28px;height:28px;flex-shrink:0}
 h1{font-size:16px;font-weight:700;letter-spacing:-.2px;
-   background:linear-gradient(135deg,#8b5cf6 0%,#a78bfa 40%,#22d3c8 100%);
+   background:linear-gradient(135deg,#c9a15c 0%,#f0d698 40%,#8a6a2f 100%);
    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.sub{font-size:11.5px;color:#8b93a8;margin:4px 0 1.6rem}
-label{display:block;font-size:11px;color:#8b93a8;margin-bottom:5px;font-weight:500}
+.sub{font-size:11.5px;color:#9a9280;margin:4px 0 1.6rem}
+label{display:block;font-size:11px;color:#9a9280;margin-bottom:5px;font-weight:500}
 input[type=password]{
-  width:100%;padding:10px 12px;background:rgba(5,6,11,.7);
-  border:0.5px solid rgba(255,255,255,.12);border-radius:9px;
-  color:#eef1f8;font-size:13px;outline:none;transition:border .15s}
-input[type=password]:focus{border-color:#8b5cf6;box-shadow:0 0 0 2px rgba(139,92,246,.15)}
+  width:100%;padding:10px 12px;background:rgba(5,7,13,.7);
+  border:0.5px solid rgba(240,214,152,.16);border-radius:9px;
+  color:#f3ecdd;font-size:13px;outline:none;transition:border .15s}
+input[type=password]:focus{border-color:#c9a15c;box-shadow:0 0 0 2px rgba(201,161,92,.15)}
 button{
   margin-top:1rem;width:100%;padding:10px;
-  background:linear-gradient(135deg,#8b5cf6 0%,#a78bfa 40%,#22d3c8 100%);
-  border:none;border-radius:9px;color:#0c0a17;font-size:13px;font-weight:700;cursor:pointer;
+  background:linear-gradient(135deg,#c9a15c 0%,#f0d698 40%,#8a6a2f 100%);
+  border:none;border-radius:9px;color:#1a1408;font-size:13px;font-weight:700;cursor:pointer;
   transition:filter .15s,transform .1s}
 button:hover{filter:brightness(1.08)}
 button:active{transform:scale(.98)}
-button:focus{outline:2px solid #8b5cf6;outline-offset:3px}
+button:focus{outline:2px solid #c9a15c;outline-offset:3px}
 .err{
   margin-top:.8rem;padding:9px 11px;
   background:rgba(244,63,94,.1);border:0.5px solid rgba(244,63,94,.3);
   border-radius:8px;font-size:12px;color:#fb7185}
-.hint{margin-top:1rem;font-size:11px;color:#454f66;text-align:center}
+.hint{margin-top:1rem;font-size:11px;color:#4d4a3f;text-align:center}
 </style>
 </head>
 <body>
 <main>
 <div class="card">
   <div class="brand">
-    <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
-      <defs><linearGradient id="sg1" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-        <stop offset="0" stop-color="#8b5cf6"/><stop offset="1" stop-color="#22d3c8"/>
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
+      <defs><linearGradient id="sg1" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#f0d698"/><stop offset="100%" stop-color="#8a6a2f"/>
       </linearGradient></defs>
-      <rect x="4.5" y="17" width="6" height="18" rx="3" fill="url(#sg1)"/>
-      <rect x="29.5" y="17" width="6" height="18" rx="3" fill="url(#sg1)"/>
-      <rect x="4.5" y="17" width="31" height="5" rx="2.5" fill="url(#sg1)"/>
-      <path d="M8 17 Q20 3 32 17" stroke="url(#sg1)" stroke-width="2.3" fill="none" stroke-linecap="round"/>
-      <circle cx="20" cy="9.3" r="3" fill="url(#sg1)"/>
-      <circle cx="20" cy="9.3" r="3" fill="none" stroke="#fff" stroke-opacity=".4" stroke-width=".7"/>
+      <path d="M15 40 C15 25 30 20 50 20 C70 20 85 25 85 40 C85 55 72 58 50 58 C28 58 15 55 15 40 Z" fill="none" stroke="url(#sg1)" stroke-width="5"/>
+      <path d="M50 20 L50 58" stroke="url(#sg1)" stroke-width="3.4" opacity=".4"/>
+      <circle cx="32" cy="40" r="3.4" fill="url(#sg1)"/>
+      <circle cx="68" cy="40" r="3.4" fill="url(#sg1)"/>
+      <path d="M22 66 Q50 78 78 66" stroke="url(#sg1)" stroke-width="4.2" fill="none" opacity=".5"/>
+      <path d="M28 74 Q50 84 72 74" stroke="url(#sg1)" stroke-width="3.4" fill="none" opacity=".3"/>
     </svg>
     <h1>MagicBridge</h1>
   </div>
@@ -436,23 +434,21 @@ button:focus{outline:2px solid #8b5cf6;outline-offset:3px}
 </body>
 </html>"""
 
-# ══════════════════════════════════════════════════════════════════════════════
-# HTML — Main dashboard
-# ══════════════════════════════════════════════════════════════════════════════
+# HTML: Main dashboard
 MAIN_HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="csrf-token" content="{{ csrf }}">
-<title>MagicBridge — Panel</title>
+<title>MagicBridge Panel</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#05060b; --sf:#0b0e17; --sf2:#101526;
-  --br:#1c2438; --br2:#2a3350;
-  --t1:#eef1f8; --t2:#8b93a8; --t3:#454f66;
-  --ac:#8b5cf6; --ac-bg:rgba(139,92,246,.12);
+  --bg:#05070d; --sf:#0a0d16; --sf2:#0f1424;
+  --br:#241f10; --br2:#3a3018;
+  --t1:#f3ecdd; --t2:#9a9280; --t3:#4d4a3f;
+  --ac:#c9a15c; --ac-bg:rgba(201,161,92,.12);
   --ok:#10b981; --ok-bg:rgba(16,185,129,.1);
   --wa:#f59e0b; --wa-bg:rgba(245,158,11,.1);
   --er:#f43f5e; --er-bg:rgba(244,63,94,.1);
@@ -559,7 +555,7 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
 
 <main id="mc" aria-label="Configuration">
 
-<!-- ══ USB Identity ══════════════════════════════════════════════════════════ -->
+<!-- USB Identity -->
 <section class="card" aria-labelledby="h-usb">
   <div class="ch">
     <h2 id="h-usb">USB identity</h2>
@@ -568,7 +564,7 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
   <div class="cb">
     <div class="field">
       <span class="fl" id="h-preset">Quick preset</span>
-      <span class="fd">Pick a keyboard preset — updates all fields. Click Apply to send.</span>
+      <span class="fd">Pick a keyboard preset (updates all fields). Click Apply to send.</span>
       <div class="pills" role="group" aria-labelledby="h-preset" id="pills"></div>
       <button class="btn btn-p" onclick="applyPreset()" aria-label="Apply selected USB preset">Apply preset</button>
     </div>
@@ -613,7 +609,7 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
   </div>
 </section>
 
-<!-- ══ Network ═══════════════════════════════════════════════════════════════ -->
+<!-- Network -->
 <section class="card" aria-labelledby="h-net">
   <div class="ch">
     <h2 id="h-net">Network identity</h2>
@@ -636,13 +632,13 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
     </div>
     <hr>
     <div class="field">
-      <span class="fl" id="h-ts">Tailscale — encrypted remote-access tunnel</span>
+      <span class="fl" id="h-ts">Tailscale: encrypted remote-access tunnel</span>
       <div id="ts-st" role="status" aria-live="polite" style="font-size:12px;color:var(--t3);margin:4px 0 6px">Loading…</div>
       <button class="btn" onclick="tsUp()" aria-label="Reconnect Tailscale">Reconnect</button>
     </div>
     <hr>
     <div class="field">
-      <span class="fl" id="h-fn">Tailscale Funnel — public HTTPS access</span>
+      <span class="fl" id="h-fn">Tailscale Funnel: public HTTPS access</span>
       <span class="fd">Exposes MagicBridge publicly. Requires Tailscale ≥ 1.34 and Funnel enabled in your tailnet.</span>
       <div id="fn-st" role="status" aria-live="polite" style="font-size:12px;color:var(--t3);margin:4px 0 6px">Loading…</div>
       <div class="frow" style="flex-wrap:wrap;gap:6px">
@@ -652,7 +648,7 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
     </div>
     <hr>
     <div class="field">
-      <span class="fl" id="h-ddns">DuckDNS — free public hostname</span>
+      <span class="fl" id="h-ddns">DuckDNS: free public hostname</span>
       <span class="fd">Points a .duckdns.org domain at your external IP, updated every 5 minutes.</span>
       <div class="frow" style="margin-top:6px;flex-wrap:wrap">
         <input type="text" id="ddns-h" placeholder="myhostname" aria-label="DuckDNS hostname" style="flex:1;min-width:100px">
@@ -664,7 +660,7 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
   </div>
 </section>
 
-<!-- ══ WiFi ═══════════════════════════════════════════════════════════════ -->
+<!-- WiFi -->
 <section class="card" aria-labelledby="h-wifi">
   <div class="ch">
     <h2 id="h-wifi">WiFi</h2>
@@ -691,7 +687,7 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
   </div>
 </section>
 
-<!-- ══ KVM Activity ══════════════════════════════════════════════════════════ -->
+<!-- KVM Activity -->
 <section class="card" aria-labelledby="h-kvm">
   <div class="ch">
     <h2 id="h-kvm">KVM activity</h2>
@@ -704,7 +700,7 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
   </div>
 </section>
 
-<!-- ══ System ════════════════════════════════════════════════════════════════ -->
+<!-- System -->
 <section class="card" aria-labelledby="h-sys">
   <div class="ch">
     <h2 id="h-sys">System</h2>
@@ -728,11 +724,11 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
   </div>
 </section>
 
-<!-- ══ Config Backup ══════════════════════════════════════════════════════════ -->
+<!-- Config Backup -->
 <section class="card full" aria-labelledby="h-bk">
   <div class="ch">
     <h2 id="h-bk">Config backup &amp; restore</h2>
-    <span class="cd">Save settings before reflashing — restore after reinstall</span>
+    <span class="cd">Save settings before reflashing, restore after reinstall</span>
   </div>
   <div class="cb">
     <span class="fd" style="display:block;margin-bottom:10px">
@@ -749,11 +745,11 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
   </div>
 </section>
 
-<!-- ══ Log Viewer ══════════════════════════════════════════════════════════════ -->
+<!-- Log Viewer -->
 <section class="card full" aria-labelledby="h-log">
   <div class="ch">
     <h2 id="h-log">Logs</h2>
-    <span class="cd">View system logs without SSH — last 50 lines</span>
+    <span class="cd">View system logs without SSH (last 50 lines)</span>
   </div>
   <div class="cb">
     <div class="frow" style="margin-bottom:8px">
@@ -803,7 +799,7 @@ function toast(msg, type='ok') {
   el._t = setTimeout(() => { el.className = ''; }, 3500);
 }
 
-/* ── Idle timer ─────────────────────────────────────────────── */
+/* Idle timer */
 const IDLE_MS = 28 * 60 * 1000;
 let iLast = Date.now();
 ['mousemove','keydown','click','touchstart'].forEach(
@@ -821,7 +817,7 @@ async function lock() {
   location.href = '/stealth/login';
 }
 
-/* ── USB profiles ───────────────────────────────────────────── */
+/* USB profiles */
 function buildPills() {
   const c = document.getElementById('pills');
   c.innerHTML = '';
@@ -872,7 +868,7 @@ async function safeMode() {
   if (b) b.textContent = r.safe ? 'Exit safe mode' : 'Safe mode';
 }
 
-/* ── MAC ────────────────────────────────────────────────────── */
+/* MAC */
 async function applyMac() {
   const r = await api('/stealth/api/apply', {
     action:'mac',
@@ -888,7 +884,7 @@ async function randMac() {
   if (r.mac) { document.getElementById('net-mac').value = r.mac; toast('MAC: '+r.mac); }
 }
 
-/* ── Tailscale ──────────────────────────────────────────────── */
+/* Tailscale */
 async function loadTs() {
   const r = await api('/stealth/api/tailscale');
   const el = document.getElementById('ts-st');
@@ -913,7 +909,7 @@ async function loadFunnel() {
   const el = document.getElementById('fn-st');
   if (!el) return;
   if (r.active && r.url)
-    el.innerHTML = '<span class="dot d-ok"></span>Active — <a href="'+r.url+'" target="_blank" style="color:var(--ac)">'+r.url+'</a>';
+    el.innerHTML = '<span class="dot d-ok"></span>Active: <a href="'+r.url+'" target="_blank" style="color:var(--ac)">'+r.url+'</a>';
   else if (r.active)
     el.innerHTML = '<span class="dot d-ok"></span>Active (fetching URL…)';
   else
@@ -932,7 +928,7 @@ async function funnelOff() {
   if (r.ok) setTimeout(loadFunnel, 2000);
 }
 
-/* ── DuckDNS ────────────────────────────────────────────────── */
+/* DuckDNS */
 async function applyDdns() {
   const r = await api('/stealth/api/apply', {
     action:'duckdns',
@@ -940,12 +936,12 @@ async function applyDdns() {
     token: document.getElementById('ddns-t').value,
   });
   const el = document.getElementById('ddns-st');
-  el.textContent = r.ok ? 'Updated — IP: '+(r.ip||'?') : (r.error||'Failed');
+  el.textContent = r.ok ? 'Updated, IP: '+(r.ip||'?') : (r.error||'Failed');
   el.style.color  = r.ok ? 'var(--ok)' : 'var(--er)';
   toast(r.ok ? 'DuckDNS updated' : 'DuckDNS failed', r.ok?'ok':'er');
 }
 
-/* ── Status / Stats ─────────────────────────────────────────── */
+/* Status / Stats */
 async function loadStatus() {
   const r = await api('/stealth/api/status');
   document.getElementById('u-mfr').value    = r.mfr       || '';
@@ -982,7 +978,7 @@ async function loadStats() {
   if (sl) sl.textContent = (r.sess_log||[]).join('\n');
 }
 
-/* ── WiFi ───────────────────────────────────────────────────── */
+/* WiFi */
 async function loadWifiStatus() {
   const r = await api('/stealth/api/wifi/status');
   const el = document.getElementById('wifi-st');
@@ -1040,14 +1036,14 @@ async function connectWifi(name) {
 
 function esc(s) { return String(s).replace(/'/g,"\\'"); }
 
-/* ── Logs ───────────────────────────────────────────────────── */
+/* Logs */
 async function refreshLogs() {
   const src = document.getElementById('log-src').value;
   const r   = await api('/stealth/api/logs?source='+src);
   document.getElementById('log-view').textContent = r.content || '(empty)';
 }
 
-/* ── Backup ─────────────────────────────────────────────────── */
+/* Backup */
 function dlBackup() { location.href = '/stealth/api/backup'; }
 
 async function ulRestore(input) {
@@ -1056,17 +1052,17 @@ async function ulRestore(input) {
   let d;
   try { d = JSON.parse(await f.text()); } catch { toast('Invalid JSON', 'er'); return; }
   const r = await api('/stealth/api/restore', d);
-  toast(r.ok ? 'Restored — reload page' : (r.error||'Error'), r.ok?'ok':'er');
+  toast(r.ok ? 'Restored, reload page' : (r.error||'Error'), r.ok?'ok':'er');
 }
 
-/* ── Reboot ─────────────────────────────────────────────────── */
+/* Reboot */
 async function doReboot() {
   if (!confirm('Reboot? Active KVM session will be interrupted.')) return;
   await api('/stealth/api/apply-reboot', {});
   toast('Rebooting…');
 }
 
-/* ── Change password ────────────────────────────────────────── */
+/* Change password */
 function chPw() {
   document.getElementById('pw-form').style.display = '';
 }
@@ -1087,7 +1083,7 @@ async function savePw() {
   }
 }
 
-/* ── Init ───────────────────────────────────────────────────── */
+/* Init */
 buildPills();
 loadStatus();
 loadStats();
@@ -1104,9 +1100,7 @@ setInterval(loadWifiStatus, 30000);
 </body>
 </html>"""
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Routes
-# ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/login", methods=["GET", "POST"])
 def login():
@@ -1323,7 +1317,7 @@ def api_apply():
                 ip = _ext_ip()
                 _log_sess(f"DuckDNS: {host}.duckdns.org → {ip}")
                 return jsonify({"ok": True, "ip": ip})
-            return jsonify({"ok": False, "error": "DuckDNS update failed — check hostname and token"})
+            return jsonify({"ok": False, "error": "DuckDNS update failed, check hostname and token"})
 
         elif act == "ts_up":
             subprocess.Popen(["tailscale","up","--accept-routes"],
@@ -1359,9 +1353,7 @@ def api_reboot():
     return jsonify({"ok": True})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# WiFi API (no auth — accessible from main KVM page via nginx /api/wifi/ proxy)
-# ══════════════════════════════════════════════════════════════════════════════
+# WiFi API (no auth, accessible from main KVM page via nginx /api/wifi/ proxy)
 
 def _nm(*args, timeout=15):
     return subprocess.run(["nmcli"] + list(args),
@@ -1474,9 +1466,7 @@ def api_wifi_connect():
     return jsonify({"ok":False,"error":err[:120]})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Stealth-panel-proxied WiFi routes (called from stealth panel JS)
-# ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/api/wifi/status-auth")
 def api_wifi_status_auth():
@@ -1497,11 +1487,9 @@ def api_wifi_psk_auth():
     return jsonify({"ok": True, "psk": psk})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Boot
-# ══════════════════════════════════════════════════════════════════════════════
 
 _boot()
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=7777, debug=False, use_reloader=False)
+    app.ru

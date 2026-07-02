@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MagicBridge — Main KVM Server
+MagicBridge Main KVM Server
 
 aiohttp HTTP + WebSocket server on 127.0.0.1:8080
 nginx proxies all external traffic here.
@@ -32,26 +32,26 @@ try:
 except ImportError:
     _HAS_BCRYPT = False
 
-# ── Local modules (same directory) ────────────────────────────────────────────
+# Local modules (same directory)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hid   import HIDKeyboard, HIDMouse
 from video import VideoManager
 
-# ── Config ─────────────────────────────────────────────────────────────────────
+# Config
 CONFIG_PATH = "/etc/magicbridge/config.json"
 WEB_ROOT    = "/opt/magicbridge/web"
 HOST        = "127.0.0.1"
 PORT        = 8080
 VERSION     = "1.0.0"
 
-# ── Session auth (independent from /stealth/ — separate password, separate
-# secret, separate cookie/session). Logging into one no longer unlocks the
-# other, so a leaked main-page password can't be used to reach the admin panel.
+# Session auth is independent from /stealth/: separate password, separate
+# secret, separate cookie/session. Logging into one doesn't unlock the
+# other, so a leaked main-page password can't reach the admin panel.
 SESSION_COOKIE  = "mb_sess"
 SESSION_TIMEOUT = 1800  # 30 min idle, matches stealth-dashboard.py
 DEFAULT_PASSWORD = "magicbridge"
 
-# ── Logging ────────────────────────────────────────────────────────────────────
+# Logging
 logging.basicConfig(
     level   = logging.INFO,
     format  = "%(asctime)s  %(name)-24s %(levelname)s  %(message)s",
@@ -60,7 +60,7 @@ logging.basicConfig(
 log = logging.getLogger("magicbridge")
 
 
-# ── Auth helpers ───────────────────────────────────────────────────────────────
+# Auth helpers
 def _auth_cfg() -> dict:
     try:
         return json.loads(Path(CONFIG_PATH).read_text()).get("auth", {})
@@ -104,7 +104,7 @@ def _ensure_auth_defaults():
     """Bootstrap auth.main_password_hash/main_secret_key if config.json
     doesn't have them yet (e.g. first boot). These are namespaced under
     "main_*" specifically so they never collide with /stealth/'s own
-    auth.password_hash/secret_key — the two panels have fully independent
+    auth.password_hash/secret_key. The two panels have fully independent
     credentials by design."""
     import secrets as _secrets
     try:
@@ -137,33 +137,33 @@ LOGIN_HTML = """<!DOCTYPE html>
 <title>MagicBridge</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{min-height:100%;background:#05060b;
-  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#eef1f8}
+html,body{min-height:100%;background:#05070d;
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f3ecdd}
 body{display:flex;align-items:center;justify-content:center;padding:1.5rem;position:relative;overflow:hidden}
 body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   background:
-    radial-gradient(ellipse 900px 620px at 10% -10%, rgba(34,211,200,.16), transparent 60%),
-    radial-gradient(ellipse 760px 560px at 110% 15%, rgba(139,92,246,.15), transparent 60%),
-    radial-gradient(ellipse 820px 640px at 50% 120%, rgba(34,211,238,.08), transparent 62%),
-    linear-gradient(180deg,#05060b 0%,#080a14 55%,#05060b 100%);}
-.card{position:relative;z-index:1;background:rgba(20,26,44,.62);backdrop-filter:blur(20px) saturate(140%);
+    radial-gradient(ellipse 900px 620px at 10% -10%, rgba(240,214,152,.12), transparent 60%),
+    radial-gradient(ellipse 760px 560px at 110% 15%, rgba(201,161,92,.14), transparent 60%),
+    radial-gradient(ellipse 820px 640px at 50% 120%, rgba(138,106,47,.09), transparent 62%),
+    linear-gradient(180deg,#05070d 0%,#080b16 55%,#05070d 100%);}
+.card{position:relative;z-index:1;background:rgba(19,26,44,.62);backdrop-filter:blur(20px) saturate(140%);
       -webkit-backdrop-filter:blur(20px) saturate(140%);
-      border:0.5px solid rgba(255,255,255,.1);border-radius:16px;
+      border:0.5px solid rgba(240,214,152,.12);border-radius:16px;
       padding:2.1rem 2rem;width:100%;max-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:4px}
 .brand svg{width:30px;height:30px;flex-shrink:0}
 h1{font-size:17px;font-weight:700;letter-spacing:-.3px;
-   background:linear-gradient(135deg,#22d3c8 0%,#6ee0d8 22%,#8b5cf6 100%);
+   background:linear-gradient(135deg,#f0d698 0%,#c9a15c 55%,#8a6a2f 100%);
    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.sub{font-size:11.5px;color:#8b93a8;margin:4px 0 1.6rem}
-label{display:block;font-size:11px;color:#8b93a8;margin-bottom:5px;font-weight:500}
-input[type=password]{width:100%;padding:10px 12px;background:rgba(5,6,11,.7);
-  border:0.5px solid rgba(255,255,255,.12);border-radius:9px;color:#eef1f8;font-size:13px;outline:none;
+.sub{font-size:11.5px;color:#9a9280;margin:4px 0 1.6rem}
+label{display:block;font-size:11px;color:#9a9280;margin-bottom:5px;font-weight:500}
+input[type=password]{width:100%;padding:10px 12px;background:rgba(5,7,13,.7);
+  border:0.5px solid rgba(240,214,152,.16);border-radius:9px;color:#f3ecdd;font-size:13px;outline:none;
   transition:border-color .15s}
-input[type=password]:focus{border-color:#22d3c8}
+input[type=password]:focus{border-color:#c9a15c}
 button{margin-top:1rem;width:100%;padding:10px;
-  background:linear-gradient(135deg,#22d3c8 0%,#6ee0d8 22%,#8b5cf6 100%);
-  border:none;border-radius:9px;color:#04140f;font-size:13px;font-weight:700;cursor:pointer;
+  background:linear-gradient(135deg,#f0d698 0%,#c9a15c 55%,#8a6a2f 100%);
+  border:none;border-radius:9px;color:#1a1408;font-size:13px;font-weight:700;cursor:pointer;
   transition:filter .15s,transform .1s}
 button:hover{filter:brightness(1.08)}
 button:active{transform:scale(.98)}
@@ -171,16 +171,16 @@ button:active{transform:scale(.98)}
   border:0.5px solid rgba(244,63,94,.3);border-radius:8px;font-size:12px;color:#fb7185}
 </style></head><body><main><div class="card">
 <div class="brand">
-  <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
-    <defs><linearGradient id="lg1" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#22d3c8"/><stop offset="1" stop-color="#8b5cf6"/>
+  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
+    <defs><linearGradient id="lg1" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#f0d698"/><stop offset="100%" stop-color="#8a6a2f"/>
     </linearGradient></defs>
-    <rect x="4.5" y="17" width="6" height="18" rx="3" fill="url(#lg1)"/>
-    <rect x="29.5" y="17" width="6" height="18" rx="3" fill="url(#lg1)"/>
-    <rect x="4.5" y="17" width="31" height="5" rx="2.5" fill="url(#lg1)"/>
-    <path d="M8 17 Q20 3 32 17" stroke="url(#lg1)" stroke-width="2.3" fill="none" stroke-linecap="round"/>
-    <circle cx="20" cy="9.3" r="3" fill="url(#lg1)"/>
-    <circle cx="20" cy="9.3" r="3" fill="none" stroke="#fff" stroke-opacity=".4" stroke-width=".7"/>
+    <path d="M15 40 C15 25 30 20 50 20 C70 20 85 25 85 40 C85 55 72 58 50 58 C28 58 15 55 15 40 Z" fill="none" stroke="url(#lg1)" stroke-width="5"/>
+    <path d="M50 20 L50 58" stroke="url(#lg1)" stroke-width="3.4" opacity=".4"/>
+    <circle cx="32" cy="40" r="3.4" fill="url(#lg1)"/>
+    <circle cx="68" cy="40" r="3.4" fill="url(#lg1)"/>
+    <path d="M22 66 Q50 78 78 66" stroke="url(#lg1)" stroke-width="4.2" fill="none" opacity=".5"/>
+    <path d="M28 74 Q50 84 72 74" stroke="url(#lg1)" stroke-width="3.4" fill="none" opacity=".3"/>
   </svg>
   <h1>MagicBridge</h1>
 </div>
@@ -222,7 +222,7 @@ async def logout_handler(request: web.Request) -> web.Response:
 
 
 async def api_change_password(request: web.Request) -> web.Response:
-    """POST /api/auth/change-password — change the MAIN KVM page password.
+    """POST /api/auth/change-password: change the MAIN KVM page password.
     Requires the current password (not just an active session) so a
     left-open browser tab can't be used to silently lock everyone else out."""
     try:
@@ -268,18 +268,16 @@ async def auth_middleware(request: web.Request, handler):
     return await handler(request)
 
 
-# ── Global HID + Video instances ──────────────────────────────────────────────
+# Global HID + Video instances
 keyboard = HIDKeyboard("/dev/hidg0")
 mouse    = HIDMouse("/dev/hidg1")
 video    = VideoManager()
 
-# ── Connected WebSocket clients (for count tracking) ──────────────────────────
+# Connected WebSocket clients (for count tracking)
 _ws_clients: set = set()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# WebSocket — keyboard / mouse input handler
-# ══════════════════════════════════════════════════════════════════════════════
+# WebSocket: keyboard / mouse input handler
 
 
 # -- Session / access logging -----------------------------------------------
@@ -387,9 +385,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # HTTP handlers
-# ══════════════════════════════════════════════════════════════════════════════
 
 async def index_handler(request: web.Request) -> web.Response:
     path = Path(WEB_ROOT) / "index.html"
@@ -499,9 +495,7 @@ async def api_stream_settings(request: web.Request) -> web.Response:
     return web.json_response({"ok": ok, "status": video.status()})
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # App factory
-# ══════════════════════════════════════════════════════════════════════════════
 
 
 
@@ -524,7 +518,7 @@ async def api_power(request):
 
 
 async def api_tailscale_get(request):
-    """GET /api/tailscale — check install status, connected state, login URL."""
+    """GET /api/tailscale: check install status, connected state, login URL."""
     import subprocess, shutil, json as _json, re as _re2
     installed = bool(shutil.which("tailscale"))
     if not installed:
@@ -574,7 +568,7 @@ async def api_tailscale_get(request):
 
 
 async def api_tailscale(request):
-    """POST /api/tailscale — install/up/down/login/logout."""
+    """POST /api/tailscale: install/up/down/login/logout."""
     import subprocess, shutil, re as _re3
     installed = bool(shutil.which("tailscale"))
     try:
@@ -680,17 +674,17 @@ def _gen_serial(profile_idx):
             mac = "dca632c49b00"
     seed = int(_hh.md5((mac + str(profile_idx)).encode()).hexdigest()[:8], 16)
     rng = _rr.Random(seed)
-    if profile_idx == 0:   # Logitech — YYMMcode+5digits
+    if profile_idx == 0:   # Logitech: YYMMcode+5digits
         yr = rng.randint(19, 23); mo = rng.randint(1, 12)
         return "%02d%02dLK%05d" % (yr, mo, rng.randint(10000, 99999))
-    elif profile_idx == 1: # Microsoft — numeric 12 digits
+    elif profile_idx == 1: # Microsoft: numeric 12 digits
         return "780%09d" % rng.randint(100000000, 999999999)
-    elif profile_idx == 2: # Dell — CN0 + 13 alphanumeric
+    elif profile_idx == 2: # Dell: CN0 + 13 alphanumeric
         ch = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789"
         return "CN0" + "".join(rng.choices(ch, k=13))
-    elif profile_idx == 3: # HP — CN + 10 digits
+    elif profile_idx == 3: # HP: CN + 10 digits
         return "CN0" + "".join(rng.choices("0123456789", k=10))
-    elif profile_idx == 4: # Apple — 12 uppercase alphanumeric
+    elif profile_idx == 4: # Apple: 12 uppercase alphanumeric
         ch = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
         return "".join(rng.choices(ch, k=12))
     else:
@@ -803,15 +797,11 @@ async def api_wifi(request):
 
 
 async def api_update(request):
-    """POST /api/update — pull latest from GitHub and redeploy.
+    """POST /api/update: pull the latest code from GitHub and redeploy.
 
-    Design note: /opt/magicbridge is a *flat* runtime directory that
-    install.sh populates by copying files out of a git clone — it is not
-    itself a git repo (confirmed: no .git there). The real clone lives at
-    /opt/magicbridge-repo, matching install.sh's own convention. The old
-    version of this handler ran `git -C /opt/magicbridge pull`, which always
-    failed (no .git to pull in) — the Update button was a silent no-op.
-    Fixed to pull the actual repo clone, then re-run the same file-copy step
+    /opt/magicbridge is a flat runtime directory, not a git repo. install.sh
+    populates it by copying files out of a real clone at /opt/magicbridge-repo.
+    This handler pulls that clone, then re-runs the same file-copy step
     install.sh uses to deploy into /opt/magicbridge.
     """
     import subprocess as _sp
@@ -865,7 +855,7 @@ async def api_update(request):
 
     try:
         # Mirror install.sh's file layout exactly (flat copy, no "src/" prefix,
-        # no .git — /opt/magicbridge stays a plain runtime dir)
+        # no .git, /opt/magicbridge stays a plain runtime dir)
         for sub in ("core", "web", "dashboard", "provision"):
             os.makedirs(os.path.join(INSTALL_DIR, sub), exist_ok=True)
 
@@ -893,13 +883,13 @@ async def api_update(request):
     except Exception as e:
         return web.json_response({"ok": False, "out": out + "\ncopy step failed: " + str(e), "restarted": False})
 
-    # Validate nginx config before reloading — never reload on a broken config
+    # Validate nginx config before reloading, never reload on a broken config
     nginx_test = _sp.run(["nginx", "-t"], capture_output=True, text=True, timeout=10)
     nginx_ok = nginx_test.returncode == 0
     if nginx_ok:
         _sp.run(["systemctl", "reload", "nginx"], capture_output=True, timeout=10)
 
-    # Restart the app services only — deliberately NOT mb-gadget.service, so an
+    # Restart the app services only. Deliberately skip mb-gadget.service so an
     # active USB HID session to the target PC isn't interrupted by an update.
     _sp.run(["systemctl", "restart", "stealth-dashboard.service"], capture_output=True, timeout=10)
     _sp.run(["systemctl", "restart", "magicbridge.service"], capture_output=True, timeout=10)
@@ -914,7 +904,7 @@ async def api_update(request):
 
 
 async def api_stealth_logs(request):
-    """GET /api/stealth/logs — access log (stealth dashboard only)."""
+    """GET /api/stealth/logs: access log (stealth dashboard only)."""
     try:
         data = _jlog.loads(open(_SESS_LOG).read())
     except Exception:
@@ -923,7 +913,7 @@ async def api_stealth_logs(request):
 
 
 async def api_ai_run(request):
-    """POST /api/ai/run — proxy natural-language command to KVM action sequence."""
+    """POST /api/ai/run: proxy a natural-language command into a KVM action sequence."""
     try:
         d = await request.json()
     except Exception:
@@ -1072,26 +1062,24 @@ def build_app() -> web.Application:
     return app
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Main entry point
-# ══════════════════════════════════════════════════════════════════════════════
 
 async def main():
     log.info("MagicBridge v%s starting…", VERSION)
 
     _ensure_auth_defaults()
 
-    # ── Load config ───────────────────────────────────────────────────────────
+    # Load config
     cfg = {}
     try:
         cfg = json.loads(Path(CONFIG_PATH).read_text())
         log.info("Config loaded from %s", CONFIG_PATH)
     except FileNotFoundError:
-        log.info("No config at %s — using defaults", CONFIG_PATH)
+        log.info("No config at %s, using defaults", CONFIG_PATH)
     except Exception as e:
-        log.warning("Config load error: %s — using defaults", e)
+        log.warning("Config load error: %s, using defaults", e)
 
-    # ── Start video stream ────────────────────────────────────────────────────
+    # Start video stream
     vc  = cfg.get("video", {})
     loop = asyncio.get_running_loop()
     log.info("Starting video stream…")
@@ -1106,9 +1094,9 @@ async def main():
         log.info("Stream started: %s", video.status())
         video.start_watchdog()
     else:
-        log.warning("Stream not started — no capture device or streamer found")
+        log.warning("Stream not started, no capture device or streamer found")
 
-    # ── Start HTTP server ──────────────────────────────────────────────────────
+    # Start HTTP server
     app    = build_app()
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
@@ -1116,7 +1104,7 @@ async def main():
     await site.start()
     log.info("HTTP+WS listening on %s:%d", HOST, PORT)
 
-    # ── Run until killed ───────────────────────────────────────────────────────
+    # Run until killed
     try:
         await asyncio.Event().wait()
     except (KeyboardInterrupt, SystemExit):
@@ -1126,8 +1114,4 @@ async def main():
         keyboard.release_all()
         mouse.release_all()
         video.stop()
-        await runner.cleanup()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        await runner

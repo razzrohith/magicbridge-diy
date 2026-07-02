@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MagicBridge — Video Capture Manager
+MagicBridge Video Capture Manager
 
 Manages the MJPEG/H264 stream from USB HDMI capture cards.
 Primary streamer: ustreamer (apt install ustreamer)
@@ -27,7 +27,6 @@ STREAM_HOST = "127.0.0.1"
 STREAM_PORT = 8081   # nginx proxies /stream → this port
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 class VideoManager:
     """Start/stop/restart the MJPEG video stream from a V4L2 capture device."""
 
@@ -36,13 +35,13 @@ class VideoManager:
         self.device     = None
         self.resolution = "1920x1080"
         self.fps        = 30
-        self.quality    = 90      # MJPEG quality 1–100
+        self.quality    = 90      # MJPEG quality 1-100
         self.mode       = "mjpeg" # "mjpeg" | "h264" (h264 needs ffmpeg)
         self.port       = STREAM_PORT
         self._lock      = threading.Lock()
         self._mon_thr   = None    # watchdog thread
 
-    # ── Device discovery ───────────────────────────────────────────────────────
+    # Device discovery
 
     def detect_devices(self) -> list:
         """Return list of V4L2 VIDEO_CAPTURE devices with metadata."""
@@ -73,7 +72,7 @@ class VideoManager:
         devs = self.detect_devices()
         if not devs:
             return None
-        # Prefer USB devices (capture cards) — Pi internal devices use "platform:" bus
+        # Prefer USB devices (capture cards). Pi internal devices use "platform:" bus
         usb = [d for d in devs if d["bus"].startswith("usb")]
         if usb:
             log.info("Auto-selected USB capture device: %s (%s)", usb[0]["device"], usb[0]["name"])
@@ -139,7 +138,7 @@ class VideoManager:
             log.debug("get_best_mjpeg_resolution failed: %s", e)
         return None
 
-    # ── Stream control ─────────────────────────────────────────────────────────
+    # Stream control
 
     def start(self, device: str = None, resolution: str = None,
               fps: int = None, quality: int = None, mode: str = None) -> bool:
@@ -165,7 +164,7 @@ class VideoManager:
 
             # Auto-detect best native MJPEG resolution when not explicitly set.
             # This lets MagicBridge adapt to any laptop/screen resolution automatically:
-            # 14" 1080p, 16" 1440p, 4K, etc. — just uses whatever the capture card signals.
+            # 14" 1080p, 16" 1440p, 4K, etc. Just uses whatever the capture card signals.
             if not resolution:
                 best = self.get_best_mjpeg_resolution(self.device)
                 if best and best != self.resolution:
@@ -178,7 +177,7 @@ class VideoManager:
             if shutil.which("ustreamer"):
                 ok = self._start_ustreamer()
             else:
-                log.info("ustreamer not found — using ffmpeg fallback")
+                log.info("ustreamer not found, using ffmpeg fallback")
                 ok = self._start_ffmpeg()
 
             return ok
@@ -203,7 +202,7 @@ class VideoManager:
         self.quality = max(1, min(100, quality))
         return self.start()
 
-    # ── Internal stream launchers ──────────────────────────────────────────────
+    # Internal stream launchers
 
     def _stop_locked(self):
         """Stop process (caller holds lock)."""
@@ -229,7 +228,7 @@ class VideoManager:
         # launch our own subprocess with the actual requested device/resolution/fps/
         # quality. Previously this just skipped straight to "return True" whenever
         # the systemd unit was active, which meant changing settings from the UI
-        # silently did nothing — the systemd unit kept running with its original
+        # silently did nothing. The systemd unit kept running with its original
         # hardcoded flags while /api/status reported the (unapplied) new settings.
         try:
             import subprocess as _sp
@@ -265,7 +264,7 @@ class VideoManager:
             )
             time.sleep(0.8)
             if self.process.poll() is not None:
-                log.warning("ustreamer exited immediately — check device/resolution")
+                log.warning("ustreamer exited immediately, check device/resolution")
                 self.process = None
                 return False
             log.info("ustreamer: %s %s %dfps q=%d → %s:%d",
@@ -285,7 +284,7 @@ class VideoManager:
         ffmpeg → pipe → Python HTTP mini-server handles the actual serving.
         """
         if not shutil.which("ffmpeg"):
-            log.error("Neither ustreamer nor ffmpeg found — no video stream")
+            log.error("Neither ustreamer nor ffmpeg found, no video stream")
             return False
         w, h = self.resolution.split("x")
         # ffmpeg captures from V4L2 and outputs raw MJPEG to stdout
@@ -309,7 +308,7 @@ class VideoManager:
             )
             time.sleep(0.5)
             if self.process.poll() is not None:
-                log.warning("ffmpeg exited immediately — trying mjpeg fallback format")
+                log.warning("ffmpeg exited immediately, trying mjpeg fallback format")
                 # Retry without input_format=mjpeg (some cards output raw)
                 cmd2 = [
                     "ffmpeg", "-f", "v4l2",
@@ -442,7 +441,7 @@ class VideoManager:
                 pass
         srv.close()
 
-    # ── Status & watchdog ──────────────────────────────────────────────────────
+    # Status & watchdog
 
     def is_running(self) -> bool:
         # Also return True if ustreamer.service manages the stream
@@ -473,7 +472,7 @@ class VideoManager:
                 needs_restart = False
                 with self._lock:
                     if self.device and not self.is_running():
-                        log.info("Stream died — restarting…")
+                        log.info("Stream died, restarting...")
                         needs_restart = True
                 if needs_restart:
                     self.restart()

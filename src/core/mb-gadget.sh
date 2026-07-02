@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-#  MagicBridge — USB HID Gadget Setup
+#  MagicBridge USB HID Gadget Setup
 #  Creates /dev/hidg0 (keyboard) and /dev/hidg1 (mouse)
 #
 #  Reads identity from /etc/magicbridge/config.json if present.
@@ -12,7 +12,7 @@ set -e
 GADGET_DIR="/sys/kernel/config/usb_gadget/g1"
 CONFIG_FILE="/etc/magicbridge/config.json"
 
-# ── Load identity from config.json ───────────────────────────────────────────
+# Load identity from config.json
 VID="0x046d"
 PID="0xc31c"
 MFR="Logitech"
@@ -37,7 +37,7 @@ except: print('$2')
     SER=$(_py serial "12AB34CD")
 fi
 
-# ── Load kernel modules ───────────────────────────────────────────────────────
+# Load kernel modules
 modprobe libcomposite 2>/dev/null || { echo "mb-gadget: WARNING libcomposite not loaded"; true; }
 modprobe dwc2         2>/dev/null || true
 sleep 0.5
@@ -47,14 +47,14 @@ if ! mountpoint -q /sys/kernel/config; then
     mount -t configfs none /sys/kernel/config 2>/dev/null || true
 fi
 
-# ── Skip if already bound ─────────────────────────────────────────────────────
+# Skip if already bound
 if [[ -d "$GADGET_DIR" ]]; then
     UDC_NOW=$(cat "$GADGET_DIR/UDC" 2>/dev/null | tr -d '[:space:]')
     if [[ -n "$UDC_NOW" ]]; then
-        echo "mb-gadget: already bound to '$UDC_NOW' — skipping"
+        echo "mb-gadget: already bound to '$UDC_NOW', skipping"
         exit 0
     fi
-    # Gadget dir exists but unbound — remove and recreate cleanly
+    # Gadget dir exists but unbound. Remove and recreate cleanly
     echo "" > "$GADGET_DIR/UDC" 2>/dev/null || true
     rm -f "$GADGET_DIR/configs/c.1/hid.keyboard" \
           "$GADGET_DIR/configs/c.1/hid.mouse"    2>/dev/null || true
@@ -66,7 +66,7 @@ if [[ -d "$GADGET_DIR" ]]; then
     rmdir "$GADGET_DIR"                          2>/dev/null || true
 fi
 
-# ── Create gadget ─────────────────────────────────────────────────────────────
+# Create gadget
 mkdir -p "$GADGET_DIR"
 
 # USB IDs
@@ -89,7 +89,7 @@ mkdir -p "$GADGET_DIR/configs/c.1/strings/0x409"
 echo "Config 1" > "$GADGET_DIR/configs/c.1/strings/0x409/configuration"
 echo "250"      > "$GADGET_DIR/configs/c.1/MaxPower"   # 250 mA
 
-# ── Keyboard HID function ─────────────────────────────────────────────────────
+# Keyboard HID function
 mkdir -p "$GADGET_DIR/functions/hid.keyboard"
 echo "1" > "$GADGET_DIR/functions/hid.keyboard/protocol"    # 1 = keyboard
 echo "1" > "$GADGET_DIR/functions/hid.keyboard/subclass"    # 1 = boot interface
@@ -104,7 +104,7 @@ printf '\x05\x01\x09\x06\xa1\x01\x05\x07\x19\xe0\x29\xe7\x15\x00\x25\x01\x75\x01
 ln -sf "$GADGET_DIR/functions/hid.keyboard" \
        "$GADGET_DIR/configs/c.1/hid.keyboard"
 
-# ── Mouse HID function ────────────────────────────────────────────────────────
+# Mouse HID function
 mkdir -p "$GADGET_DIR/functions/hid.mouse"
 echo "2" > "$GADGET_DIR/functions/hid.mouse/protocol"     # 2 = mouse
 echo "1" > "$GADGET_DIR/functions/hid.mouse/subclass"     # 1 = boot interface
@@ -118,7 +118,7 @@ printf '\x05\x01\x09\x02\xa1\x01\x09\x01\xa1\x00\x05\x09\x19\x01\x29\x03\x15\x00
 ln -sf "$GADGET_DIR/functions/hid.mouse" \
        "$GADGET_DIR/configs/c.1/hid.mouse"
 
-# ── Bind to USB Device Controller ─────────────────────────────────────────────
+# Bind to USB Device Controller
 UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
 if [[ -n "$UDC" ]]; then
     echo "$UDC" > "$GADGET_DIR/UDC"
@@ -126,7 +126,7 @@ if [[ -n "$UDC" ]]; then
     echo "mb-gadget: /dev/hidg0 = keyboard    /dev/hidg1 = mouse"
     echo "mb-gadget: USB identity: '$MFR' '$PROD' (VID=$VID PID=$PID)"
 else
-    echo "mb-gadget: WARNING — no UDC found"
+    echo "mb-gadget: WARNING, no UDC found"
     echo "  Ensure the Pi USB-C OTG port is connected to the target computer."
     echo "  Check that dtoverlay=dwc2 is in /boot/firmware/config.txt"
     exit 1

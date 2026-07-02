@@ -6,12 +6,12 @@
 <title>MagicBridge</title>
 <style>
 :root{
-  --bg:#05060b;--surf:#0b0e17;--surf2:#101526;--card:#141a2c;--card2:#1a2138;
-  --border:rgba(255,255,255,.06);--border2:rgba(255,255,255,.14);
-  --accent:#22d3c8;--accent2:#8b5cf6;--accent-d:#14b8ac;--accent-l:#5eead4;
-  --brand:linear-gradient(135deg,#22d3c8 0%,#6ee0d8 22%,#8b5cf6 100%);
+  --bg:#05070d;--surf:#0a0d16;--surf2:#0f1424;--card:#131a2c;--card2:#182036;
+  --border:rgba(240,214,152,.08);--border2:rgba(240,214,152,.18);
+  --accent:#e8c377;--accent2:#c9a15c;--accent-d:#a3792f;--accent-l:#f0d698;
+  --brand:linear-gradient(135deg,#f0d698 0%,#c9a15c 55%,#8a6a2f 100%);
   --green:#10b981;--red:#f43f5e;--yellow:#f59e0b;--purple:#a78bfa;--cyan:#22d3ee;
-  --text:#eef1f8;--sub:#8b93a8;--muted:#454f66;
+  --text:#f3ecdd;--sub:#9a9280;--muted:#4d4a3f;
   --r:8px;--r2:13px;--sh:0 8px 32px rgba(0,0,0,.7);
   --topH:46px;--botH:50px;--sideW:310px;
 }
@@ -20,22 +20,22 @@ html,body{height:100%;height:100dvh;overflow:hidden}
 body{background:var(--bg);color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
   font-size:13px;display:flex;flex-direction:column;position:relative}
-/* ── Fluid gradient-mesh backdrop ── soft color pools behind the whole app,
-   fixed so it never scrolls; every surface above sits on top of it. */
+/* Fluid gradient-mesh backdrop: soft color pools behind the whole app,
+   fixed so it never scrolls. Every surface above sits on top of it. */
 body::before{
   content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   background:
-    radial-gradient(ellipse 900px 620px at 12% -8%,  rgba(34,211,200,.14), transparent 60%),
-    radial-gradient(ellipse 760px 560px at 108% 18%, rgba(139,92,246,.13), transparent 60%),
-    radial-gradient(ellipse 820px 640px at 46% 118%, rgba(34,211,238,.07), transparent 62%),
-    linear-gradient(180deg,#05060b 0%,#080a14 55%,#05060b 100%);
+    radial-gradient(ellipse 900px 620px at 12% -8%,  rgba(240,214,152,.10), transparent 60%),
+    radial-gradient(ellipse 760px 560px at 108% 18%, rgba(201,161,92,.12), transparent 60%),
+    radial-gradient(ellipse 820px 640px at 46% 118%, rgba(138,106,47,.10), transparent 62%),
+    linear-gradient(180deg,#05070d 0%,#080b16 55%,#05070d 100%);
 }
 #topbar,#botbar,#sidebar,#main,#relbar,#recapture,#vkbd,#toast{position:relative;z-index:1}
 button,select,input,textarea{font-family:inherit;color:inherit}
 ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--muted);border-radius:2px}
 
-/* ── Release bar ── */
+/* Release bar */
 #relbar{display:none;position:fixed;top:0;left:0;right:0;z-index:900;
   height:var(--topH);background:rgba(239,68,68,.12);border-bottom:1px solid #ef444433;
   align-items:center;justify-content:space-between;padding:0 14px;}
@@ -44,7 +44,7 @@ button,select,input,textarea{font-family:inherit;color:inherit}
 #relbtn{height:26px;padding:0 12px;background:#ef444420;border:1px solid #ef444444;
   border-radius:20px;color:#fca5a5;font-size:11px;font-weight:600;cursor:pointer;}
 
-/* ── Recapture overlay ── */
+/* Recapture overlay */
 #recapture{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);
   backdrop-filter:blur(10px);z-index:1000;
   align-items:center;justify-content:center;flex-direction:column;
@@ -61,7 +61,7 @@ button,select,input,textarea{font-family:inherit;color:inherit}
   border-radius:20px;padding:4px 14px;display:inline-block;margin-bottom:10px}
 .rc-timer{font-size:10px;color:rgba(255,255,255,.22)}
 
-/* ── Top bar ── */
+/* Top bar */
 #topbar{flex-shrink:0;height:var(--topH);background:rgba(11,14,23,.72);
   backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);
   border-bottom:1px solid var(--border);display:flex;align-items:center;
@@ -90,7 +90,7 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar{display:none!important}
 .tbtn:hover{background:var(--card2);color:var(--text);border-color:var(--border2)}
 .tbtn:active{filter:brightness(.8)}
 .tbtn.icon{width:28px;padding:0;justify-content:center;font-size:15px}
-.tbtn.active{background:#0c3230;border-color:#22d3c840;color:#5eead4}
+.tbtn.active{background:#2c2410;border-color:#c9a15c40;color:#f0d698}
 #cwrap{position:relative}
 #cmenu{position:absolute;top:calc(100% + 5px);left:0;background:var(--surf2);
   border:1px solid var(--border2);border-radius:var(--r2);padding:4px;
@@ -102,7 +102,7 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar{display:none!important}
 .ci .kbd{font-size:10px;color:var(--muted);background:var(--card);
   border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-family:monospace}
 
-/* ── FS HUDs ── */
+/* FS HUDs */
 .fs-hud{position:fixed;left:50%;transform:translateX(-50%);
   background:rgba(7,7,20,.82);backdrop-filter:blur(24px) saturate(160%);
   border:1px solid rgba(255,255,255,.1);display:flex;align-items:center;
@@ -128,7 +128,7 @@ body:not(.fs) .fs-hud{display:none!important}
 #fh-send{height:28px;padding:0 12px;background:var(--accent);border:none;
   border-radius:var(--r);color:#fff;font-size:12px;cursor:pointer;}
 
-/* ── Main ── */
+/* Main */
 #main{flex:1;display:flex;overflow:hidden;position:relative}
 #view{flex:1;position:relative;overflow:hidden;background:#000;min-width:0;cursor:default}
 #stream{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}
@@ -153,7 +153,7 @@ body:not(.fs) .fs-hud{display:none!important}
   white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .3s}
 #view.idle #hint{opacity:1}
 
-/* ── Sidebar ── */
+/* Sidebar */
 #sidebar{width:0;flex-shrink:0;overflow:hidden;
   transition:width .22s cubic-bezier(.4,0,.2,1);
   background:rgba(11,14,23,.78);backdrop-filter:blur(20px) saturate(140%);-webkit-backdrop-filter:blur(20px) saturate(140%);
@@ -190,8 +190,8 @@ body:not(.fs) .fs-hud{display:none!important}
 .sbtn:last-child{margin-bottom:0}
 .sbtn:hover{background:var(--card);color:var(--text);border-color:var(--border2)}
 .sbtn:active{filter:brightness(.8)}
-.sbtn.pri{background:#0c3230;border-color:#22d3c840;color:#5eead4}
-.sbtn.pri:hover{background:#123c39}
+.sbtn.pri{background:#2c2410;border-color:#c9a15c40;color:#f0d698}
+.sbtn.pri:hover{background:#3a2f16}
 .sbtn.suc{background:#0c2e20;border-color:#10b98133;color:#6ee7b7}
 .sbtn.dan{background:#2a0f0f;border-color:#ef444433;color:#fca5a5}
 .sbtn.warn{background:#2a1a07;border-color:#eab30833;color:#fcd34d}
@@ -210,7 +210,7 @@ body:not(.fs) .fs-hud{display:none!important}
   padding:7px 9px;background:rgba(255,255,255,.02);border:1px solid var(--border);
   border-radius:var(--r);margin-bottom:8px}
 
-/* ── WiFi add/update network — bigger, clearer, easier to hit on touch ── */
+/* WiFi add/update network: bigger, clearer, easier to hit on touch */
 .wifi-add{border-top:1px solid var(--border);padding-top:12px;margin-top:4px}
 .wifi-add-title{font-size:10px;letter-spacing:.07em;color:var(--accent-l);font-weight:700;
   text-transform:uppercase;margin-bottom:10px}
@@ -231,12 +231,12 @@ body:not(.fs) .fs-hud{display:none!important}
 .tag-ok{background:#0c2e20;color:#6ee7b7;border:1px solid #10b98133}
 .tag-err{background:#2a0f0f;color:#fca5a5;border:1px solid #ef444433}
 .tag-warn{background:#2a1a07;color:#fcd34d;border:1px solid #eab30833}
-.tag-info{background:#0c3230;color:#5eead4;border:1px solid #22d3c840}
+.tag-info{background:#2c2410;color:#f0d698;border:1px solid #c9a15c40}
 .tag-pur{background:#1e1040;color:#c4b5fd;border:1px solid #a78bfa33}
 .cur-opts{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
 .cur-opt{height:26px;padding:0 10px;background:var(--card2);border:1px solid var(--border);
   border-radius:20px;color:var(--muted);font-size:10px;cursor:pointer;transition:all .12s}
-.cur-opt.active{background:#0c3230;border-color:#22d3c840;color:#5eead4}
+.cur-opt.active{background:#2c2410;border-color:#c9a15c40;color:#f0d698}
 .id-table{width:100%;border-collapse:collapse;font-size:11px}
 .id-table th{color:var(--muted);font-weight:600;text-align:left;
   padding:4px 6px;border-bottom:1px solid var(--border);font-size:10px;letter-spacing:.3px;text-transform:uppercase}
@@ -393,18 +393,18 @@ body:not(.fs) .fs-hud{display:none!important}
 <!-- Top bar -->
 <div id="topbar">
   <div id="logo-lockup">
-    <svg id="logo-mark" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
+    <svg id="logo-mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
       <defs>
-        <linearGradient id="mbg1" x1="0" y1="0" x2="40" y2="40" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stop-color="#22d3c8"/><stop offset="1" stop-color="#8b5cf6"/>
+        <linearGradient id="mbg1" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+          <stop offset="0%" stop-color="#f0d698"/><stop offset="100%" stop-color="#8a6a2f"/>
         </linearGradient>
       </defs>
-      <rect x="4.5" y="17" width="6" height="18" rx="3" fill="url(#mbg1)"/>
-      <rect x="29.5" y="17" width="6" height="18" rx="3" fill="url(#mbg1)"/>
-      <rect x="4.5" y="17" width="31" height="5" rx="2.5" fill="url(#mbg1)"/>
-      <path d="M8 17 Q20 3 32 17" stroke="url(#mbg1)" stroke-width="2.3" fill="none" stroke-linecap="round"/>
-      <circle cx="20" cy="9.3" r="3" fill="url(#mbg1)"/>
-      <circle cx="20" cy="9.3" r="3" fill="none" stroke="#fff" stroke-opacity=".4" stroke-width=".7"/>
+      <path d="M15 40 C15 25 30 20 50 20 C70 20 85 25 85 40 C85 55 72 58 50 58 C28 58 15 55 15 40 Z" fill="none" stroke="url(#mbg1)" stroke-width="5"/>
+      <path d="M50 20 L50 58" stroke="url(#mbg1)" stroke-width="3.4" opacity=".4"/>
+      <circle cx="32" cy="40" r="3.4" fill="url(#mbg1)"/>
+      <circle cx="68" cy="40" r="3.4" fill="url(#mbg1)"/>
+      <path d="M22 66 Q50 78 78 66" stroke="url(#mbg1)" stroke-width="4.2" fill="none" opacity=".5"/>
+      <path d="M28 74 Q50 84 72 74" stroke="url(#mbg1)" stroke-width="3.4" fill="none" opacity=".3"/>
     </svg>
     <span id="logo">MagicBridge</span>
   </div>
@@ -542,7 +542,7 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
       </div>
 
-      <!-- Identity tab (read-only — profile switching is in Stealth mode) -->
+      <!-- Identity tab (read-only, profile switching is in Stealth mode) -->
       <div class="tab" id="panel-identity">
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Current Identity
@@ -590,7 +590,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <div class="wifi-add-title">Add / Update Network</div>
             <label class="wifi-label" for="wifi-ssid">Network name (SSID)</label>
             <input class="sinput wifi-field" type="text" id="wifi-ssid" placeholder="e.g. Home-WiFi-5G" autocomplete="off" spellcheck="false">
-            <label class="wifi-label" for="wifi-psk">Password <span class="wifi-label-hint">— leave blank for open networks</span></label>
+            <label class="wifi-label" for="wifi-psk">Password <span class="wifi-label-hint">(leave blank for open networks)</span></label>
             <div class="wifi-psk-row">
               <input class="sinput wifi-field wifi-psk-input" type="password" id="wifi-psk" placeholder="Enter WiFi password" autocomplete="new-password">
               <button class="wifi-eye" onclick="wifiTogglePsk()" title="Show/hide password" aria-label="Show or hide password">👁</button>
@@ -840,7 +840,7 @@ body:not(.fs) .fs-hud{display:none!important}
 <div id="toast"></div>
 
 <script>
-// ── Auth ───────────────────────────────────────────────────────────────────────
+// Auth
 function mbLogout(){ fetch('/logout',{method:'POST'}).finally(()=>{ location.href='/login'; }); }
 
 async function changeMainPassword(){
@@ -875,7 +875,7 @@ async function changeMainPassword(){
 
 let _wsAuthFails=0;
 
-// ── WebSocket ──────────────────────────────────────────────────────────────────
+// WebSocket
 let ws=null, captured=false, _toastT=null;
 const WS_URL=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws';
 
@@ -885,7 +885,7 @@ function connect(){
   ws.onclose=(ev)=>{
     dot('err','Disconnected');
     // A WS handshake rejected for auth (session expired / cookie missing) closes
-    // immediately with no open — after a couple of quick failures, stop
+    // immediately with no open. After a couple of quick failures, stop
     // retrying forever and send the user back to /login instead.
     _wsAuthFails++;
     if(_wsAuthFails>=3){ location.href='/login'; return; }
@@ -912,7 +912,7 @@ function dot(cls,txt){
   if(fd) fd.style.background=cls==='ok'?'var(--green)':cls==='err'?'var(--red)':'var(--yellow)';
 }
 
-// ── Stream ─────────────────────────────────────────────────────────────────────
+// Stream
 const $s=document.getElementById('stream');
 const $ns=document.getElementById('nosig');
 function onLoad(){
@@ -931,7 +931,7 @@ function onErr(){
 }
 function retryStream(){ $s.src='/stream?_='+Date.now(); }
 
-// ── Pointer lock ───────────────────────────────────────────────────────────────
+// Pointer lock
 const $view=document.getElementById('view');
 const $relbar=document.getElementById('relbar');
 let _intentional=false, _escTime=0, _rCtrlDown=0, _rcTimer=null;
@@ -960,7 +960,7 @@ function capture(){
       const r=$view.getBoundingClientRect(); _cx=r.width/2; _cy=r.height/2;
       hideRecapture();
     } else if(prev){
-      // Lost capture — was it Esc?
+      // Lost capture. Was it Esc?
       if(!_intentional && (Date.now()-_escTime)<1000){
         showRecapture();
       }
@@ -997,7 +997,7 @@ function releaseAll(){
   ['ShiftLeft','ControlLeft','AltLeft','MetaLeft'].forEach(c=>send({type:'keyup',code:c}));
 }
 
-// ── Keyboard ───────────────────────────────────────────────────────────────────
+// Keyboard
 document.addEventListener('keydown',e=>{
   if(!captured) return;
   // Esc: send to remote, browser will exit pointer lock → recapture overlay appears
@@ -1034,7 +1034,7 @@ document.addEventListener('keyup',e=>{
     const held=Date.now()-_rCtrlDown;
     _rCtrlDown=0;
     if(held>=2000){
-      toast('Released — click stream to recapture');
+      toast('Released, click stream to recapture');
       _intentional=true;
       releaseAll();
     } else {
@@ -1048,7 +1048,7 @@ document.addEventListener('keyup',e=>{
   send({type:'keyup',code:e.code});
 });
 
-// ── Mouse ──────────────────────────────────────────────────────────────────────
+// Mouse
 let _cx=0,_cy=0,_showOverlay=false;
 document.addEventListener('mousemove',e=>{
   if(captured){
@@ -1076,7 +1076,7 @@ document.addEventListener('wheel',e=>{
 },{passive:false});
 document.addEventListener('contextmenu',e=>{ if(captured) e.preventDefault(); });
 
-// ── Cursor ─────────────────────────────────────────────────────────────────────
+// Cursor
 let _cursorStyle='default';
 function setCursor(c){
   _cursorStyle=c;
@@ -1085,7 +1085,7 @@ function setCursor(c){
 }
 function toggleOverlay(on){ _showOverlay=on; if(!on) document.getElementById('cur-dot').style.display='none'; }
 
-// ── Touch ──────────────────────────────────────────────────────────────────────
+// Touch
 let _tp=null,_moved=false,_longT=null,_lastTap=0;
 $view.addEventListener('touchstart',e=>{
   if(e.touches.length===1){
@@ -1112,7 +1112,7 @@ $view.addEventListener('touchend',e=>{
   }
 },{passive:true});
 
-// ── Helpers ────────────────────────────────────────────────────────────────────
+// Helpers
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 function toast(msg,dur=2800){
   const el=document.getElementById('toast');
@@ -1120,7 +1120,7 @@ function toast(msg,dur=2800){
   clearTimeout(_toastT);_toastT=setTimeout(()=>el.classList.remove('on'),dur);
 }
 
-// ── Fullscreen ─────────────────────────────────────────────────────────────────
+// Fullscreen
 function toggleFS(){
   if(!document.fullscreenElement){ document.documentElement.requestFullscreen().catch(()=>{}); }
   else { document.exitFullscreen(); }
@@ -1129,7 +1129,7 @@ document.addEventListener('fullscreenchange',()=>{
   document.body.classList.toggle('fs',!!document.fullscreenElement);
 });
 
-// ── FS HUD paste ───────────────────────────────────────────────────────────────
+// FS HUD paste
 function fhCombo(codes){ send({type:'combo',codes}); toast(codes.join('+')); }
 async function fhSend(){
   const inp=document.getElementById('fh-input');
@@ -1142,7 +1142,7 @@ async function fhSend(){
 }
 document.getElementById('fh-input').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();fhSend();}});
 
-// ── Sidebar ────────────────────────────────────────────────────────────────────
+// Sidebar
 let _sideOpen=true;
 function toggleSidebar(){
   _sideOpen=!_sideOpen;
@@ -1159,18 +1159,18 @@ function showTab(name){
   if(name==='network'){wifiRefresh();tsRefresh();}
 }
 
-// ── Combos ─────────────────────────────────────────────────────────────────────
+// Combos
 let _cmOpen=false;
 function toggleCombos(){_cmOpen=!_cmOpen;document.getElementById('cmenu').classList.toggle('on',_cmOpen);}
 document.addEventListener('click',e=>{if(!document.getElementById('cwrap').contains(e.target)){_cmOpen=false;document.getElementById('cmenu').classList.remove('on');}});
 function combo(codes){send({type:'combo',codes});_cmOpen=false;document.getElementById('cmenu').classList.remove('on');toast(codes.join('+'));}
 
-// ── Paste (human-jitter mode) ──────────────────────────────────────────────────
+// Paste (human-jitter mode)
 async function humanTypePaste(txt){
   // Break into chunks to avoid WS flooding; each char gets random delay
   for(const ch of txt){
     send({type:'paste',text:ch,delay:0});
-    // Base delay 90–220ms, longer after spaces/punctuation
+    // Base delay 90-220ms, longer after spaces/punctuation
     const base=90+Math.random()*130;
     const extra=(ch===' '||ch==='\n'||ch===','||ch==='.')?Math.random()*280:
                  (ch==='\t')?Math.random()*100:0;
@@ -1192,7 +1192,7 @@ async function sendPaste(){
 }
 document.getElementById('pinput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendPaste();}});
 
-// ── Video ──────────────────────────────────────────────────────────────────────
+// Video
 async function applyVideo(){
   const res=document.getElementById('sel-res').value;
   const fps=parseInt(document.getElementById('sel-fps').value);
@@ -1204,7 +1204,7 @@ async function applyVideo(){
 }
 function dispWinP(){send({type:'combo',codes:['MetaLeft','KeyP']});toast('Win+P →');}
 
-// ── Status ─────────────────────────────────────────────────────────────────────
+// Status
 function applyStatus(d){
   if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;document.getElementById('ss-temp').textContent=t;}
   if(d.uptime){document.getElementById('s-uptime').textContent=d.uptime;document.getElementById('ss-uptime').textContent=d.uptime;}
@@ -1218,14 +1218,14 @@ async function refreshStatus(){
   try{const r=await fetch('/api/status');const d=await r.json();applyStatus(d);}catch(e){}
 }
 
-// ── Power ──────────────────────────────────────────────────────────────────────
+// Power
 async function piPower(a){
   if(!confirm(a==='shutdown'?'Shut down the Pi?':'Reboot the Pi?')) return;
   toast(a==='shutdown'?'Shutting down…':'Rebooting…',5000);
   await fetch('/api/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})});
 }
 
-// ── Tailscale ──────────────────────────────────────────────────────────────────
+// Tailscale
 let _tsUrl='';
 async function tsRefresh(){try{const r=await fetch('/api/tailscale');const d=await r.json();renderTs(d);}catch(e){}}
 function renderTs(d){
@@ -1251,7 +1251,7 @@ async function tsDisconnect(){const r=await fetch('/api/tailscale',{method:'POST
 async function tsReconnect(){toast('Connecting…',8000);const r=await fetch('/api/tailscale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'up'})});const d=await r.json();toast(d.ok?'Connected ✓':'Failed: '+(d.out||''));if(d.ok)setTimeout(tsRefresh,2000);}
 async function tsLogout(){if(!confirm('Log out from Tailscale? You will need to re-authenticate next time.'))return;const r=await fetch('/api/tailscale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'logout'})});const d=await r.json();toast(d.ok?'Logged out':'Failed');setTimeout(tsRefresh,1500);}
 
-// ── Identity (read-only) ───────────────────────────────────────────────────────
+// Identity (read-only)
 const _ORIG={prod:'USB Keyboard K120',mfr:'Logitech',vid:'0x046d',pid:'0xc31c'};
 async function identityRefresh(){
   try{
@@ -1269,7 +1269,7 @@ async function identityRefresh(){
   }catch(e){}
 }
 
-// ── WiFi ───────────────────────────────────────────────────────────────────────
+// WiFi
 // NOTE: onclick handlers use data-net attribute to avoid JSON.stringify double-quote
 //       conflict with HTML attribute quoting. Never use onclick="fn(${JSON.stringify(x)})".
 function _wnet(el){return el.closest('[data-net]');}
@@ -1312,7 +1312,7 @@ function wifiEdit(btn){
   document.getElementById('wifi-psk').value='';
   document.getElementById('wifi-psk').type='password';
   document.getElementById('wifi-psk').focus();
-  toast('Editing "'+name+'" — enter new password and click Save');
+  toast('Editing "'+name+'", enter new password and click Save');
 }
 
 async function wifiAdd(){
@@ -1361,7 +1361,7 @@ async function wifiConnect(btn){
   }catch(e){}
 }
 
-// ── System Update ──────────────────────────────────────────────────────────────
+// System Update
 async function sysCheckVer(){
   try{
     const r=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'status'})});
@@ -1386,7 +1386,7 @@ async function sysUpdate(){
   }catch(e){out.textContent='Error: '+e;toast('Error');}
 }
 
-// ── Agent: Quick Actions + Clips + Macros ──────────────────────────────────────
+// Agent: Quick Actions + Clips + Macros
 const _qa={lock:['MetaLeft','KeyL'],taskman:['ControlLeft','ShiftLeft','Escape'],desktop:['MetaLeft','KeyD'],explorer:['MetaLeft','KeyE'],settings:['MetaLeft','KeyI'],snip:['MetaLeft','ShiftLeft','KeyS']};
 function qa(k){if(_qa[k]) combo(_qa[k]);}
 
@@ -1419,7 +1419,7 @@ async function macroRun(i){
   toast('Macro done ✓');
 }
 
-// ── AI Agent ───────────────────────────────────────────────────────────────────
+// AI Agent
 const _AI_MODELS={
   openrouter:['anthropic/claude-haiku-4-5','anthropic/claude-sonnet-4-6','google/gemini-flash-1.5','openai/gpt-4o-mini','openai/gpt-4o','meta-llama/llama-3.3-70b-instruct'],
   claude:['claude-haiku-4-5-20251001','claude-sonnet-4-6','claude-opus-4-8'],
@@ -1466,7 +1466,7 @@ async function aiRun(){
   const inp=document.getElementById('ai-key');
   const k=(inp.dataset.real&&inp.dataset.real.length>4)?inp.dataset.real:inp.value.trim();
   const cmd=document.getElementById('ai-cmd').value.trim();
-  if(!k||k.startsWith('•')){aiLog('⚠ No API key — enter and click Save','ai-err');return;}
+  if(!k||k.startsWith('•')){aiLog('⚠ No API key, enter and click Save','ai-err');return;}
   if(!cmd){aiLog('⚠ Enter a command first','ai-err');return;}
   const btn=document.getElementById('ai-run-btn');
   btn.textContent='⏳ Thinking…';btn.disabled=true;
@@ -1521,7 +1521,7 @@ async function aiExecActions(actions){
 // Init AI provider selector
 aiProviderChange();
 
-// ── Virtual Keyboard ───────────────────────────────────────────────────────────
+// Virtual Keyboard
 let _vkMods={shift:false,ctrl:false,alt:false,win:false,caps:false};
 const $vkbd=document.getElementById('vkbd');
 function toggleVKBD(){$vkbd.classList.toggle('on');document.getElementById('kb-btn').classList.toggle('active',$vkbd.classList.contains('on'));}
@@ -1548,7 +1548,7 @@ function vk(code){
 function vkMod(m){_vkMods[m]=!_vkMods[m];document.getElementById('vk-'+m).classList.toggle('lit',_vkMods[m]);}
 function vkCaps(){_vkMods.caps=!_vkMods.caps;document.getElementById('vk-caps').classList.toggle('lit',_vkMods.caps);}
 
-// ── Keyboard drag ──────────────────────────────────────────────────────────────
+// Keyboard drag
 let _dragging=false,_dragX=0,_dragY=0;
 const $vkbar=document.getElementById('vk-bar');
 $vkbar.addEventListener('mousedown',e=>{
@@ -1565,7 +1565,7 @@ document.addEventListener('mousemove',e=>{
 });
 document.addEventListener('mouseup',()=>{_dragging=false;$vkbd.style.transition='';});
 
-// ── Init ───────────────────────────────────────────────────────────────────────
+// Init
 connect();
 refreshStatus();
 identityRefresh();

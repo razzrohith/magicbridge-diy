@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MagicBridge — WiFi provisioning captive portal.
+"""MagicBridge WiFi provisioning captive portal.
 Usage: mb-setup-ui.py <bind_ip> <port> <wifi_file> <ts_key_file>
 Blocks until user submits WiFi credentials, then exits.
 """
@@ -90,7 +90,7 @@ SUCCESS_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MagicBridge — Connected</title>
+<title>MagicBridge Connected</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{min-height:100vh;background:#060606;
@@ -136,7 +136,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b)
 
     def _redirect(self, location="/"):
-        # Location header must be sent BEFORE end_headers() — sending it after
+        # Location header must be sent BEFORE end_headers(). Sending it after
         # (as this used to) is a no-op, so captive-portal auto-detection on some
         # OSes never got told where to go.
         self._send(302, b"", extra_headers={"Location": location})
@@ -191,7 +191,7 @@ def run():
     t.start()
     print(f"[mb-setup-ui] Captive portal listening on {BIND_IP}:{PORT}", flush=True)
     _done.wait()
-    print("[mb-setup-ui] WiFi credentials received — shutting down portal", flush=True)
+    print("[mb-setup-ui] WiFi credentials received, shutting down portal", flush=True)
     _server.shutdown()
 
 

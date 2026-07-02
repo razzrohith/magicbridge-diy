@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MagicBridge — USB HID Keyboard and Mouse Report Handler
+MagicBridge USB HID Keyboard and Mouse Report Handler
 
 Translates browser WebSocket input events (JavaScript event.code)
 into raw USB HID reports written to /dev/hidg0 (keyboard) and /dev/hidg1 (mouse).
@@ -15,10 +15,10 @@ import logging
 
 log = logging.getLogger("magicbridge.hid")
 
-# ── Keyboard scancode table ────────────────────────────────────────────────────
+# Keyboard scancode table
 # JS event.code → USB HID Usage ID (Keyboard/Keypad Usage Page 0x07)
 KEY_MAP: dict = {
-    # Letters (0x04–0x1D)
+    # Letters (0x04-0x1D)
     "KeyA": 0x04, "KeyB": 0x05, "KeyC": 0x06, "KeyD": 0x07,
     "KeyE": 0x08, "KeyF": 0x09, "KeyG": 0x0A, "KeyH": 0x0B,
     "KeyI": 0x0C, "KeyJ": 0x0D, "KeyK": 0x0E, "KeyL": 0x0F,
@@ -26,7 +26,7 @@ KEY_MAP: dict = {
     "KeyQ": 0x14, "KeyR": 0x15, "KeyS": 0x16, "KeyT": 0x17,
     "KeyU": 0x18, "KeyV": 0x19, "KeyW": 0x1A, "KeyX": 0x1B,
     "KeyY": 0x1C, "KeyZ": 0x1D,
-    # Digits (0x1E–0x27)
+    # Digits (0x1E-0x27)
     "Digit1": 0x1E, "Digit2": 0x1F, "Digit3": 0x20, "Digit4": 0x21,
     "Digit5": 0x22, "Digit6": 0x23, "Digit7": 0x24, "Digit8": 0x25,
     "Digit9": 0x26, "Digit0": 0x27,
@@ -48,7 +48,7 @@ KEY_MAP: dict = {
     "Period":       0x37,
     "Slash":        0x38,
     "CapsLock":     0x39,
-    # Function keys (0x3A–0x45)
+    # Function keys (0x3A-0x45)
     "F1": 0x3A, "F2": 0x3B, "F3": 0x3C,  "F4": 0x3D,
     "F5": 0x3E, "F6": 0x3F, "F7": 0x40,  "F8": 0x41,
     "F9": 0x42, "F10":0x43, "F11":0x44,  "F12":0x45,
@@ -79,13 +79,13 @@ KEY_MAP: dict = {
     "Numpad0":          0x62, "NumpadDecimal": 0x63,
     "IntlBackslash":    0x64,
     "ContextMenu":      0x65,
-    # Extended function keys (F13–F24)
+    # Extended function keys (F13-F24)
     "F13": 0x68, "F14": 0x69, "F15": 0x6A, "F16": 0x6B,
     "F17": 0x6C, "F18": 0x6D, "F19": 0x6E, "F20": 0x6F,
     "F21": 0x70, "F22": 0x71, "F23": 0x72, "F24": 0x73,
 }
 
-# ── Modifier keys ──────────────────────────────────────────────────────────────
+# Modifier keys
 # JS event.code → bitmask in modifier byte (byte 0 of keyboard report)
 MODIFIER_MAP: dict = {
     "ControlLeft":  0x01,   # bit 0 = Left Control
@@ -98,7 +98,7 @@ MODIFIER_MAP: dict = {
     "MetaRight":    0x80,   # bit 7 = Right GUI
 }
 
-# ── Character → (JS code, shift_required) for paste feature ───────────────────
+# Character → (JS code, shift_required) for paste feature
 CHAR_MAP: dict = {
     # Lowercase letters
     "a":("KeyA",False),"b":("KeyB",False),"c":("KeyC",False),"d":("KeyD",False),
@@ -144,7 +144,6 @@ CHAR_MAP: dict = {
 }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 class HIDKeyboard:
     """
     Writes 8-byte USB HID keyboard reports to /dev/hidg0.
@@ -161,7 +160,7 @@ class HIDKeyboard:
         self.pressed: set = set()      # HID keycodes currently held
         self._lock = threading.Lock()
 
-    # ── Internal ───────────────────────────────────────────────────────────────
+    # Internal
 
     def _write(self, modifiers: int, keys: set):
         key_list = sorted(keys)[:6]        # USB HID max 6 simultaneous keys
@@ -173,7 +172,7 @@ class HIDKeyboard:
         except OSError as e:
             log.debug("HID keyboard write: %s", e)
 
-    # ── Public API ─────────────────────────────────────────────────────────────
+    # Public API
 
     def key_down(self, code: str):
         with self._lock:
@@ -245,7 +244,6 @@ class HIDKeyboard:
             time.sleep(delay * 0.5)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 class HIDMouse:
     """
     Writes 4-byte USB HID mouse reports to /dev/hidg1.
@@ -289,12 +287,12 @@ class HIDMouse:
     def button_down(self, button: int):
         """button: 0=left, 1=right, 2=middle"""
         with self._lock:
-            self.buttons |= (1 << (button & 0x02))
+            self.buttons |= (1 << min(max(int(button),0),2))
             self._write(self.buttons, 0, 0)
 
     def button_up(self, button: int):
         with self._lock:
-            self.buttons &= ~(1 << (button & 0x02))
+            self.buttons &= ~(1 << min(max(int(button),0),2))
             self._write(self.buttons, 0, 0)
 
     def scroll(self, dy: int):
