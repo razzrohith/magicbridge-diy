@@ -175,12 +175,32 @@ ok "Files installed"
 # ══════════════════════════════════════════════════════════════════════════════
 info "Writing initial config.json..."
 if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
-    cat > "$CONFIG_DIR/config.json" <<'CONF'
+    # Serial is generated below (not hardcoded here) so a fresh install never
+    # ships the same obviously-placeholder value on every device. Same
+    # format + seed as magicbridge.py's _gen_serial(0), so mb-gadget.sh's
+    # very first boot already applies a realistic serial instead of a
+    # generic one that would need to be manually replaced later.
+    DEFAULT_SERIAL=$(python3 -c "
+import hashlib, random
+try:
+    mac = open('/sys/class/net/wlan0/address').read().strip().replace(':','')
+except Exception:
+    try:
+        mac = open('/sys/class/net/eth0/address').read().strip().replace(':','')
+    except Exception:
+        mac = 'dca632c49b00'
+seed = int(hashlib.md5((mac + '0').encode()).hexdigest()[:8], 16)
+rng = random.Random(seed)
+yr, mo = rng.randint(19, 23), rng.randint(1, 12)
+print('%02d%02dLK%05d' % (yr, mo, rng.randint(10000, 99999)))
+" 2>/dev/null || echo "2103LK48291")
+
+    cat > "$CONFIG_DIR/config.json" <<CONF
 {
   "usb": {
     "manufacturer": "Logitech",
     "product":      "USB Keyboard K120",
-    "serial":       "12AB34CD",
+    "serial":       "$DEFAULT_SERIAL",
     "idVendor":     "0x046d",
     "idProduct":    "0xc31c"
   },
@@ -198,7 +218,7 @@ CONF
     # auth.main_password_hash / auth.password_hash are bootstrapped on first
     # run by magicbridge.py and stealth-dashboard.py respectively, defaulting
     # to "magicbridge" and "stealthbridge". Not written here.
-    ok "config.json created"
+    ok "config.json created (USB serial: $DEFAULT_SERIAL)"
 else
     ok "config.json already exists, skipping"
 fi

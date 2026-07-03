@@ -131,6 +131,52 @@ def _ensure_auth_defaults():
             log.warning("Could not write auth defaults: %s", e)
 
 
+_PLACEHOLDER_SERIAL = "12AB34CD"
+
+def _ensure_usb_defaults():
+    """Replace the placeholder USB serial ("12AB34CD", shipped in every
+    install's initial config.json) with a realistic per-device one, instead
+    of requiring someone to open the stealth panel and click a preset
+    button before the identity looks convincing. Uses the exact same
+    per-manufacturer serial format as the profile-switching feature
+    (_gen_serial), seeded from this Pi's own MAC address, so every install
+    gets a different, correctly-formatted serial automatically. Also
+    applies it to the live USB gadget immediately, in case mb-gadget.sh
+    already applied the placeholder a few seconds earlier at boot."""
+    try:
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+    except Exception:
+        cfg = {}
+    usb = cfg.setdefault("usb", {})
+    current = usb.get("serial", "")
+    if current and current != _PLACEHOLDER_SERIAL:
+        return  # already customized or already bootstrapped, leave it alone
+    try:
+        new_serial = _gen_serial(0)  # profile 0 = Logitech K120, matches the shipped default
+    except Exception as e:
+        log.warning("Could not generate a default USB serial: %s", e)
+        return
+    usb["serial"] = new_serial
+    usb.setdefault("manufacturer", "Logitech")
+    usb.setdefault("product", "USB Keyboard K120")
+    usb.setdefault("idVendor", "0x046d")
+    usb.setdefault("idProduct", "0xc31c")
+    try:
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        log.info("Replaced placeholder USB serial with a generated default")
+    except Exception as e:
+        log.warning("Could not persist default USB serial: %s", e)
+    try:
+        udc = _usb_r("UDC")
+        _usb_w("UDC", "")
+        _usb_w("strings/0x409/serialnumber", new_serial)
+        if udc:
+            _usb_w("UDC", udc)
+    except Exception:
+        pass
+
+
 # Login rate limiting: mirrors stealth-dashboard.py's progressive delay so
 # the main KVM login gets the same brute-force protection the admin panel
 # has always had. Per-IP, in-memory, resets on a successful login.
@@ -1196,6 +1242,7 @@ async def main():
     log.info("MagicBridge v%s starting…", VERSION)
 
     _ensure_auth_defaults()
+    _ensure_usb_defaults()
 
     # Load config
     cfg = {}

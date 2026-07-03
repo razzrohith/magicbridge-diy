@@ -36,14 +36,34 @@ SESSION_TIMEOUT = 1800   # 30 min idle
 # passwords and sessions by design. A compromised main-page password no
 # longer exposes the admin panel. This panel uses Flask's own session only.
 
-# Default USB identity (Logitech K120, what install.sh sets up)
+# Default USB identity (Logitech K120, what install.sh sets up). Serial is
+# generated per-device (see _gen_default_serial) rather than a fixed value,
+# so "safe mode" never reverts to an obviously-placeholder serial.
 ORIG = {
     "manufacturer": "Logitech",
     "product":      "USB Keyboard K120",
-    "serial":       "12AB34CD",
     "idVendor":     "0x046d",
     "idProduct":    "0xc31c",
 }
+
+def _gen_default_serial() -> str:
+    """Realistic Logitech-style serial (YYMMcode+5digits), deterministic
+    from this Pi's own MAC address so every device gets a different value
+    instead of a shared placeholder. Same format and same seed as
+    magicbridge.py's _gen_serial(0) for the K120 profile, so this always
+    matches whatever the main service already bootstrapped for this Pi."""
+    import random as _rr, hashlib as _hh
+    try:
+        mac = Path("/sys/class/net/wlan0/address").read_text().strip().replace(":", "")
+    except Exception:
+        try:
+            mac = Path("/sys/class/net/eth0/address").read_text().strip().replace(":", "")
+        except Exception:
+            mac = "dca632c49b00"
+    seed = int(_hh.md5((mac + "0").encode()).hexdigest()[:8], 16)
+    rng = _rr.Random(seed)
+    yr = rng.randint(19, 23); mo = rng.randint(1, 12)
+    return "%02d%02dLK%05d" % (yr, mo, rng.randint(10000, 99999))
 
 USB_PROFILES = [
     {"name":"Logitech K120",        "mfr":"Logitech",   "prod":"USB Keyboard K120",      "vid":"0x046d","pid":"0xc31c","pfx":"LGK"},
@@ -1357,7 +1377,7 @@ def api_apply():
         elif act == "safe_mode":
             in_safe = cfg.get("safe_mode", False)
             if not in_safe:
-                _apply_usb(ORIG["manufacturer"], ORIG["product"], ORIG["serial"],
+                _apply_usb(ORIG["manufacturer"], ORIG["product"], _gen_default_serial(),
                            ORIG["idVendor"], ORIG["idProduct"])
                 cfg["safe_mode"] = True
             else:
