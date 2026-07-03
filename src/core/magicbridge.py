@@ -479,11 +479,19 @@ async def api_status(request: web.Request) -> web.Response:
     tailscale_ip = ""
     tailscale_up = False
     try:
-        import subprocess as _sp
-        _r = _sp.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=3)
+        import subprocess as _sp, json as _json_ts
+        # Check the actual backend state, not just whether "tailscale ip"
+        # returns something. Tailscale can still report a cached IP via
+        # "tailscale ip -4" even while the backend is fully stopped, which
+        # made this disagree with /api/tailscale's (correct) check.
+        _r = _sp.run(["tailscale", "status", "--json"], capture_output=True, text=True, timeout=3)
         if _r.returncode == 0:
-            tailscale_ip = _r.stdout.strip().split()[0]
-            tailscale_up = bool(tailscale_ip)
+            _st = _json_ts.loads(_r.stdout)
+            tailscale_up = _st.get("BackendState") == "Running"
+            if tailscale_up:
+                _ri = _sp.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=3)
+                if _ri.returncode == 0:
+                    tailscale_ip = _ri.stdout.strip().split()[0]
     except Exception:
         pass
     return web.json_response({
