@@ -165,7 +165,8 @@ cp "$SRC_DIR/src/provision/mb-setup-ui.py"       "$INSTALL_DIR/provision/"
 # Scripts
 cp "$SRC_DIR/src/core/mb-gadget.sh"    /usr/local/bin/mb-gadget.sh
 cp "$SRC_DIR/src/provision/mb-provision.sh" /usr/local/bin/mb-provision.sh
-chmod +x /usr/local/bin/mb-gadget.sh /usr/local/bin/mb-provision.sh
+cp "$SRC_DIR/src/core/mb-lockdown.sh"  /usr/local/bin/mb-lockdown.sh
+chmod +x /usr/local/bin/mb-gadget.sh /usr/local/bin/mb-provision.sh /usr/local/bin/mb-lockdown.sh
 
 ok "Files installed"
 

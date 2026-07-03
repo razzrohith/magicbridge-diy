@@ -129,6 +129,7 @@ def _boot():
     cfg = _load()
     _ensure_defaults(cfg)
     app.secret_key = cfg["auth"]["secret_key"]
+    _purge_old_logs_if_due()
 
 # CSRF
 def _csrf_ok() -> bool:
@@ -323,6 +324,49 @@ def _log_sess(msg: str):
             f.write(f"{datetime.datetime.now().isoformat()} {msg}\n")
     except Exception:
         pass
+
+# Log retention: both AUTH_LOG and SESS_LOG grow forever otherwise. This
+# purges lines older than the retention window, checked at most once a day
+# (on boot and opportunistically at login) rather than on every write.
+LOG_RETENTION_DAYS = 30
+_last_log_purge = 0.0
+
+def _purge_old_log_lines(path: str, days: int = LOG_RETENTION_DAYS):
+    """Drop lines older than `days` from a plain-text log file. Handles both
+    ISO timestamps (session log) and Python logging's default asctime format
+    (auth log, "YYYY-MM-DD HH:MM:SS,mmm"). Lines whose timestamp can't be
+    parsed are kept rather than risk discarding a real entry."""
+    try:
+        if not os.path.isfile(path):
+            return
+        cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
+        with open(path, "r", errors="replace") as f:
+            lines = f.readlines()
+        kept = []
+        for line in lines:
+            m = re.match(r"^(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})[.,]?\d*", line)
+            if m:
+                try:
+                    ts = datetime.datetime.fromisoformat(m.group(1).replace(" ", "T"))
+                    if ts < cutoff:
+                        continue
+                except Exception:
+                    pass
+            kept.append(line)
+        if len(kept) != len(lines):
+            with open(path, "w") as f:
+                f.writelines(kept)
+    except Exception:
+        pass
+
+def _purge_old_logs_if_due():
+    global _last_log_purge
+    now = time.time()
+    if now - _last_log_purge < 86400:   # at most once a day
+        return
+    _last_log_purge = now
+    _purge_old_log_lines(AUTH_LOG)
+    _purge_old_log_lines(SESS_LOG)
 
 # DuckDNS
 def _ddns_update(host: str, token: str) -> bool:
@@ -1106,6 +1150,7 @@ setInterval(loadWifiStatus, 30000);
 def login():
     cfg = _load()
     _ensure_defaults(cfg)
+    _purge_old_logs_if_due()
     if request.method == "POST":
         ip = _client_ip()
         if request.form.get("_csrf") != session.get("login_csrf"):
@@ -1240,9 +1285,24 @@ def api_change_password():
     if not pw or len(pw) < 4:
         return jsonify({"ok": False, "error": "Password must be at least 4 characters"}), 400
     cfg = _load()
-    cfg.setdefault("auth", {})["password_hash"] = _hash_pw(pw)
+    auth = cfg.setdefault("auth", {})
+    auth["password_hash"] = _hash_pw(pw)
+
+    # Rotate the Flask session-signing secret so any other already-issued
+    # session cookie stops validating immediately. app.secret_key is only
+    # read once at boot, so it's updated live here too, not just on disk.
+    # The session is re-touched (not re-valued) below so Flask re-signs
+    # this browser's cookie with the new secret instead of logging it out;
+    # the CSRF value itself is left untouched since the page's already-loaded
+    # <meta name="csrf-token"> would otherwise go stale mid-session.
+    new_secret = secrets.token_hex(32)
+    auth["secret_key"] = new_secret
     _save(cfg)
-    _log_sess(f"Password changed by {_client_ip()}")
+    app.secret_key = new_secret
+    session["ok"] = True
+    session["t"]  = time.time()
+
+    _log_sess(f"Password changed by {_client_ip()}, other sessions invalidated")
     return jsonify({"ok": True})
 
 

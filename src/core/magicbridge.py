@@ -131,6 +131,26 @@ def _ensure_auth_defaults():
             log.warning("Could not write auth defaults: %s", e)
 
 
+# Login rate limiting: mirrors stealth-dashboard.py's progressive delay so
+# the main KVM login gets the same brute-force protection the admin panel
+# has always had. Per-IP, in-memory, resets on a successful login.
+_login_fails: dict = {}
+
+def _login_client_ip(request: web.Request) -> str:
+    return request.headers.get("X-Real-IP") or request.remote or "?"
+
+async def _apply_login_delay(ip: str):
+    n = _login_fails.get(ip, 0)
+    if n > 0:
+        await asyncio.sleep(min(n, 10))
+
+def _record_login_fail(ip: str):
+    _login_fails[ip] = _login_fails.get(ip, 0) + 1
+
+def _record_login_ok(ip: str):
+    _login_fails.pop(ip, None)
+
+
 LOGIN_HTML = """<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -195,6 +215,8 @@ __ERROR__
 
 async def login_handler(request: web.Request) -> web.Response:
     if request.method == "POST":
+        ip = _login_client_ip(request)
+        await _apply_login_delay(ip)
         try:
             data = await request.post()
             pw = str(data.get("pw", ""))
@@ -202,13 +224,17 @@ async def login_handler(request: web.Request) -> web.Response:
             pw = ""
         auth = _auth_cfg()
         if pw and _check_pw(pw, auth.get("main_password_hash", "")):
+            _record_login_ok(ip)
             secret = auth.get("main_secret_key", "")
             resp = web.HTTPFound("/")
             if secret:
                 resp.set_cookie(SESSION_COOKIE, _make_token(secret),
                                  max_age=SESSION_TIMEOUT, httponly=True,
                                  secure=True, samesite="Lax", path="/")
+            log.info("Login OK from %s", ip)
             return resp
+        _record_login_fail(ip)
+        log.info("Failed login from %s (attempt %d)", ip, _login_fails.get(ip, 0))
         html = LOGIN_HTML.replace("__ERROR__", '<div class="err">Incorrect password.</div>')
         return web.Response(text=html, content_type="text/html", status=401)
     html = LOGIN_HTML.replace("__ERROR__", "")
@@ -247,14 +273,28 @@ async def api_change_password(request: web.Request) -> web.Response:
     else:
         auth["main_password_hash"] = "sha256:" + hashlib.sha256(new_pw.encode()).hexdigest()
 
+    # Rotate the session secret so any other already-issued session cookie
+    # (anywhere else this password was used) stops validating immediately.
+    # _is_authed() re-reads main_secret_key from disk on every request, so
+    # this takes effect on the very next request from any other session.
+    # A fresh token signed with the new secret is issued below so the
+    # browser making this change doesn't get logged out too.
+    import secrets as _secrets
+    new_secret = _secrets.token_hex(32)
+    auth["main_secret_key"] = new_secret
+
     try:
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
         Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
     except Exception as e:
         return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
 
-    log.info("Main-page password changed")
-    return web.json_response({"ok": True})
+    log.info("Main-page password changed, other sessions invalidated")
+    resp = web.json_response({"ok": True})
+    resp.set_cookie(SESSION_COOKIE, _make_token(new_secret),
+                     max_age=SESSION_TIMEOUT, httponly=True,
+                     secure=True, samesite="Lax", path="/")
+    return resp
 
 
 @web.middleware
@@ -283,6 +323,7 @@ _ws_clients: set = set()
 # -- Session / access logging -----------------------------------------------
 import json as _jlog, datetime as _dt_log
 _SESS_LOG = "/opt/magicbridge/data/sessions.json"
+_SESS_LOG_RETENTION_DAYS = 30  # entries older than this are dropped automatically
 
 def _sess_log(sid, ip, ua, event, duration=None):
     try:
@@ -300,6 +341,16 @@ def _sess_log(sid, ip, ua, event, duration=None):
             "time":     _dt_log.datetime.now().isoformat(),
             "duration": duration,
         })
+        # Time-based purge, in addition to the count cap below. Entries with
+        # a missing/unparsable timestamp are kept rather than silently
+        # dropped, since a parse failure isn't evidence the entry is stale.
+        cutoff = _dt_log.datetime.now() - _dt_log.timedelta(days=_SESS_LOG_RETENTION_DAYS)
+        def _fresh(entry):
+            try:
+                return _dt_log.datetime.fromisoformat(entry.get("time", "")) >= cutoff
+            except Exception:
+                return True
+        data = [e for e in data if _fresh(e)]
         data = data[-500:]
         open(_SESS_LOG, "w").write(_jlog.dumps(data, indent=2))
     except Exception:
@@ -627,6 +678,71 @@ async def api_tailscale(request):
     return web.json_response({"ok": False, "error": "unknown action"}, status=400)
 
 
+LOCKDOWN_SH = "/usr/local/bin/mb-lockdown.sh"
+
+async def api_network_lockdown(request):
+    """GET/POST /api/network/lockdown: Tailscale-only access toggle.
+
+    When enabled, ports 80/443 (the whole web UI and API surface behind
+    nginx) only accept connections arriving via the tailscale0 interface.
+    SSH is never touched by the underlying script, and this handler refuses
+    to enable lockdown unless Tailscale is confirmed connected first, so
+    there's no path to locking yourself out of the device entirely.
+    Defaults to off; a fresh install stays LAN-reachable until you turn
+    this on deliberately from the System tab.
+    """
+    import subprocess
+    if request.method == "GET":
+        try:
+            r = subprocess.run([LOCKDOWN_SH, "status"], capture_output=True, text=True, timeout=5)
+            state = r.stdout.strip()
+        except Exception:
+            state = "off"
+        return web.json_response({"ok": True, "tailscale_only": state == "on"})
+
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    enable = bool(d.get("enable", False))
+
+    if enable:
+        # Never allow enabling this unless Tailscale is actually connected,
+        # this exact check is what prevents the lockout scenario.
+        try:
+            r = subprocess.run(["tailscale", "status", "--json"], capture_output=True, text=True, timeout=5)
+            st = json.loads(r.stdout)
+            if st.get("BackendState") != "Running":
+                return web.json_response({
+                    "ok": False,
+                    "error": "Tailscale isn't connected yet. Connect it first (Network tab), "
+                             "then enable Tailscale-only access, otherwise you'd lock yourself out."
+                }, status=400)
+        except Exception:
+            return web.json_response({
+                "ok": False,
+                "error": "Could not confirm Tailscale is connected. Connect it first before enabling this."
+            }, status=400)
+
+    action = "on" if enable else "off"
+    try:
+        r = subprocess.run([LOCKDOWN_SH, action], capture_output=True, text=True, timeout=10)
+        ok = r.returncode == 0
+        out = (r.stdout + r.stderr)[:300]
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+
+    try:
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        cfg.setdefault("network", {})["tailscale_only"] = enable
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+    except Exception:
+        pass
+
+    log.info("Network lockdown %s", "enabled" if enable else "disabled")
+    return web.json_response({"ok": ok, "tailscale_only": enable, "out": out})
+
 
 import secrets as _sec
 
@@ -868,6 +984,7 @@ async def api_update(request):
             (f"{REPO_DIR}/src/provision/mb-setup-ui.py", f"{INSTALL_DIR}/provision/mb-setup-ui.py"),
             (f"{REPO_DIR}/src/core/mb-gadget.sh",      "/usr/local/bin/mb-gadget.sh"),
             (f"{REPO_DIR}/src/provision/mb-provision.sh", "/usr/local/bin/mb-provision.sh"),
+            (f"{REPO_DIR}/src/core/mb-lockdown.sh",    "/usr/local/bin/mb-lockdown.sh"),
             (f"{REPO_DIR}/src/nginx/magicbridge.conf", "/etc/nginx/sites-available/magicbridge"),
         ]
         for src, dst in copy_pairs:
@@ -880,6 +997,7 @@ async def api_update(request):
 
         os.chmod("/usr/local/bin/mb-gadget.sh", 0o755)
         os.chmod("/usr/local/bin/mb-provision.sh", 0o755)
+        os.chmod("/usr/local/bin/mb-lockdown.sh", 0o755)
     except Exception as e:
         return web.json_response({"ok": False, "out": out + "\ncopy step failed: " + str(e), "restarted": False})
 
@@ -1049,6 +1167,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/networks",  api_wifi)
     app.router.add_get("/api/tailscale",  api_tailscale_get)
     app.router.add_post("/api/tailscale", api_tailscale)
+    app.router.add_get("/api/network/lockdown",  api_network_lockdown)
+    app.router.add_post("/api/network/lockdown", api_network_lockdown)
     app.router.add_post("/api/update", api_update)
     app.router.add_get("/api/stealth/logs",  api_stealth_logs)
     app.router.add_get("/api/ai/run",         api_ai_run)
@@ -1078,6 +1198,16 @@ async def main():
         log.info("No config at %s, using defaults", CONFIG_PATH)
     except Exception as e:
         log.warning("Config load error: %s, using defaults", e)
+
+    # Reapply the persisted Tailscale-only lockdown state, iptables rules
+    # don't survive a reboot on their own, so this has to happen every boot.
+    if cfg.get("network", {}).get("tailscale_only"):
+        try:
+            import subprocess as _sp_boot
+            _sp_boot.run([LOCKDOWN_SH, "on"], capture_output=True, timeout=10)
+            log.info("Network lockdown reapplied on boot")
+        except Exception as e:
+            log.warning("Could not reapply network lockdown: %s", e)
 
     # Start video stream
     vc  = cfg.get("video", {})

@@ -739,6 +739,13 @@ body:not(.fs) .fs-hud{display:none!important}
           <button class="sbtn" onclick="sysCheckVer()" style="margin-top:6px">↺ Check Status</button>
           <button class="sbtn suc" onclick="sysUpdate()" style="margin-top:4px">⬆ Pull & Update from GitHub</button>
         </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>Network Lockdown</div>
+          <div class="snote" style="margin-bottom:8px">Restrict the web UI to Tailscale only: no LAN or public access. Requires Tailscale to be connected first, or it refuses to enable.</div>
+          <div class="srow"><span class="sk">Status</span><span class="sv" id="lockdown-status">—</span></div>
+          <button class="sbtn" id="lockdown-btn" onclick="toggleLockdown()" style="margin-top:6px">Enable Tailscale-only Access</button>
+          <div id="lockdown-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+        </div>
       </div>
 
     </div>
@@ -1386,6 +1393,48 @@ async function sysUpdate(){
   }catch(e){out.textContent='Error: '+e;toast('Error');}
 }
 
+// Network lockdown (Tailscale-only access)
+async function refreshLockdownStatus(){
+  try{
+    const r=await fetch('/api/network/lockdown');
+    const d=await r.json();
+    const s=document.getElementById('lockdown-status');
+    const b=document.getElementById('lockdown-btn');
+    if(d.tailscale_only){
+      s.textContent='ON'; s.className='sv ok';
+      b.textContent='Disable Tailscale-only Access';
+    }else{
+      s.textContent='OFF'; s.className='sv';
+      b.textContent='Enable Tailscale-only Access';
+    }
+    b.dataset.enabled=d.tailscale_only?'1':'0';
+  }catch(e){}
+}
+async function toggleLockdown(){
+  const btn=document.getElementById('lockdown-btn');
+  const msg=document.getElementById('lockdown-msg');
+  const enabling = btn.dataset.enabled!=='1';
+  if(enabling && !confirm('This restricts the web UI to Tailscale only. Make sure Tailscale is connected and you can reach this device over it before continuing. Proceed?')) return;
+  const show=(text,ok)=>{
+    msg.textContent=text;
+    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
+      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+  };
+  try{
+    const r=await fetch('/api/network/lockdown',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({enable:enabling})});
+    const d=await r.json();
+    if(d.ok){
+      show(enabling?'✓ Tailscale-only access enabled':'✓ LAN access restored', true);
+      toast(enabling?'Lockdown enabled ✓':'Lockdown disabled ✓');
+      refreshLockdownStatus();
+    }else{
+      show(d.error||'Failed', false);
+    }
+  }catch(e){show('Error: '+e,false);}
+}
+
 // Agent: Quick Actions + Clips + Macros
 const _qa={lock:['MetaLeft','KeyL'],taskman:['ControlLeft','ShiftLeft','Escape'],desktop:['MetaLeft','KeyD'],explorer:['MetaLeft','KeyE'],settings:['MetaLeft','KeyI'],snip:['MetaLeft','ShiftLeft','KeyS']};
 function qa(k){if(_qa[k]) combo(_qa[k]);}
@@ -1573,6 +1622,7 @@ tsRefresh();
 wifiRefresh();
 renderClips();
 renderMacros();
+refreshLockdownStatus();
 </script>
 </body>
 </html>
