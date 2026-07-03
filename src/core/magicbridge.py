@@ -133,34 +133,52 @@ def _ensure_auth_defaults():
 
 _PLACEHOLDER_SERIAL = "12AB34CD"
 
+_DEFAULT_USB_IDENTITY = {
+    "manufacturer": "Logitech",
+    "product":      "USB Receiver",   # Unifying Receiver: legitimately has both keyboard+mouse interfaces
+    "idVendor":     "0x046d",
+    "idProduct":    "0xc52b",
+}
+_OLD_DEFAULT_PRODUCTS = {"USB Keyboard K120"}  # pre-migration defaults, replaced below
+
 def _ensure_usb_defaults():
-    """Replace the placeholder USB serial ("12AB34CD", shipped in every
-    install's initial config.json) with a realistic per-device one, instead
-    of requiring someone to open the stealth panel and click a preset
-    button before the identity looks convincing. Uses the exact same
-    per-manufacturer serial format as the profile-switching feature
-    (_gen_serial), seeded from this Pi's own MAC address, so every install
-    gets a different, correctly-formatted serial automatically. Also
-    applies it to the live USB gadget immediately, in case mb-gadget.sh
-    already applied the placeholder a few seconds earlier at boot."""
+    """Bootstrap/migrate to a realistic default USB identity, instead of
+    requiring someone to open the stealth panel and click a preset button
+    first. Handles two cases:
+      - Fresh config: replaces the placeholder serial ("12AB34CD") with a
+        realistic per-device one (_gen_serial, seeded from this Pi's MAC).
+      - Older installs already bootstrapped with the previous default
+        (a keyboard-only "USB Keyboard K120" identity, which structurally
+        can't have a mouse interface, a giveaway since this gadget always
+        exposes one): migrates them to the Unifying Receiver identity,
+        which legitimately combines both.
+    Also applies the result to the live USB gadget immediately, in case
+    mb-gadget.sh already applied the old value a few seconds earlier at
+    boot."""
     try:
         cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
     except Exception:
         cfg = {}
     usb = cfg.setdefault("usb", {})
-    current = usb.get("serial", "")
-    if current and current != _PLACEHOLDER_SERIAL:
-        return  # already customized or already bootstrapped, leave it alone
+    current_serial  = usb.get("serial", "")
+    current_product = usb.get("product", "")
+    needs_serial_fix   = (not current_serial) or (current_serial == _PLACEHOLDER_SERIAL)
+    needs_identity_fix = current_product in _OLD_DEFAULT_PRODUCTS
+    if not needs_serial_fix and not needs_identity_fix:
+        return  # already on the current default, nothing to do
     try:
-        new_serial = _gen_serial(0)  # profile 0 = Logitech K120, matches the shipped default
+        new_serial = _gen_serial(0)  # profile 0 = Logitech-format serial, matches the shipped default
     except Exception as e:
         log.warning("Could not generate a default USB serial: %s", e)
         return
     usb["serial"] = new_serial
-    usb.setdefault("manufacturer", "Logitech")
-    usb.setdefault("product", "USB Keyboard K120")
-    usb.setdefault("idVendor", "0x046d")
-    usb.setdefault("idProduct", "0xc31c")
+    if needs_identity_fix:
+        usb.update(_DEFAULT_USB_IDENTITY)
+    else:
+        usb.setdefault("manufacturer", _DEFAULT_USB_IDENTITY["manufacturer"])
+        usb.setdefault("product", _DEFAULT_USB_IDENTITY["product"])
+        usb.setdefault("idVendor", _DEFAULT_USB_IDENTITY["idVendor"])
+        usb.setdefault("idProduct", _DEFAULT_USB_IDENTITY["idProduct"])
     try:
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
         Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
@@ -171,6 +189,11 @@ def _ensure_usb_defaults():
         udc = _usb_r("UDC")
         _usb_w("UDC", "")
         _usb_w("strings/0x409/serialnumber", new_serial)
+        if needs_identity_fix:
+            _usb_w("strings/0x409/manufacturer", usb["manufacturer"])
+            _usb_w("strings/0x409/product", usb["product"])
+            _usb_w("idVendor", usb["idVendor"])
+            _usb_w("idProduct", usb["idProduct"])
         if udc:
             _usb_w("UDC", udc)
     except Exception:
@@ -801,12 +824,16 @@ async def api_network_lockdown(request):
 import secrets as _sec
 
 _USB_DIR = "/sys/kernel/config/usb_gadget/g1"
+# These are real wireless keyboard+mouse combo receiver dongles, chosen
+# deliberately over single-purpose keyboard models: the gadget always
+# exposes both a keyboard AND a mouse HID interface under one identity, and
+# a keyboard-only product (e.g. a plain K120) never legitimately has a
+# mouse interface, an easy structural tell. A combo receiver dongle is
+# supposed to present exactly this way, so it isn't a giveaway.
 _USB_PROFILES = [
-    {"name":"Logitech K120",        "mfr":"Logitech",   "prod":"USB Keyboard K120",    "vid":"0x046d","pid":"0xc31c","pfx":"LGK"},
-    {"name":"Microsoft Wired 600",  "mfr":"Microsoft",  "prod":"Wired Keyboard 600",   "vid":"0x045e","pid":"0x0750","pfx":"MSK"},
-    {"name":"Dell KB216",           "mfr":"Dell",       "prod":"KB216 Wired Keyboard", "vid":"0x413c","pid":"0x2003","pfx":"DEL"},
-    {"name":"HP KU-0316",           "mfr":"HP",         "prod":"KU-0316 Keyboard",     "vid":"0x03f0","pid":"0x0224","pfx":"HPK"},
-    {"name":"Apple Magic Keyboard", "mfr":"Apple Inc.", "prod":"Magic Keyboard",       "vid":"0x05ac","pid":"0x0267","pfx":"APL"},
+    {"name":"Logitech Unifying Receiver", "mfr":"Logitech",  "prod":"USB Receiver",               "vid":"0x046d","pid":"0xc52b","pfx":"LGK"},
+    {"name":"Microsoft Dual Receiver",    "mfr":"Microsoft", "prod":"Microsoft USB Dual Receiver", "vid":"0x045e","pid":"0x0800","pfx":"MSK"},
+    {"name":"Dell Wireless Combo",        "mfr":"Dell",      "prod":"Dell Wireless Keyboard and Mouse Combo", "vid":"0x413c","pid":"0x2513","pfx":"DEL"},
 ]
 
 def _usb_r(rel):
@@ -852,11 +879,6 @@ def _gen_serial(profile_idx):
     elif profile_idx == 2: # Dell: CN0 + 13 alphanumeric
         ch = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789"
         return "CN0" + "".join(rng.choices(ch, k=13))
-    elif profile_idx == 3: # HP: CN + 10 digits
-        return "CN0" + "".join(rng.choices("0123456789", k=10))
-    elif profile_idx == 4: # Apple: 12 uppercase alphanumeric
-        ch = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-        return "".join(rng.choices(ch, k=12))
     else:
         return "".join(rng.choices("0123456789ABCDEF", k=12))
 
@@ -864,7 +886,7 @@ async def api_identity(request):
     import time as _t
     if request.method == "GET":
         return web.json_response({
-            "product":      _usb_r("strings/0x409/product")      or "USB Keyboard K120",
+            "product":      _usb_r("strings/0x409/product")      or "USB Receiver",
             "manufacturer": _usb_r("strings/0x409/manufacturer") or "Logitech",
             "serial":       _usb_r("strings/0x409/serialnumber") or "—",
             "vid":          _usb_r("idVendor"),

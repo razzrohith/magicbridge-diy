@@ -199,10 +199,10 @@ print('%02d%02dLK%05d' % (yr, mo, rng.randint(10000, 99999)))
 {
   "usb": {
     "manufacturer": "Logitech",
-    "product":      "USB Keyboard K120",
+    "product":      "USB Receiver",
     "serial":       "$DEFAULT_SERIAL",
     "idVendor":     "0x046d",
-    "idProduct":    "0xc31c"
+    "idProduct":    "0xc52b"
   },
   "video": {
     "device":     "",

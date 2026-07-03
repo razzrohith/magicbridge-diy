@@ -557,11 +557,11 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="scard-title"><span class="dot-acc"></span>Profile vs Current</div>
           <table class="id-table">
             <tr><th>Field</th><th>Profile Default</th><th>Now</th></tr>
-            <tr><td>Product</td><td class="id-orig">USB Keyboard K120</td><td class="id-same" id="dd-prod">—</td></tr>
+            <tr><td>Product</td><td class="id-orig">USB Receiver</td><td class="id-same" id="dd-prod">—</td></tr>
             <tr><td>Maker</td><td class="id-orig">Logitech</td><td class="id-same" id="dd-mfr">—</td></tr>
             <tr><td>Serial</td><td class="id-orig">Device-specific</td><td class="id-same" id="dd-ser">—</td></tr>
             <tr><td>VID</td><td class="id-orig">0x046d</td><td class="id-same" id="dd-vid">—</td></tr>
-            <tr><td>PID</td><td class="id-orig">0xc31c</td><td class="id-same" id="dd-pid">—</td></tr>
+            <tr><td>PID</td><td class="id-orig">0xc52b</td><td class="id-same" id="dd-pid">—</td></tr>
           </table>
         </div>
         <div class="scard" style="border-color:rgba(99,102,241,.15);background:#0a0a1a">
@@ -1259,7 +1259,7 @@ async function tsReconnect(){toast('Connecting…',8000);const r=await fetch('/a
 async function tsLogout(){if(!confirm('Log out from Tailscale? You will need to re-authenticate next time.'))return;const r=await fetch('/api/tailscale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'logout'})});const d=await r.json();toast(d.ok?'Logged out':'Failed');setTimeout(tsRefresh,1500);}
 
 // Identity (read-only)
-const _ORIG={prod:'USB Keyboard K120',mfr:'Logitech',vid:'0x046d',pid:'0xc31c'};
+const _ORIG={prod:'USB Receiver',mfr:'Logitech',vid:'0x046d',pid:'0xc52b'};
 async function identityRefresh(){
   try{
     const r=await fetch('/api/identity');const d=await r.json();

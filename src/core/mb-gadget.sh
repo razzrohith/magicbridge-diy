@@ -12,11 +12,14 @@ set -e
 GADGET_DIR="/sys/kernel/config/usb_gadget/g1"
 CONFIG_FILE="/etc/magicbridge/config.json"
 
-# Load identity from config.json
+# Load identity from config.json. Defaults below are only used if
+# config.json is missing or unreadable; a real combo-receiver identity
+# (Logitech Unifying Receiver) rather than a keyboard-only model, since
+# this gadget always exposes both a keyboard and a mouse HID interface.
 VID="0x046d"
-PID="0xc31c"
+PID="0xc52b"
 MFR="Logitech"
-PROD="USB Keyboard K120"
+PROD="USB Receiver"
 SER="12AB34CD"
 BCD_USB="0x0200"
 BCD_DEV="0x0100"
@@ -31,9 +34,9 @@ try:
 except: print('$2')
 " 2>/dev/null || echo "$2"; }
     VID=$(_py idVendor  "0x046d")
-    PID=$(_py idProduct "0xc31c")
+    PID=$(_py idProduct "0xc52b")
     MFR=$(_py manufacturer "Logitech")
-    PROD=$(_py product "USB Keyboard K120")
+    PROD=$(_py product "USB Receiver")
     SER=$(_py serial "12AB34CD")
 fi
 

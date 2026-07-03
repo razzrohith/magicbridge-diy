@@ -36,14 +36,19 @@ SESSION_TIMEOUT = 1800   # 30 min idle
 # passwords and sessions by design. A compromised main-page password no
 # longer exposes the admin panel. This panel uses Flask's own session only.
 
-# Default USB identity (Logitech K120, what install.sh sets up). Serial is
-# generated per-device (see _gen_default_serial) rather than a fixed value,
-# so "safe mode" never reverts to an obviously-placeholder serial.
+# Default USB identity: a real Logitech Unifying Receiver identity, not a
+# single-purpose keyboard model. The gadget always exposes both a keyboard
+# AND a mouse HID interface, and a keyboard-only product (like the old
+# K120 default) never legitimately has a mouse interface, an easy
+# structural tell. A combo receiver dongle is supposed to look exactly
+# like this, so it isn't one. Serial is generated per-device (see
+# _gen_default_serial) rather than a fixed value, so "safe mode" never
+# reverts to an obviously-placeholder serial.
 ORIG = {
     "manufacturer": "Logitech",
-    "product":      "USB Keyboard K120",
+    "product":      "USB Receiver",
     "idVendor":     "0x046d",
-    "idProduct":    "0xc31c",
+    "idProduct":    "0xc52b",
 }
 
 def _gen_default_serial() -> str:
@@ -65,13 +70,12 @@ def _gen_default_serial() -> str:
     yr = rng.randint(19, 23); mo = rng.randint(1, 12)
     return "%02d%02dLK%05d" % (yr, mo, rng.randint(10000, 99999))
 
+# Real wireless keyboard+mouse combo receiver dongles, chosen deliberately
+# over single-purpose keyboard models (see the ORIG comment above for why).
 USB_PROFILES = [
-    {"name":"Logitech K120",        "mfr":"Logitech",   "prod":"USB Keyboard K120",      "vid":"0x046d","pid":"0xc31c","pfx":"LGK"},
-    {"name":"Microsoft Wired 600",  "mfr":"Microsoft",  "prod":"Wired Keyboard 600",      "vid":"0x045e","pid":"0x0750","pfx":"MSK"},
-    {"name":"Dell KB216",           "mfr":"Dell",       "prod":"KB216 Wired Keyboard",    "vid":"0x413c","pid":"0x2003","pfx":"DEL"},
-    {"name":"HP KU-0316",           "mfr":"HP",         "prod":"KU-0316 Keyboard",        "vid":"0x03f0","pid":"0x0224","pfx":"HPK"},
-    {"name":"Corsair K55 RGB",      "mfr":"Corsair",    "prod":"K55 RGB Keyboard",        "vid":"0x1b1c","pid":"0x1b48","pfx":"COR"},
-    {"name":"Apple Magic Keyboard", "mfr":"Apple Inc.", "prod":"Magic Keyboard",          "vid":"0x05ac","pid":"0x0267","pfx":"APL"},
+    {"name":"Logitech Unifying Receiver", "mfr":"Logitech",  "prod":"USB Receiver",               "vid":"0x046d","pid":"0xc52b","pfx":"LGK"},
+    {"name":"Microsoft Dual Receiver",    "mfr":"Microsoft", "prod":"Microsoft USB Dual Receiver", "vid":"0x045e","pid":"0x0800","pfx":"MSK"},
+    {"name":"Dell Wireless Combo",        "mfr":"Dell",      "prod":"Dell Wireless Keyboard and Mouse Combo", "vid":"0x413c","pid":"0x2513","pfx":"DEL"},
 ]
 
 LOG_SOURCES = {
@@ -656,7 +660,7 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
       </div>
       <div class="field" style="flex:1;min-width:70px">
         <label class="fl" for="u-pid">PID</label>
-        <input type="text" id="u-pid" placeholder="0xc31c" style="width:100%">
+        <input type="text" id="u-pid" placeholder="0xc52b" style="width:100%">
       </div>
       <div class="field" style="flex:1;min-width:65px">
         <label class="fl" for="u-bcdusb">bcdUSB</label>
