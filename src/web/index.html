@@ -746,6 +746,20 @@ body:not(.fs) .fs-hud{display:none!important}
           <button class="sbtn" id="lockdown-btn" onclick="toggleLockdown()" style="margin-top:6px">Enable Tailscale-only Access</button>
           <div id="lockdown-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>Mouse Jiggler</div>
+          <div class="snote" style="margin-bottom:8px">Nudges the remote mouse now and then to keep the screen/session awake. Timing and movement are randomized, not a fixed pattern, and it always pauses itself while you're actually using the KVM.</div>
+          <div class="srow"><span class="sk">Status</span><span class="sv" id="jiggler-status">—</span></div>
+          <label class="wifi-label" for="jiggler-style" style="margin-top:8px">Style</label>
+          <select class="sinput wifi-field" id="jiggler-style" onchange="jigglerStyleChanged()" style="margin-bottom:8px">
+            <option value="minimal">Minimal - stays usable while enabled</option>
+            <option value="slow">Slow &amp; subtle</option>
+            <option value="moderate" selected>Moderate</option>
+            <option value="fast">Fast &amp; obvious</option>
+          </select>
+          <button class="sbtn" id="jiggler-btn" onclick="toggleJiggler()">Enable Jiggler</button>
+          <div id="jiggler-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+        </div>
       </div>
 
     </div>
@@ -1161,7 +1175,7 @@ function showTab(name){
   document.querySelectorAll('.snav-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   document.getElementById('tab-'+name).classList.add('active');
-  if(name==='system') refreshStatus();
+  if(name==='system'){refreshStatus();refreshJigglerStatus();}
   if(name==='identity') identityRefresh();
   if(name==='network'){wifiRefresh();tsRefresh();}
 }
@@ -1437,6 +1451,58 @@ async function toggleLockdown(){
   }catch(e){show('Error: '+e,false);}
 }
 
+// Mouse jiggler
+async function refreshJigglerStatus(){
+  try{
+    const r=await fetch('/api/jiggler');
+    const d=await r.json();
+    const s=document.getElementById('jiggler-status');
+    const b=document.getElementById('jiggler-btn');
+    const sel=document.getElementById('jiggler-style');
+    if(d.style) sel.value=d.style;
+    if(d.enabled){
+      s.textContent='ON ('+(sel.options[sel.selectedIndex]?.text||d.style)+')'; s.className='sv ok';
+      b.textContent='Disable Jiggler';
+    }else{
+      s.textContent='OFF'; s.className='sv';
+      b.textContent='Enable Jiggler';
+    }
+    b.dataset.enabled=d.enabled?'1':'0';
+  }catch(e){}
+}
+async function _setJiggler(enabled){
+  const sel=document.getElementById('jiggler-style');
+  const msg=document.getElementById('jiggler-msg');
+  const show=(text,ok)=>{
+    msg.textContent=text;
+    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
+      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+  };
+  try{
+    const r=await fetch('/api/jiggler',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({enabled:enabled,style:sel.value})});
+    const d=await r.json();
+    if(d.ok){
+      show(enabled?'✓ Jiggler enabled ('+sel.value+')':'✓ Jiggler disabled', true);
+      toast(enabled?'Jiggler enabled ✓':'Jiggler disabled ✓');
+      refreshJigglerStatus();
+    }else{
+      show(d.error||'Failed', false);
+    }
+  }catch(e){show('Error: '+e,false);}
+}
+function toggleJiggler(){
+  const b=document.getElementById('jiggler-btn');
+  _setJiggler(b.dataset.enabled!=='1');
+}
+function jigglerStyleChanged(){
+  const b=document.getElementById('jiggler-btn');
+  // Only push the style change live if the jiggler is currently on;
+  // if it's off, just remember the selection for next time it's enabled.
+  if(b.dataset.enabled==='1') _setJiggler(true);
+}
+
 // Agent: Quick Actions + Clips + Macros
 const _qa={lock:['MetaLeft','KeyL'],taskman:['ControlLeft','ShiftLeft','Escape'],desktop:['MetaLeft','KeyD'],explorer:['MetaLeft','KeyE'],settings:['MetaLeft','KeyI'],snip:['MetaLeft','ShiftLeft','KeyS']};
 function qa(k){if(_qa[k]) combo(_qa[k]);}
@@ -1625,6 +1691,7 @@ wifiRefresh();
 renderClips();
 renderMacros();
 refreshLockdownStatus();
+refreshJigglerStatus();
 </script>
 </body>
 </html>

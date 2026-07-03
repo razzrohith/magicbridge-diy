@@ -407,6 +407,158 @@ video    = VideoManager()
 # Connected WebSocket clients (for count tracking)
 _ws_clients: set = set()
 
+# Last time a real (human-driven, via the WS connection) keyboard/mouse
+# event was seen. The jiggler checks this so it never fights an active
+# KVM session - it only nudges the mouse during genuine idle time.
+_last_real_input = [0.0]
+
+
+# ---------------------------------------------------------------------------
+# Mouse jiggler: keeps the target screen awake with small mouse movements
+# when nothing else is happening. Deliberately NOT on a fixed timer or a
+# fixed path - every jiggle randomizes the wait, direction, step count and
+# per-step timing, and occasionally throws in an extra-long pause, so the
+# cadence and shape don't look machine-generated to anything analyzing
+# cursor movement (a real hand never moves at a perfectly steady interval
+# in a perfectly straight line). Each jiggle nets back to exactly where it
+# started, so the cursor never wanders off across the screen over time.
+# ---------------------------------------------------------------------------
+import random as _jrand
+import math as _jmath
+
+JIGGLER_STYLES = {
+    "minimal": {
+        "label":                "Minimal - stays usable while enabled",
+        "interval":             (45, 90),     # seconds between jiggles
+        "distance":             (1, 2),       # px per jiggle (round trip)
+        "substeps":             (1, 2),
+        "substep_delay":        (0.005, 0.02),
+        "pause_after_real_input": 3,          # seconds
+    },
+    "slow": {
+        "label":                "Slow & subtle",
+        "interval":             (20, 40),
+        "distance":             (2, 5),
+        "substeps":             (2, 3),
+        "substep_delay":        (0.01, 0.04),
+        "pause_after_real_input": 5,
+    },
+    "moderate": {
+        "label":                "Moderate",
+        "interval":             (8, 20),
+        "distance":             (5, 15),
+        "substeps":             (2, 4),
+        "substep_delay":        (0.01, 0.05),
+        "pause_after_real_input": 8,
+    },
+    "fast": {
+        "label":                "Fast & obvious",
+        "interval":             (3, 8),
+        "distance":             (15, 40),
+        "substeps":             (3, 6),
+        "substep_delay":        (0.008, 0.03),
+        "pause_after_real_input": 10,
+    },
+}
+JIGGLER_DEFAULT_STYLE = "moderate"
+
+
+class MouseJiggler:
+    """Background task that nudges the mouse to keep the remote screen/
+    session active. Runs continuously once started; whether it actually
+    moves the mouse is gated by .enabled and by recent real input."""
+
+    def __init__(self, mouse_dev: "HIDMouse"):
+        self._mouse = mouse_dev
+        self.enabled = False
+        self.style = JIGGLER_DEFAULT_STYLE
+        self._task = None
+
+    def configure(self, enabled: bool, style: str):
+        if style not in JIGGLER_STYLES:
+            style = JIGGLER_DEFAULT_STYLE
+        self.enabled = bool(enabled)
+        self.style = style
+
+    def status(self) -> dict:
+        return {
+            "enabled": self.enabled,
+            "style":   self.style,
+            "styles":  {k: v["label"] for k, v in JIGGLER_STYLES.items()},
+        }
+
+    def start(self):
+        if self._task is None:
+            self._task = asyncio.create_task(self._loop())
+
+    def stop(self):
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+
+    async def _loop(self):
+        loop = asyncio.get_running_loop()
+        while True:
+            cfg = JIGGLER_STYLES.get(self.style, JIGGLER_STYLES[JIGGLER_DEFAULT_STYLE])
+            wait = _jrand.uniform(*cfg["interval"])
+            # ~12% of the time, stretch the wait well beyond the normal
+            # range - a real person doesn't touch the mouse at a steady
+            # cadence, and a purely periodic signal is the easiest thing
+            # for any kind of movement analysis to flag.
+            if _jrand.random() < 0.12:
+                wait *= _jrand.uniform(1.6, 3.0)
+            await asyncio.sleep(wait)
+
+            if not self.enabled:
+                continue
+            if time.time() - _last_real_input[0] < cfg["pause_after_real_input"]:
+                continue  # don't fight an active KVM session
+
+            try:
+                await loop.run_in_executor(None, self._jiggle, cfg)
+            except Exception:
+                log.debug("jiggler move failed", exc_info=True)
+
+    def _jiggle(self, cfg):
+        """One full jiggle: move a short, randomly-angled distance away,
+        pause briefly like a hand hesitating, then walk back to exactly
+        where it started (zero net displacement)."""
+        angle = _jrand.uniform(0, 2 * _jmath.pi)
+        dist  = _jrand.uniform(*cfg["distance"])
+        tx = round(_jmath.cos(angle) * dist)
+        ty = round(_jmath.sin(angle) * dist)
+        if tx == 0 and ty == 0:
+            return
+        self._walk(tx, ty, cfg)
+        time.sleep(_jrand.uniform(0.05, 0.35))
+        self._walk(-tx, -ty, cfg)
+
+    def _walk(self, total_dx: int, total_dy: int, cfg):
+        """Splits one leg of the movement into a random number of uneven
+        sub-steps with randomized micro-delays between them, instead of
+        one abrupt jump - closer to how a hand actually moves. The last
+        sub-step always takes whatever remains, so rounding never leaves
+        the walk short of its exact target."""
+        n = _jrand.randint(*cfg["substeps"])
+        rem_x, rem_y = total_dx, total_dy
+        for i in range(n):
+            last = (i == n - 1)
+            if last:
+                sx, sy = rem_x, rem_y
+            else:
+                frac = _jrand.uniform(0.3, 0.7)
+                sx = round(rem_x * frac)
+                sy = round(rem_y * frac)
+            if sx or sy:
+                self._mouse.move(sx, sy)
+            rem_x -= sx
+            rem_y -= sy
+            if not last:
+                time.sleep(_jrand.uniform(*cfg["substep_delay"]))
+
+
+jiggler = MouseJiggler(mouse)
+
 
 # WebSocket: keyboard / mouse input handler
 
@@ -467,6 +619,10 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                 try:
                     d = json.loads(msg.data)
                     t = d.get("type", "")
+
+                    if t in ("keydown", "keyup", "mousemove", "mousedown",
+                             "mouseup", "wheel", "combo", "paste"):
+                        _last_real_input[0] = time.time()
 
                     if t == "keydown":
                         keyboard.key_down(d.get("code", ""))
@@ -948,6 +1104,26 @@ async def api_identity(request):
     return web.json_response({"ok": False, "error": "unknown action"}, status=400)
 
 
+async def api_jiggler(request):
+    """GET /api/jiggler: current enabled/style + available styles.
+    POST /api/jiggler: {"enabled": bool, "style": str} - updates live and persists."""
+    if request.method == "GET":
+        return web.json_response({"ok": True, **jiggler.status()})
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    style = str(d.get("style", jiggler.style))
+    if style not in JIGGLER_STYLES:
+        return web.json_response({"ok": False, "error": "unknown style"}, status=400)
+    enabled = bool(d.get("enabled", jiggler.enabled))
+    jiggler.configure(enabled, style)
+    cfg = _load_cfg()
+    cfg["jiggler"] = {"enabled": enabled, "style": style}
+    _save_cfg(cfg)
+    return web.json_response({"ok": True, **jiggler.status()})
+
+
 async def api_wifi(request):
     import subprocess as _sp, json as _j
     if request.method == "GET":
@@ -1267,6 +1443,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/power",     api_power)
     app.router.add_get("/api/identity",  api_identity)
     app.router.add_post("/api/identity", api_identity)
+    app.router.add_get("/api/jiggler",  api_jiggler)
+    app.router.add_post("/api/jiggler", api_jiggler)
     app.router.add_get("/api/networks",   api_wifi)
     app.router.add_post("/api/networks",  api_wifi)
     app.router.add_get("/api/tailscale",  api_tailscale_get)
@@ -1314,6 +1492,14 @@ async def main():
         except Exception as e:
             log.warning("Could not reapply network lockdown: %s", e)
 
+    # Mouse jiggler: load persisted enabled/style, then start the background
+    # task regardless (it's a no-op loop when disabled, so a later live
+    # enable via the UI doesn't need a service restart to take effect).
+    jc = cfg.get("jiggler", {})
+    jiggler.configure(bool(jc.get("enabled", False)), jc.get("style", JIGGLER_DEFAULT_STYLE))
+    jiggler.start()
+    log.info("Jiggler ready (enabled=%s, style=%s)", jiggler.enabled, jiggler.style)
+
     # Start video stream
     vc  = cfg.get("video", {})
     loop = asyncio.get_running_loop()
@@ -1346,6 +1532,7 @@ async def main():
         pass
     finally:
         log.info("Shutting down…")
+        jiggler.stop()
         keyboard.release_all()
         mouse.release_all()
         video.stop()
