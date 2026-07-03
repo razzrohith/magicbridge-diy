@@ -1,3 +1,0 @@
-Set oShell = CreateObject("WScript.Shell")
-' Run push.bat in a visible cmd window
-oShell.Run "cmd /c E:\Startup\magicbridge\push.bat", 1, True
