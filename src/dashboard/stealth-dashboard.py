@@ -253,10 +253,16 @@ def _tailscale_status() -> dict:
         r = subprocess.run(["tailscale","status","--json"],
                            capture_output=True, text=True, timeout=4)
         d = json.loads(r.stdout)
+        connected = d.get("BackendState") == "Running"
+        # Tailscale can still list a reserved TailscaleIPs entry even while
+        # the backend is fully stopped, so only surface the IP when actually
+        # connected (matches the same fix applied to magicbridge.py's
+        # /api/status).
+        ip = (d.get("TailscaleIPs") or [""])[0] if connected else ""
         return {
-            "connected": d.get("BackendState") == "Running",
-            "ip":   (d.get("TailscaleIPs") or [""])[0],
-            "state": d.get("BackendState", "unknown"),
+            "connected": connected,
+            "ip":        ip,
+            "state":     d.get("BackendState", "unknown"),
         }
     except Exception:
         return {"connected": False, "ip": "", "state": "not running"}
