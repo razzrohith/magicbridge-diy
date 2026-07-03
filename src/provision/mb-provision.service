@@ -2,7 +2,10 @@
 Description=MagicBridge WiFi Provisioning
 After=NetworkManager.service network-pre.target
 Before=magicbridge.service
-ConditionPathExists=!/etc/magicbridge/.provisioned
+# Runs on every boot and re-checks connectivity itself (see mb-provision.sh);
+# no longer gated to "first boot only" so the setup hotspot can come back
+# any time the Pi can't reach a known WiFi network (e.g. moved to a new
+# location whose network was never saved).
 
 [Service]
 Type=oneshot

@@ -2,17 +2,22 @@
 # ============================================================
 #  MagicBridge WiFi Provisioning AP
 #
-#  Runs as a systemd service (mb-provision.service).
-#  Starts a hostapd access point "MagicBridge-Setup" when no
-#  WiFi connection exists, serves a captive-portal setup page,
-#  then hands off to NetworkManager and exits.
+#  Runs as a systemd service (mb-provision.service) on every boot.
+#  Starts a hostapd access point "MagicBridge-Setup" whenever the Pi
+#  has no working network connection (first-time setup, or later if
+#  it's moved somewhere its saved WiFi isn't in range), serves a
+#  captive-portal setup page, then hands off to NetworkManager and
+#  exits. Not a one-time thing: it re-checks connectivity on every
+#  boot rather than gating itself off permanently after first success,
+#  so moving this to a new location just means going through the same
+#  setup-hotspot flow again instead of losing wireless access to it.
 #
 #  Credentials: SSID "MagicBridge-Setup"  (no password)
 #  Portal: http://192.168.73.1/ (opened by captive detection)
 # ============================================================
 set -e
 
-FLAG_FILE="/etc/magicbridge/.provisioned"
+FLAG_FILE="/etc/magicbridge/.provisioned"   # informational timestamp only, doesn't gate anything
 WIFI_FILE="/etc/magicbridge/.provision-wifi"
 LOG="/var/log/magicbridge-provision.log"
 AP_SSID="MagicBridge-Setup"
@@ -25,17 +30,13 @@ TS_KEY_TMP="/tmp/mb-ts-key"
 exec >> "$LOG" 2>&1
 echo "[$(date)] mb-provision.sh starting"
 
-# Already provisioned?
-if [[ -f "$FLAG_FILE" ]]; then
-    echo "[$(date)] Flag found, already provisioned, exiting"
-    exit 0
-fi
-
-# Check for live WiFi
+# Check for live network (WiFi, Ethernet, or otherwise) via NetworkManager's
+# overall state, not just wlan0 specifically - this fires the setup hotspot
+# only when the Pi genuinely has no way onto any network, every boot.
 sleep 8   # give NetworkManager time to connect saved networks
 CONNECTED=$(nmcli -t -f STATE general 2>/dev/null | grep -c "^connected$" || true)
 if [[ "$CONNECTED" -gt 0 ]]; then
-    echo "[$(date)] WiFi already connected, marking provisioned"
+    echo "[$(date)] Already connected, nothing to do"
     touch "$FLAG_FILE"
     exit 0
 fi
