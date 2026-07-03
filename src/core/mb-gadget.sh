@@ -16,11 +16,15 @@ CONFIG_FILE="/etc/magicbridge/config.json"
 # config.json is missing or unreadable; a real combo-receiver identity
 # (Logitech Unifying Receiver) rather than a keyboard-only model, since
 # this gadget always exposes both a keyboard and a mouse HID interface.
+# A real Unifying Receiver reports no serial number (iSerial=0) and
+# exposes a 3rd idle vendor HID interface alongside keyboard+mouse, so
+# those are the defaults here too.
 VID="0x046d"
 PID="0xc52b"
 MFR="Logitech"
 PROD="USB Receiver"
-SER="12AB34CD"
+SER=""
+EXTRA_IFACE="true"
 BCD_USB="0x0200"
 BCD_DEV="0x0100"
 
@@ -37,8 +41,12 @@ except: print('$2')
     PID=$(_py idProduct "0xc52b")
     MFR=$(_py manufacturer "Logitech")
     PROD=$(_py product "USB Receiver")
-    SER=$(_py serial "12AB34CD")
+    SER=$(_py serial "")
+    EXTRA_IFACE=$(_py extra_iface "true")
 fi
+# Normalize case (Python may print True/False) so the comparison below
+# works regardless of how the value ended up stored in config.json.
+EXTRA_IFACE=$(echo "$EXTRA_IFACE" | tr '[:upper:]' '[:lower:]')
 
 # Load kernel modules
 modprobe libcomposite 2>/dev/null || { echo "mb-gadget: WARNING libcomposite not loaded"; true; }
@@ -60,9 +68,11 @@ if [[ -d "$GADGET_DIR" ]]; then
     # Gadget dir exists but unbound. Remove and recreate cleanly
     echo "" > "$GADGET_DIR/UDC" 2>/dev/null || true
     rm -f "$GADGET_DIR/configs/c.1/hid.keyboard" \
-          "$GADGET_DIR/configs/c.1/hid.mouse"    2>/dev/null || true
+          "$GADGET_DIR/configs/c.1/hid.mouse"    \
+          "$GADGET_DIR/configs/c.1/hid.aux"       2>/dev/null || true
     rmdir "$GADGET_DIR/functions/hid.keyboard"   2>/dev/null || true
     rmdir "$GADGET_DIR/functions/hid.mouse"      2>/dev/null || true
+    rmdir "$GADGET_DIR/functions/hid.aux"        2>/dev/null || true
     rmdir "$GADGET_DIR/configs/c.1/strings/0x409" 2>/dev/null || true
     rmdir "$GADGET_DIR/configs/c.1"              2>/dev/null || true
     rmdir "$GADGET_DIR/strings/0x409"            2>/dev/null || true
@@ -121,13 +131,36 @@ printf '\x05\x01\x09\x02\xa1\x01\x09\x01\xa1\x00\x05\x09\x19\x01\x29\x03\x15\x00
 ln -sf "$GADGET_DIR/functions/hid.mouse" \
        "$GADGET_DIR/configs/c.1/hid.mouse"
 
+# Optional 3rd (idle) vendor HID interface. Real Logitech Unifying
+# Receivers expose 3 USB interfaces, not 2 - this one carries no traffic
+# from our code (matches how a plain keyboard/mouse setup, without
+# Logitech's own software installed, never talks to it either) and is
+# purely for interface-count realism. Best-effort: if anything here
+# fails, the keyboard/mouse functions above are already bound and this
+# is skipped without affecting them.
+if [[ "$EXTRA_IFACE" == "true" ]]; then
+    (
+        set -e
+        mkdir -p "$GADGET_DIR/functions/hid.aux"
+        echo "0" > "$GADGET_DIR/functions/hid.aux/protocol"       # 0 = none (non-boot vendor iface)
+        echo "0" > "$GADGET_DIR/functions/hid.aux/subclass"       # 0 = non-boot
+        echo "7" > "$GADGET_DIR/functions/hid.aux/report_length"  # 1 report-id byte + 6 data bytes
+        printf '\x06\x00\xff\x09\x01\xa1\x01\x85\x10\x75\x08\x95\x06\x15\x00\x26\xff\x00\x09\x01\x81\x02\x09\x01\x91\x02\xc0' \
+            > "$GADGET_DIR/functions/hid.aux/report_desc"
+        ln -sf "$GADGET_DIR/functions/hid.aux" "$GADGET_DIR/configs/c.1/hid.aux"
+    ) || echo "mb-gadget: WARNING could not create aux interface, continuing with keyboard+mouse only"
+fi
+
 # Bind to USB Device Controller
 UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
 if [[ -n "$UDC" ]]; then
     echo "$UDC" > "$GADGET_DIR/UDC"
     echo "mb-gadget: bound to $UDC"
     echo "mb-gadget: /dev/hidg0 = keyboard    /dev/hidg1 = mouse"
-    echo "mb-gadget: USB identity: '$MFR' '$PROD' (VID=$VID PID=$PID)"
+    if [[ -e "$GADGET_DIR/functions/hid.aux" ]]; then
+        echo "mb-gadget: /dev/hidg2 = aux (idle vendor interface)"
+    fi
+    echo "mb-gadget: USB identity: '$MFR' '$PROD' (VID=$VID PID=$PID, serial=${SER:-<none>})"
 else
     echo "mb-gadget: WARNING, no UDC found"
     echo "  Ensure the Pi USB-C OTG port is connected to the target computer."

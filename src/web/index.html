@@ -559,7 +559,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <tr><th>Field</th><th>Profile Default</th><th>Now</th></tr>
             <tr><td>Product</td><td class="id-orig">USB Receiver</td><td class="id-same" id="dd-prod">—</td></tr>
             <tr><td>Maker</td><td class="id-orig">Logitech</td><td class="id-same" id="dd-mfr">—</td></tr>
-            <tr><td>Serial</td><td class="id-orig">Device-specific</td><td class="id-same" id="dd-ser">—</td></tr>
+            <tr><td>Serial</td><td class="id-orig">(none)</td><td class="id-same" id="dd-ser">—</td></tr>
             <tr><td>VID</td><td class="id-orig">0x046d</td><td class="id-same" id="dd-vid">—</td></tr>
             <tr><td>PID</td><td class="id-orig">0xc52b</td><td class="id-same" id="dd-pid">—</td></tr>
           </table>
@@ -1268,7 +1268,9 @@ async function identityRefresh(){
     set('id-ids',(d.vid||'—')+' / '+(d.pid||'—'));
     function dd(id,orig,curr){const e=document.getElementById(id);if(!e)return;e.textContent=curr||'—';e.className=curr===orig?'id-same':'id-curr';}
     dd('dd-prod',_ORIG.prod,d.product);dd('dd-mfr',_ORIG.mfr,d.manufacturer);
-    dd('dd-ser','—',d.serial);  // serial is device-specific, always show as current
+    // Real Logitech Unifying Receivers report no serial number at all, so
+    // "no serial" is the default/expected state now, not "device-specific".
+    dd('dd-ser','',d.serial||'');
     dd('dd-vid',_ORIG.vid,d.vid);dd('dd-pid',_ORIG.pid,d.pid);
     const spoofed=d.product!==_ORIG.prod||d.manufacturer!==_ORIG.mfr||d.vid!==_ORIG.vid;
     const tag=document.getElementById('id-tag');

@@ -133,18 +133,28 @@ def _ensure_auth_defaults():
 
 _PLACEHOLDER_SERIAL = "12AB34CD"
 
+# has_serial/extra_iface reflect what real hardware for each identity
+# actually does, verified against real Unifying Receiver USB descriptors:
+# a genuine Logitech Unifying Receiver reports NO serial number at all
+# (iSerial = 0) and exposes 3 USB interfaces (two idle boot interfaces
+# plus one vendor HID++ interface), not just a plain 2-interface
+# keyboard+mouse composite device. Microsoft/Dell equivalents are left
+# as before (verified descriptor data wasn't available for them), so
+# only the Logitech default/profile is corrected here.
 _DEFAULT_USB_IDENTITY = {
     "manufacturer": "Logitech",
     "product":      "USB Receiver",   # Unifying Receiver: legitimately has both keyboard+mouse interfaces
     "idVendor":     "0x046d",
     "idProduct":    "0xc52b",
+    "has_serial":   False,            # real Unifying Receivers have iSerial = 0
+    "extra_iface":  True,             # real ones expose a 3rd (idle) HID interface
 }
 _OLD_DEFAULT_PRODUCTS = {"USB Keyboard K120"}  # pre-migration defaults, replaced below
 
 def _ensure_usb_defaults():
     """Bootstrap/migrate to a realistic default USB identity, instead of
     requiring someone to open the stealth panel and click a preset button
-    first. Handles two cases:
+    first. Handles three cases:
       - Fresh config: replaces the placeholder serial ("12AB34CD") with a
         realistic per-device one (_gen_serial, seeded from this Pi's MAC).
       - Older installs already bootstrapped with the previous default
@@ -152,9 +162,15 @@ def _ensure_usb_defaults():
         can't have a mouse interface, a giveaway since this gadget always
         exposes one): migrates them to the Unifying Receiver identity,
         which legitimately combines both.
+      - Installs already on the Unifying Receiver identity but still
+        carrying a serial number: removes it, since a real Unifying
+        Receiver reports none (iSerial = 0) and having one is itself a
+        mismatch.
     Also applies the result to the live USB gadget immediately, in case
     mb-gadget.sh already applied the old value a few seconds earlier at
-    boot."""
+    boot. The extra HID interface (for interface-count realism) can only
+    be created when the gadget's functions are (re)built, i.e. on next
+    reboot / mb-gadget.sh run, not live here."""
     try:
         cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
     except Exception:
@@ -162,33 +178,39 @@ def _ensure_usb_defaults():
     usb = cfg.setdefault("usb", {})
     current_serial  = usb.get("serial", "")
     current_product = usb.get("product", "")
-    needs_serial_fix   = (not current_serial) or (current_serial == _PLACEHOLDER_SERIAL)
-    needs_identity_fix = current_product in _OLD_DEFAULT_PRODUCTS
-    if not needs_serial_fix and not needs_identity_fix:
+    needs_serial_fix    = (not current_serial) or (current_serial == _PLACEHOLDER_SERIAL)
+    needs_identity_fix  = current_product in _OLD_DEFAULT_PRODUCTS
+    needs_serial_removal = (current_product == _DEFAULT_USB_IDENTITY["product"]
+                             and current_serial not in ("", None))
+    if not needs_serial_fix and not needs_identity_fix and not needs_serial_removal:
         return  # already on the current default, nothing to do
-    try:
-        new_serial = _gen_serial(0)  # profile 0 = Logitech-format serial, matches the shipped default
-    except Exception as e:
-        log.warning("Could not generate a default USB serial: %s", e)
-        return
-    usb["serial"] = new_serial
     if needs_identity_fix:
         usb.update(_DEFAULT_USB_IDENTITY)
+        usb["serial"] = ""
+    elif needs_serial_removal:
+        usb["serial"] = ""
+        usb.setdefault("has_serial", False)
+        usb.setdefault("extra_iface", True)
     else:
+        # generic fresh-config bootstrap onto the default identity
         usb.setdefault("manufacturer", _DEFAULT_USB_IDENTITY["manufacturer"])
         usb.setdefault("product", _DEFAULT_USB_IDENTITY["product"])
         usb.setdefault("idVendor", _DEFAULT_USB_IDENTITY["idVendor"])
         usb.setdefault("idProduct", _DEFAULT_USB_IDENTITY["idProduct"])
+        usb.setdefault("has_serial", _DEFAULT_USB_IDENTITY["has_serial"])
+        usb.setdefault("extra_iface", _DEFAULT_USB_IDENTITY["extra_iface"])
+        usb["serial"] = "" if not usb.get("has_serial", True) else _gen_serial(0)
     try:
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
         Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
-        log.info("Replaced placeholder USB serial with a generated default")
+        log.info("USB identity defaults updated (serial=%r, identity_fix=%s)",
+                  usb.get("serial"), needs_identity_fix)
     except Exception as e:
-        log.warning("Could not persist default USB serial: %s", e)
+        log.warning("Could not persist default USB identity: %s", e)
     try:
         udc = _usb_r("UDC")
         _usb_w("UDC", "")
-        _usb_w("strings/0x409/serialnumber", new_serial)
+        _usb_w("strings/0x409/serialnumber", usb.get("serial", ""))
         if needs_identity_fix:
             _usb_w("strings/0x409/manufacturer", usb["manufacturer"])
             _usb_w("strings/0x409/product", usb["product"])
@@ -830,10 +852,14 @@ _USB_DIR = "/sys/kernel/config/usb_gadget/g1"
 # a keyboard-only product (e.g. a plain K120) never legitimately has a
 # mouse interface, an easy structural tell. A combo receiver dongle is
 # supposed to present exactly this way, so it isn't a giveaway.
+# has_serial/extra_iface: only the Logitech entry is verified against a
+# real device's descriptor (iSerial=0, 3 interfaces). Microsoft/Dell are
+# left with a serial and the plain 2-interface layout since that couldn't
+# be verified - better to leave them unchanged than guess.
 _USB_PROFILES = [
-    {"name":"Logitech Unifying Receiver", "mfr":"Logitech",  "prod":"USB Receiver",               "vid":"0x046d","pid":"0xc52b","pfx":"LGK"},
-    {"name":"Microsoft Dual Receiver",    "mfr":"Microsoft", "prod":"Microsoft USB Dual Receiver", "vid":"0x045e","pid":"0x0800","pfx":"MSK"},
-    {"name":"Dell Wireless Combo",        "mfr":"Dell",      "prod":"Dell Wireless Keyboard and Mouse Combo", "vid":"0x413c","pid":"0x2513","pfx":"DEL"},
+    {"name":"Logitech Unifying Receiver", "mfr":"Logitech",  "prod":"USB Receiver",               "vid":"0x046d","pid":"0xc52b","pfx":"LGK","has_serial":False,"extra_iface":True},
+    {"name":"Microsoft Dual Receiver",    "mfr":"Microsoft", "prod":"Microsoft USB Dual Receiver", "vid":"0x045e","pid":"0x0800","pfx":"MSK","has_serial":True, "extra_iface":False},
+    {"name":"Dell Wireless Combo",        "mfr":"Dell",      "prod":"Dell Wireless Keyboard and Mouse Combo", "vid":"0x413c","pid":"0x2513","pfx":"DEL","has_serial":True, "extra_iface":False},
 ]
 
 def _usb_r(rel):
@@ -901,7 +927,7 @@ async def api_identity(request):
         if idx < 0 or idx >= len(_USB_PROFILES):
             return web.json_response({"ok": False, "error": "bad idx"}, status=400)
         p = _USB_PROFILES[idx]
-        ser = _gen_serial(idx)
+        ser = _gen_serial(idx) if p.get("has_serial", True) else ""
         udc = _usb_r("UDC")
         _usb_w("UDC", "")
         _t.sleep(0.3)
@@ -914,9 +940,11 @@ async def api_identity(request):
         if udc: _usb_w("UDC", udc)
         cfg = _load_cfg()
         cfg.setdefault("usb", {}).update({"manufacturer": p["mfr"], "product": p["prod"],
-                                           "serial": ser, "idVendor": p["vid"], "idProduct": p["pid"]})
+                                           "serial": ser, "idVendor": p["vid"], "idProduct": p["pid"],
+                                           "has_serial": p.get("has_serial", True),
+                                           "extra_iface": p.get("extra_iface", False)})
         _save_cfg(cfg)
-        return web.json_response({"ok": True, "product": p["prod"], "serial": ser})
+        return web.json_response({"ok": True, "product": p["prod"], "serial": ser or "—"})
     return web.json_response({"ok": False, "error": "unknown action"}, status=400)
 
 

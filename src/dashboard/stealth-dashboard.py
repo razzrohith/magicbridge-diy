@@ -49,6 +49,8 @@ ORIG = {
     "product":      "USB Receiver",
     "idVendor":     "0x046d",
     "idProduct":    "0xc52b",
+    "has_serial":   False,   # real Unifying Receivers report iSerial = 0
+    "extra_iface":  True,    # real ones expose a 3rd (idle) HID interface
 }
 
 def _gen_default_serial() -> str:
@@ -72,10 +74,14 @@ def _gen_default_serial() -> str:
 
 # Real wireless keyboard+mouse combo receiver dongles, chosen deliberately
 # over single-purpose keyboard models (see the ORIG comment above for why).
+# has_serial/extra_iface: only the Logitech entry is verified against a real
+# device's descriptor (iSerial=0, 3 interfaces incl. one idle vendor HID
+# interface). Microsoft/Dell are left with a serial and the plain
+# 2-interface layout since that couldn't be verified.
 USB_PROFILES = [
-    {"name":"Logitech Unifying Receiver", "mfr":"Logitech",  "prod":"USB Receiver",               "vid":"0x046d","pid":"0xc52b","pfx":"LGK"},
-    {"name":"Microsoft Dual Receiver",    "mfr":"Microsoft", "prod":"Microsoft USB Dual Receiver", "vid":"0x045e","pid":"0x0800","pfx":"MSK"},
-    {"name":"Dell Wireless Combo",        "mfr":"Dell",      "prod":"Dell Wireless Keyboard and Mouse Combo", "vid":"0x413c","pid":"0x2513","pfx":"DEL"},
+    {"name":"Logitech Unifying Receiver", "mfr":"Logitech",  "prod":"USB Receiver",               "vid":"0x046d","pid":"0xc52b","pfx":"LGK","has_serial":False,"extra_iface":True},
+    {"name":"Microsoft Dual Receiver",    "mfr":"Microsoft", "prod":"Microsoft USB Dual Receiver", "vid":"0x045e","pid":"0x0800","pfx":"MSK","has_serial":True, "extra_iface":False},
+    {"name":"Dell Wireless Combo",        "mfr":"Dell",      "prod":"Dell Wireless Keyboard and Mouse Combo", "vid":"0x413c","pid":"0x2513","pfx":"DEL","has_serial":True, "extra_iface":False},
 ]
 
 LOG_SOURCES = {
@@ -200,8 +206,13 @@ def _rebind(fn):
     if udc:
         _usb_w("UDC", udc)
 
-def _apply_usb(mfr: str, prod: str, ser: str, vid: str = None, pid: str = None):
-    """Apply USB identity to live configfs and persist to config.json."""
+def _apply_usb(mfr: str, prod: str, ser: str, vid: str = None, pid: str = None,
+                has_serial: bool = None, extra_iface: bool = None):
+    """Apply USB identity to live configfs and persist to config.json.
+    has_serial/extra_iface are persisted (when given) so mb-gadget.sh
+    builds the right structure on next reboot; the serial number itself
+    always takes effect live, but interface count can only change when
+    the gadget's functions are rebuilt (reboot / mb-gadget.sh re-run)."""
     def _do():
         _usb_w("strings/0x409/manufacturer", mfr)
         _usb_w("strings/0x409/product",      prod)
@@ -215,6 +226,8 @@ def _apply_usb(mfr: str, prod: str, ser: str, vid: str = None, pid: str = None):
     usb.update({"manufacturer": mfr, "product": prod, "serial": ser})
     if vid: usb["idVendor"]  = vid
     if pid: usb["idProduct"] = pid
+    if has_serial is not None:  usb["has_serial"]  = has_serial
+    if extra_iface is not None: usb["extra_iface"] = extra_iface
     _save(cfg)
 
 def _rand_serial(pfx: str = "MB") -> str:
@@ -1301,8 +1314,17 @@ def api_lock():
 @app.route("/api/randomize")
 def api_randomize():
     if not _authed(): return jsonify({"error":"auth"}), 401
-    ser = _rand_serial("MB")
+    cfg = _load()
+    idx = cfg.get("usb", {}).get("profile_idx", 0)
+    p = USB_PROFILES[idx] if 0 <= idx < len(USB_PROFILES) else USB_PROFILES[0]
+    if not p.get("has_serial", True):
+        return jsonify({"ok": False,
+                         "error": f"{p['name']} doesn't have a serial number on real "
+                                  f"hardware - adding one would be less realistic, not more."}), 400
+    ser = _rand_serial(p.get("pfx", "MB"))
     _usb_w("strings/0x409/serialnumber", ser)
+    cfg.setdefault("usb", {})["serial"] = ser
+    _save(cfg)
     return jsonify({"ok": True, "serial": ser})
 
 
@@ -1355,9 +1377,15 @@ def api_apply():
             if not 0 <= idx < len(USB_PROFILES):
                 return jsonify({"error": "Bad index"}), 400
             p   = USB_PROFILES[idx]
-            ser = _rand_serial(p["pfx"])
-            _apply_usb(p["mfr"], p["prod"], ser, p["vid"], p["pid"])
-            cfg["usb"] = {"profile_idx": idx}
+            has_ser = p.get("has_serial", True)
+            ser = _rand_serial(p["pfx"]) if has_ser else ""
+            _apply_usb(p["mfr"], p["prod"], ser, p["vid"], p["pid"],
+                       has_serial=has_ser, extra_iface=p.get("extra_iface", False))
+            # Reload fresh (don't reuse the cfg loaded at the top of this
+            # request) so we add profile_idx without clobbering what
+            # _apply_usb just persisted.
+            cfg = _load()
+            cfg.setdefault("usb", {})["profile_idx"] = idx
             _save(cfg)
             _log_sess(f"USB profile: {p['name']}")
             return jsonify({"ok": True})
@@ -1381,19 +1409,28 @@ def api_apply():
         elif act == "safe_mode":
             in_safe = cfg.get("safe_mode", False)
             if not in_safe:
-                _apply_usb(ORIG["manufacturer"], ORIG["product"], _gen_default_serial(),
-                           ORIG["idVendor"], ORIG["idProduct"])
-                cfg["safe_mode"] = True
+                ser = _gen_default_serial() if ORIG.get("has_serial", True) else ""
+                _apply_usb(ORIG["manufacturer"], ORIG["product"], ser,
+                           ORIG["idVendor"], ORIG["idProduct"],
+                           has_serial=ORIG.get("has_serial", True),
+                           extra_iface=ORIG.get("extra_iface", False))
+                new_safe = True
             else:
                 idx = cfg.get("usb", {}).get("profile_idx", 0)
                 if 0 <= idx < len(USB_PROFILES):
                     p = USB_PROFILES[idx]
-                    _apply_usb(p["mfr"], p["prod"], _rand_serial(p["pfx"]),
-                               p["vid"], p["pid"])
-                cfg["safe_mode"] = False
+                    has_ser = p.get("has_serial", True)
+                    _apply_usb(p["mfr"], p["prod"], _rand_serial(p["pfx"]) if has_ser else "",
+                               p["vid"], p["pid"], has_serial=has_ser,
+                               extra_iface=p.get("extra_iface", False))
+                new_safe = False
+            # Reload fresh so we only touch safe_mode, not the usb section
+            # _apply_usb just persisted.
+            cfg = _load()
+            cfg["safe_mode"] = new_safe
             _save(cfg)
-            _log_sess(f"Safe mode: {cfg['safe_mode']}")
-            return jsonify({"ok": True, "safe": cfg["safe_mode"]})
+            _log_sess(f"Safe mode: {new_safe}")
+            return jsonify({"ok": True, "safe": new_safe})
 
         elif act == "duckdns":
             host  = d.get("host","").strip()
