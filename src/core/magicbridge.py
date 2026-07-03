@@ -1229,13 +1229,31 @@ async def api_update(request):
                      capture_output=True, text=True, timeout=10)
         branch = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "--abbrev-ref", "HEAD"],
                         capture_output=True, text=True, timeout=10)
-        fetch = _sp.run(["git", "-C", REPO_DIR, "fetch", "--dry-run"],
-                       capture_output=True, text=True, timeout=20)
+        # A real (not --dry-run) fetch, so origin/<branch> actually reflects
+        # what's on GitHub right now, then compare HEAD against it directly -
+        # gives an unambiguous yes/no instead of parsing git's raw fetch text.
+        _sp.run(["git", "-C", REPO_DIR, "fetch", "--quiet"],
+               capture_output=True, text=True, timeout=20)
+        local_hash  = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+        remote_hash = _sp.run(["git", "-C", REPO_DIR, "rev-parse", f"origin/{BRANCH}"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+        behind = _sp.run(["git", "-C", REPO_DIR, "rev-list", "--count", f"HEAD..origin/{BRANCH}"],
+                        capture_output=True, text=True, timeout=10)
+        try:
+            commits_behind = int(behind.stdout.strip() or 0)
+        except ValueError:
+            commits_behind = 0
+        update_available = bool(local_hash and remote_hash
+                                 and local_hash != remote_hash and commits_behind > 0)
         return web.json_response({
             "ok": True,
             "version": ver.stdout.strip(),
             "branch": branch.stdout.strip(),
-            "out": (fetch.stdout + fetch.stderr).strip() or "Up to date"
+            "update_available": update_available,
+            "commits_behind": commits_behind,
+            "out": (f"{commits_behind} new commit(s) available on GitHub"
+                    if update_available else "Up to date"),
         })
 
     # action == "update"

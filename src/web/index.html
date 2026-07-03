@@ -182,7 +182,9 @@ body:not(.fs) .fs-hud{display:none!important}
   margin-bottom:7px;font-size:12px}
 .srow:last-child{margin-bottom:0}
 .sk{color:var(--sub)}.sv{color:var(--text);font-weight:500}
-.sv.ok{color:var(--green)}.sv.err{color:var(--red)}.sv.ts{color:var(--purple)}.sv.ac{color:var(--accent-l)}
+.sv.ok{color:var(--green)}.sv.err{color:var(--red)}.sv.ts{color:var(--purple)}.sv.ac{color:var(--accent-l)}.sv.warn{color:var(--yellow)}
+.sbtn.pulse{animation:sbtn-pulse 1.6s ease-in-out infinite}
+@keyframes sbtn-pulse{0%,100%{box-shadow:0 0 0 0 rgba(245,158,11,.45)}50%{box-shadow:0 0 0 6px rgba(245,158,11,0)}}
 .sbtn{width:100%;height:32px;border-radius:var(--r);border:1px solid var(--border);
   background:var(--card2);color:var(--sub);font-size:11px;cursor:pointer;
   display:flex;align-items:center;justify-content:center;gap:6px;
@@ -733,11 +735,12 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>MagicBridge Update</div>
+          <div class="srow"><span class="sk">Status</span><span class="sv" id="sys-avail">—</span></div>
           <div class="srow"><span class="sk">Commit</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:10px">—</span></div>
           <div class="srow"><span class="sk">Branch</span><span class="sv" id="sys-branch">—</span></div>
           <div id="sys-update-out" style="display:none;font-size:10px;background:var(--surf2);border:1px solid var(--border);border-radius:4px;padding:6px;margin:6px 0;white-space:pre-wrap;max-height:120px;overflow:auto;font-family:monospace;color:var(--muted)"></div>
           <button class="sbtn" onclick="sysCheckVer()" style="margin-top:6px">↺ Check Status</button>
-          <button class="sbtn suc" onclick="sysUpdate()" style="margin-top:4px">⬆ Pull & Update from GitHub</button>
+          <button class="sbtn suc" id="sys-update-btn" onclick="sysUpdate()" style="margin-top:4px">⬆ Pull & Update from GitHub</button>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>Network Lockdown</div>
@@ -1175,7 +1178,7 @@ function showTab(name){
   document.querySelectorAll('.snav-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   document.getElementById('tab-'+name).classList.add('active');
-  if(name==='system'){refreshStatus();refreshJigglerStatus();}
+  if(name==='system'){refreshStatus();refreshJigglerStatus();sysCheckVer();}
   if(name==='identity') identityRefresh();
   if(name==='network'){wifiRefresh();tsRefresh();}
 }
@@ -1391,6 +1394,20 @@ async function sysCheckVer(){
     const d=await r.json();
     if(d.version)document.getElementById('sys-ver').textContent=d.version;
     if(d.branch)document.getElementById('sys-branch').textContent=d.branch;
+    const avail=document.getElementById('sys-avail');
+    const btn=document.getElementById('sys-update-btn');
+    if(d.update_available){
+      const n=d.commits_behind||1;
+      avail.textContent='⬆ Update available ('+n+' new commit'+(n===1?'':'s')+')';
+      avail.className='sv warn';
+      btn.textContent='⬆ Update available - Pull & Update';
+      btn.classList.add('pulse');
+    }else{
+      avail.textContent='✓ Up to date';
+      avail.className='sv ok';
+      btn.textContent='⬆ Pull & Update from GitHub';
+      btn.classList.remove('pulse');
+    }
     const out=document.getElementById('sys-update-out');
     out.textContent=d.out||'';out.style.display=d.out?'block':'none';
   }catch(e){toast('Check failed');}
@@ -1692,6 +1709,7 @@ renderClips();
 renderMacros();
 refreshLockdownStatus();
 refreshJigglerStatus();
+sysCheckVer();
 </script>
 </body>
 </html>
