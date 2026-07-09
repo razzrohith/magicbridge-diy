@@ -69,6 +69,8 @@ CONFIG_PATH = "/etc/magicbridge/config.json"   # shared with magicbridge.py
 # are two separate processes/files. Reproduces the exact original static
 # layout: "MagicBridge" / IP / "{temp}C up{uptime} {OK/DOWN}/{LIVE/OFF}".
 DEFAULT_CFG = {
+    "enabled": True,               # master on/off - mirrors magicbridge.py's
+                                    # OLED_DEFAULTS; False blanks the panel
     "line1_mode": "app",          # app | hostname | custom
     "line1_custom": "",
     "line2_mode": "ip",           # ip | tailscale | custom | blank
@@ -282,6 +284,17 @@ def main():
                         # worth spamming the journal every retry.
                         log.info("OLED not ready yet (%s) - retrying every %ds", e, RETRY_SEC)
                         last_init_error = str(e)
+            time.sleep(1)
+            continue
+
+        if not _cfg.get("enabled", True):
+            # Master off-switch: blank the panel and idle without tearing
+            # down the initialized device, so re-enabling is instant (no
+            # re-probe of the I2C bus) - just resumes rendering next loop.
+            try:
+                device.clear()
+            except Exception:
+                pass
             time.sleep(1)
             continue
 

@@ -7,11 +7,15 @@
 <style>
 :root{
   --bg:#040911;--surf:#070d18;--surf2:#0a1220;--card:#0d1728;--card2:#111f34;
-  --border:rgba(110,210,255,.10);--border2:rgba(110,210,255,.24);
+  --border:rgba(140,220,255,.16);--border2:rgba(140,220,255,.34);
   --accent:#22d3ee;--accent2:#0ea5c4;--accent-d:#0b7a94;--accent-l:#8beefc;
   --brand:linear-gradient(135deg,#8beefc 0%,#22d3ee 55%,#0b7a94 100%);
   --green:#10b981;--red:#f43f5e;--yellow:#f59e0b;--purple:#a78bfa;--cyan:#22d3ee;
-  --text:#e9f7fb;--sub:#7fa0b5;--muted:#3d5568;
+  /* Text colors, contrast-checked against --bg/--card/--card2 (WCAG AA,
+     4.5:1+ for normal text): --muted was previously #3d5568, only ~2.5:1
+     against --bg - unreadable for the labels/hints/placeholders it's used
+     on everywhere. Bumped it and --sub up so nothing falls below AA. */
+  --text:#f1fbff;--sub:#a9cfe0;--muted:#88a8bd;
   --r:8px;--r2:13px;--sh:0 8px 32px rgba(0,0,0,.7);
   --topH:46px;--botH:50px;--sideW:310px;
 }
@@ -573,7 +577,10 @@ body:not(.fs) .fs-hud{display:none!important}
     <nav id="sidenav">
       <button class="snav-btn active" onclick="showTab('stream')" id="tab-stream"><span class="ico">📹</span><span>Stream</span></button>
       <button class="snav-btn" onclick="showTab('network')" id="tab-network"><span class="ico">📶</span><span>Network</span></button>
-      <button class="snav-btn" onclick="showTab('agent')" id="tab-agent"><span class="ico">🤖</span><span>Agent</span></button>
+      <!-- Agent tab hidden for this build - matches AGENT_FEATURE_ENABLED=False
+           in magicbridge.py, which also 403s the /api/ai/* routes directly.
+           Flip both back when ready to reveal; nothing else needs to change. -->
+      <button class="snav-btn" onclick="showTab('agent')" id="tab-agent" style="display:none"><span class="ico">🤖</span><span>Agent</span></button>
       <button class="snav-btn" onclick="showTab('system')" id="tab-system"><span class="ico">⚙</span><span>System</span></button>
     </nav>
     <div id="sidebody">
@@ -944,6 +951,12 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>OLED Display</div>
           <div class="snote" style="margin-bottom:8px">Customize what shows on the case's status screen. Changes apply live within a couple seconds - no reboot needed.</div>
 
+          <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:pointer;margin-bottom:10px">
+            <input type="checkbox" id="oled-enabled" checked onchange="oledFormChanged()" style="accent-color:var(--accent)">
+            OLED panel enabled
+          </label>
+
+          <div id="oled-body-wrap">
           <div style="display:flex;justify-content:center;margin-bottom:10px">
             <div style="background:#2b2b28;border-radius:10px;padding:10px 12px;display:inline-flex;flex-direction:column;align-items:center;gap:6px">
               <div style="position:relative;width:230px;height:57.5px;background:#000;border-radius:2px;overflow:hidden">
@@ -1021,6 +1034,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <option value="5">5 seconds</option>
             <option value="10">10 seconds</option>
           </select>
+          </div>
 
           <button class="sbtn suc" onclick="saveOledSettings()">Save</button>
           <button class="sbtn" onclick="resetOledSettings()" style="margin-top:4px">↺ Reset to Default</button>
@@ -1522,6 +1536,7 @@ function setSidebarForControl(visible){
   document.getElementById('sbdrop').classList.toggle('on', on);
 }
 function showTab(name){
+  if(name==='agent') name='stream'; // Agent tab hidden this build - see nav comment above
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.snav-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
@@ -2227,6 +2242,7 @@ function sysNavShow(cat){
 // etc, this just mirrors the layout logic in oled.py so the preview matches
 // what the device will actually show), save, and reset-to-default.
 const OLED_DEFAULTS = {
+  enabled:true,
   line1_mode:'app', line1_custom:'',
   line2_mode:'ip', line2_custom:'',
   line3_show_temp:true, line3_show_uptime:true, line3_show_service:true, line3_show_stream:true,
@@ -2236,6 +2252,7 @@ const OLED_DEFAULTS = {
 };
 function _oledFormToConfig(){
   return {
+    enabled: document.getElementById('oled-enabled').checked,
     line1_mode: document.getElementById('oled-l1-mode').value,
     line1_custom: document.getElementById('oled-l1-custom').value,
     line2_mode: document.getElementById('oled-l2-mode').value,
@@ -2254,6 +2271,7 @@ function _oledFormToConfig(){
 }
 function _oledConfigToForm(cfg){
   const c = Object.assign({}, OLED_DEFAULTS, cfg||{});
+  document.getElementById('oled-enabled').checked = c.enabled !== false;
   document.getElementById('oled-l1-mode').value = c.line1_mode;
   document.getElementById('oled-l1-custom').value = c.line1_custom;
   document.getElementById('oled-l2-mode').value = c.line2_mode;
@@ -2272,6 +2290,8 @@ function _oledConfigToForm(cfg){
 }
 function oledUpdatePreview(){
   const cfg = _oledFormToConfig();
+  document.getElementById('oled-body-wrap').style.opacity = cfg.enabled ? '1' : '.4';
+  document.getElementById('oled-body-wrap').style.pointerEvents = cfg.enabled ? '' : 'none';
   document.getElementById('oled-l1-custom').style.display = cfg.line1_mode==='custom' ? '' : 'none';
   document.getElementById('oled-l2-custom').style.display = cfg.line2_mode==='custom' ? '' : 'none';
   document.getElementById('oled-l3-custom').style.display = cfg.line3_custom_enabled ? '' : 'none';

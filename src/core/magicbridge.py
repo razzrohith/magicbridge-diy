@@ -249,60 +249,98 @@ LOGIN_HTML = """<!DOCTYPE html>
 <title>MagicBridge</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{min-height:100%;background:#05070d;
-  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f3ecdd}
+html,body{min-height:100%;background:#040911;
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f1fbff}
 body{display:flex;align-items:center;justify-content:center;padding:1.5rem;position:relative;overflow:hidden}
+/* Same gradient-mesh + scanline backdrop as the main app, so this doesn't
+   feel like a different product from the thing you're about to unlock. */
 body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   background:
-    radial-gradient(ellipse 900px 620px at 10% -10%, rgba(240,214,152,.12), transparent 60%),
-    radial-gradient(ellipse 760px 560px at 110% 15%, rgba(201,161,92,.14), transparent 60%),
-    radial-gradient(ellipse 820px 640px at 50% 120%, rgba(138,106,47,.09), transparent 62%),
-    linear-gradient(180deg,#05070d 0%,#080b16 55%,#05070d 100%);}
-.card{position:relative;z-index:1;background:rgba(19,26,44,.62);backdrop-filter:blur(20px) saturate(140%);
+    radial-gradient(ellipse 900px 620px at 12% -8%,  rgba(34,211,238,.10), transparent 60%),
+    radial-gradient(ellipse 760px 560px at 108% 18%, rgba(14,165,196,.11), transparent 60%),
+    radial-gradient(ellipse 820px 640px at 46% 118%, rgba(11,122,148,.10), transparent 62%),
+    linear-gradient(180deg,#040911 0%,#060c17 55%,#040911 100%);
+  animation:drift 16s ease-in-out infinite alternate;}
+@keyframes drift{0%{filter:hue-rotate(0deg) brightness(1)}100%{filter:hue-rotate(8deg) brightness(1.06)}}
+body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.5;
+  background-image:
+    repeating-linear-gradient(180deg, rgba(120,220,255,.025) 0px, rgba(120,220,255,.025) 1px, transparent 1px, transparent 3px),
+    linear-gradient(rgba(120,220,255,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120,220,255,.035) 1px, transparent 1px);
+  background-size:auto,42px 42px,42px 42px;}
+.card{position:relative;z-index:1;background:rgba(13,23,40,.66);backdrop-filter:blur(20px) saturate(140%);
       -webkit-backdrop-filter:blur(20px) saturate(140%);
-      border:0.5px solid rgba(240,214,152,.12);border-radius:16px;
-      padding:2.1rem 2rem;width:100%;max-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
-.brand{display:flex;align-items:center;gap:10px;margin-bottom:4px}
-.brand svg{width:30px;height:30px;flex-shrink:0}
-h1{font-size:17px;font-weight:700;letter-spacing:-.3px;
-   background:linear-gradient(135deg,#f0d698 0%,#c9a15c 55%,#8a6a2f 100%);
+      border:1px solid rgba(140,220,255,.16);border-radius:18px;
+      padding:2.3rem 2.1rem 2rem;width:100%;max-width:328px;
+      box-shadow:0 20px 60px rgba(0,0,0,.6), 0 0 0 1px rgba(34,211,238,.04) inset;
+      animation:rise .5s cubic-bezier(.16,1,.3,1)}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+.brand{display:flex;flex-direction:column;align-items:center;text-align:center;margin-bottom:1.7rem}
+.brand-icon{width:52px;height:52px;margin-bottom:12px;position:relative}
+.brand-icon svg{width:100%;height:100%;filter:drop-shadow(0 0 14px rgba(34,211,238,.45))}
+.brand-icon::after{content:'';position:absolute;inset:-8px;border-radius:50%;
+  background:radial-gradient(circle,rgba(34,211,238,.22),transparent 70%);
+  animation:pulse 2.6s ease-in-out infinite;z-index:-1}
+@keyframes pulse{0%,100%{opacity:.5;transform:scale(.94)}50%{opacity:1;transform:scale(1.04)}}
+h1{font-size:19px;font-weight:700;letter-spacing:-.3px;
+   background:linear-gradient(135deg,#8beefc 0%,#22d3ee 55%,#0b7a94 100%);
    -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.sub{font-size:11.5px;color:#9a9280;margin:4px 0 1.6rem}
-label{display:block;font-size:11px;color:#9a9280;margin-bottom:5px;font-weight:500}
-input[type=password]{width:100%;padding:10px 12px;background:rgba(5,7,13,.7);
-  border:0.5px solid rgba(240,214,152,.16);border-radius:9px;color:#f3ecdd;font-size:13px;outline:none;
-  transition:border-color .15s}
-input[type=password]:focus{border-color:#c9a15c}
-button{margin-top:1rem;width:100%;padding:10px;
-  background:linear-gradient(135deg,#f0d698 0%,#c9a15c 55%,#8a6a2f 100%);
-  border:none;border-radius:9px;color:#1a1408;font-size:13px;font-weight:700;cursor:pointer;
-  transition:filter .15s,transform .1s}
-button:hover{filter:brightness(1.08)}
+.sub{display:flex;align-items:center;gap:6px;font-size:11.5px;color:#a9cfe0;margin-top:6px}
+.sub .dot{width:6px;height:6px;border-radius:50%;background:#10b981;
+  box-shadow:0 0 8px rgba(16,185,129,.7);animation:blink 2s ease-in-out infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.4}}
+label{display:block;font-size:10.5px;color:#a9cfe0;margin-bottom:6px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.06em}
+.pw-wrap{position:relative}
+.pw-wrap svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);
+  width:15px;height:15px;color:#88a8bd;pointer-events:none}
+input[type=password]{width:100%;padding:12px 12px 12px 36px;background:rgba(4,9,17,.7);
+  border:1px solid rgba(140,220,255,.16);border-radius:10px;color:#f1fbff;font-size:13.5px;outline:none;
+  transition:border-color .15s,box-shadow .15s}
+input[type=password]:focus{border-color:#22d3ee;box-shadow:0 0 0 3px rgba(34,211,238,.14)}
+input[type=password]::placeholder{color:#6f93a8}
+button{margin-top:1.1rem;width:100%;padding:11px;position:relative;overflow:hidden;
+  background:linear-gradient(135deg,#8beefc 0%,#22d3ee 55%,#0b7a94 100%);
+  border:none;border-radius:10px;color:#04141a;font-size:13.5px;font-weight:700;cursor:pointer;
+  letter-spacing:.01em;transition:filter .15s,transform .1s;
+  box-shadow:0 4px 20px rgba(34,211,238,.25)}
+button:hover{filter:brightness(1.1)}
 button:active{transform:scale(.98)}
-.err{margin-top:.8rem;padding:9px 11px;background:rgba(244,63,94,.1);
-  border:0.5px solid rgba(244,63,94,.3);border-radius:8px;font-size:12px;color:#fb7185}
+.err{margin-top:.9rem;padding:10px 12px;background:rgba(244,63,94,.12);
+  border:1px solid rgba(244,63,94,.35);border-radius:9px;font-size:12px;color:#fca5b4;
+  animation:shake .35s ease}
+@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-4px)}
+  40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(3px)}}
+.foot{margin-top:1.5rem;text-align:center;font-size:10px;color:#6f93a8;letter-spacing:.02em}
 </style></head><body><main><div class="card">
 <div class="brand">
-  <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
-    <defs><linearGradient id="lg1" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#f0d698"/><stop offset="100%" stop-color="#8a6a2f"/>
-    </linearGradient></defs>
-    <path d="M15 40 C15 25 30 20 50 20 C70 20 85 25 85 40 C85 55 72 58 50 58 C28 58 15 55 15 40 Z" fill="none" stroke="url(#lg1)" stroke-width="5"/>
-    <path d="M50 20 L50 58" stroke="url(#lg1)" stroke-width="3.4" opacity=".4"/>
-    <circle cx="32" cy="40" r="3.4" fill="url(#lg1)"/>
-    <circle cx="68" cy="40" r="3.4" fill="url(#lg1)"/>
-    <path d="M22 66 Q50 78 78 66" stroke="url(#lg1)" stroke-width="4.2" fill="none" opacity=".5"/>
-    <path d="M28 74 Q50 84 72 74" stroke="url(#lg1)" stroke-width="3.4" fill="none" opacity=".3"/>
-  </svg>
+  <div class="brand-icon">
+    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
+      <defs><linearGradient id="lg1" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+        <stop offset="0%" stop-color="#8beefc"/><stop offset="55%" stop-color="#22d3ee"/><stop offset="100%" stop-color="#0b7a94"/>
+      </linearGradient></defs>
+      <path d="M15 40 C15 25 30 20 50 20 C70 20 85 25 85 40 C85 55 72 58 50 58 C28 58 15 55 15 40 Z" fill="none" stroke="url(#lg1)" stroke-width="5"/>
+      <path d="M50 20 L50 58" stroke="url(#lg1)" stroke-width="3.4" opacity=".4"/>
+      <circle cx="32" cy="40" r="3.4" fill="url(#lg1)"/>
+      <circle cx="68" cy="40" r="3.4" fill="url(#lg1)"/>
+      <path d="M22 66 Q50 78 78 66" stroke="url(#lg1)" stroke-width="4.2" fill="none" opacity=".5"/>
+      <path d="M28 74 Q50 84 72 74" stroke="url(#lg1)" stroke-width="3.4" fill="none" opacity=".3"/>
+    </svg>
+  </div>
   <h1>MagicBridge</h1>
+  <div class="sub"><span class="dot"></span>System online - sign in to take control</div>
 </div>
-<p class="sub">Sign in to control this device</p>
 __ERROR__
 <form method="POST" action="/login">
 <label for="pw">Password</label>
-<input type="password" id="pw" name="pw" autocomplete="current-password" autofocus>
-<button type="submit">Unlock</button>
-</form></div></main></body></html>"""
+<div class="pw-wrap">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+  <input type="password" id="pw" name="pw" placeholder="Enter password" autocomplete="current-password" autofocus>
+</div>
+<button type="submit">Unlock MagicBridge</button>
+</form>
+<div class="foot">Self-hosted KVM-over-IP · this device only</div>
+</div></main></body></html>"""
 
 
 async def login_handler(request: web.Request) -> web.Response:
@@ -1075,6 +1113,9 @@ async def api_stream_settings(request: web.Request) -> web.Response:
 # same file directly and hot-reloads on mtime change - no restart needed
 # for changes made here to take effect on the physical panel.
 OLED_DEFAULTS = {
+    "enabled": True,              # master on/off - False blanks the panel and
+                                   # stops rendering, without touching the rest
+                                   # of the saved layout config
     "line1_mode": "app",          # app | hostname | custom
     "line1_custom": "",
     "line2_mode": "ip",           # ip | tailscale | custom | blank
@@ -1846,8 +1887,18 @@ AI_DEFAULTS = {
     "cloud_enabled": True,   # explicit opt-out gate - off disables all cloud AI calls
 }
 
+# Product-level kill switch for the whole AI Agent feature, independent of
+# the user-facing "cloud_enabled" preference above. Set to True to bring the
+# feature back - this is the single flag that controls it everywhere
+# (frontend Agent tab is hidden via a matching constant in index.html, and
+# every /api/ai/* route below 403s while this is False, so the feature is
+# unreachable even by calling the API directly, not just hidden in the UI).
+AGENT_FEATURE_ENABLED = False
+
 
 async def api_ai_settings(request: web.Request) -> web.Response:
+    if not AGENT_FEATURE_ENABLED:
+        return web.json_response({"ok": False, "error": "AI Agent is disabled in this build."}, status=403)
     if request.method == "GET":
         cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
         ai_cfg = dict(AI_DEFAULTS)
@@ -1885,6 +1936,8 @@ async def api_ai_settings(request: web.Request) -> web.Response:
 async def api_ai_key(request: web.Request) -> web.Response:
     """POST /api/ai/key: set (or clear, if key is empty) one provider's API
     key. Write-only - there is no GET that returns the raw value."""
+    if not AGENT_FEATURE_ENABLED:
+        return web.json_response({"ok": False, "error": "AI Agent is disabled in this build."}, status=403)
     try:
         d = await request.json()
     except Exception:
@@ -1910,6 +1963,8 @@ async def api_ai_key(request: web.Request) -> web.Response:
 
 async def api_ai_run(request):
     """POST /api/ai/run: proxy a natural-language command into a KVM action sequence."""
+    if not AGENT_FEATURE_ENABLED:
+        return web.json_response({"ok": False, "error": "AI Agent is disabled in this build."}, status=403)
     try:
         d = await request.json()
     except Exception:
