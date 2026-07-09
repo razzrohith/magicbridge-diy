@@ -99,14 +99,20 @@ def _gen_profile_serial(idx: int, pfx: str) -> str:
 
 # Real wireless keyboard+mouse combo receiver dongles, chosen deliberately
 # over single-purpose keyboard models (see the ORIG comment above for why).
-# has_serial/extra_iface: only the Logitech entry is verified against a real
-# device's descriptor (iSerial=0, 3 interfaces incl. one idle vendor HID
-# interface). Microsoft/Dell are left with a serial and the plain
-# 2-interface layout since that couldn't be verified.
+# has_serial/extra_iface/verified: only the Logitech entry is verified
+# against a real device's descriptor (iSerial=0, 3 interfaces incl. one idle
+# vendor HID interface) - that unit was physically available to inspect.
+# Microsoft/Dell VID:PID pairs are real (045e:0800 matches Microsoft's own
+# published driver ID for the "USB Dual Receiver"; 413c:2513 matches Dell's
+# vendor block for wireless combo receivers), researched against public
+# driver/USB-ID databases, but the exact interface count/serial presence for
+# those two is still unconfirmed without the physical dongles to inspect -
+# "verified": False flags that gap so the UI can surface it instead of
+# presenting all three presets as equally battle-tested.
 USB_PROFILES = [
-    {"name":"Logitech Unifying Receiver", "mfr":"Logitech",  "prod":"USB Receiver",               "vid":"0x046d","pid":"0xc52b","pfx":"LGK","has_serial":False,"extra_iface":True},
-    {"name":"Microsoft Dual Receiver",    "mfr":"Microsoft", "prod":"Microsoft USB Dual Receiver", "vid":"0x045e","pid":"0x0800","pfx":"MSK","has_serial":True, "extra_iface":False},
-    {"name":"Dell Wireless Combo",        "mfr":"Dell",      "prod":"Dell Wireless Keyboard and Mouse Combo", "vid":"0x413c","pid":"0x2513","pfx":"DEL","has_serial":True, "extra_iface":False},
+    {"name":"Logitech Unifying Receiver", "mfr":"Logitech",  "prod":"USB Receiver",               "vid":"0x046d","pid":"0xc52b","pfx":"LGK","has_serial":False,"extra_iface":True, "verified":True},
+    {"name":"Microsoft Dual Receiver",    "mfr":"Microsoft", "prod":"Microsoft USB Dual Receiver", "vid":"0x045e","pid":"0x0800","pfx":"MSK","has_serial":True, "extra_iface":False,"verified":False},
+    {"name":"Dell Wireless Combo",        "mfr":"Dell",      "prod":"Dell Wireless Keyboard and Mouse Combo", "vid":"0x413c","pid":"0x2513","pfx":"DEL","has_serial":True, "extra_iface":False,"verified":False},
 ]
 
 # EDID / display-identity presets. Identity-only (mfr PNP id / product name /
@@ -857,7 +863,7 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
   <div class="cb">
     <div class="field">
       <span class="fl" id="h-preset">Quick preset</span>
-      <span class="fd">Pick a keyboard preset (updates all fields). Click Apply to send.</span>
+      <span class="fd">Pick a keyboard preset (updates all fields). Click Apply to send. Presets marked "unverified" use real VID/PID values but haven't been checked against the physical device.</span>
       <div class="pills" role="group" aria-labelledby="h-preset" id="pills"></div>
       <button class="btn btn-p" onclick="applyPreset()" aria-label="Apply selected USB preset">Apply preset</button>
     </div>
@@ -1174,7 +1180,10 @@ function buildPills() {
     const b = document.createElement('button');
     b.className = 'pill' + (i === selP ? ' on' : '');
     b.setAttribute('aria-pressed', i === selP ? 'true' : 'false');
-    b.textContent = p.name;
+    b.textContent = p.name + (p.verified ? '' : ' · unverified');
+    b.title = p.verified
+      ? 'Verified against a real device’s USB descriptor.'
+      : 'VID/PID are real (researched against public USB-ID/driver databases), but the interface count and serial presence have not been confirmed against the physical dongle.';
     b.onclick = () => {
       selP = i; buildPills();
       document.getElementById('u-mfr').value  = p.mfr;
@@ -1578,7 +1587,7 @@ def login():
 def index():
     if not _authed(): return redirect(_stealth("login"))
     profiles = [{"name":p["name"],"mfr":p["mfr"],"prod":p["prod"],
-                 "vid":p["vid"],"pid":p["pid"]} for p in USB_PROFILES]
+                 "vid":p["vid"],"pid":p["pid"],"verified":p["verified"]} for p in USB_PROFILES]
     edid_profiles = [{"name":p["name"],"mfr":p["mfr"],"product_name":p["product_name"],
                        "product_id":p["product_id"]} for p in EDID_PROFILES]
     mac_profiles = [{"name": p["name"]} for p in MAC_PROFILES]
@@ -1821,6 +1830,10 @@ def api_apply():
                 vendor_name = MAC_PROFILES[idx]["name"]
             mac = _rand_mac(oui)
             _set_mac(iface, mac)
+            # Persist immediately, same as the manual "mac" action above -
+            # previously this only took effect live and reverted on reboot
+            # unless the user separately re-applied it via the manual field.
+            _persist_mac(iface, mac)
             _log_sess(f"MAC randomized {iface}: {mac} ({vendor_name})")
             return jsonify({"ok": True, "mac": mac})
 
