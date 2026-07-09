@@ -673,22 +673,27 @@ body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opac
     repeating-linear-gradient(0deg, rgba(0,229,255,.05) 0px, rgba(0,229,255,.05) 1px, transparent 1px, transparent 3px),
     repeating-linear-gradient(90deg, rgba(0,229,255,.03) 0px, rgba(0,229,255,.03) 1px, transparent 1px, transparent 46px),
     repeating-linear-gradient(0deg, rgba(0,229,255,.03) 0px, rgba(0,229,255,.03) 1px, transparent 1px, transparent 46px);}
-.crt-sweep{position:fixed;left:0;right:0;top:-2px;height:2px;z-index:2;pointer-events:none;
-  background:linear-gradient(90deg,transparent,rgba(0,229,255,.6),transparent);
-  box-shadow:0 0 14px rgba(0,229,255,.55)}
-@media (prefers-reduced-motion: no-preference){.crt-sweep{animation:sweep 5s linear infinite}}
-@keyframes sweep{0%{top:-2px}100%{top:100%}}
 .card{position:relative;z-index:1;background:rgba(6,13,22,.68);backdrop-filter:blur(20px) saturate(140%);
       -webkit-backdrop-filter:blur(20px) saturate(140%);
       border:1px solid rgba(0,229,255,.25);border-radius:6px;
       padding:2.1rem 2rem;width:100%;max-width:320px;
       box-shadow:0 0 0 1px rgba(0,229,255,.04),0 0 44px rgba(0,229,255,.14),0 20px 60px rgba(0,0,0,.6)}
+@media (prefers-reduced-motion: no-preference){.card{animation:cardBreathe 4.5s ease-in-out infinite}}
+@keyframes cardBreathe{
+  0%,100%{box-shadow:0 0 0 1px rgba(0,229,255,.04),0 0 44px rgba(0,229,255,.14),0 20px 60px rgba(0,0,0,.6)}
+  50%{box-shadow:0 0 0 1px rgba(0,229,255,.09),0 0 60px rgba(0,229,255,.26),0 20px 60px rgba(0,0,0,.6)}
+}
 .card::before,.card::after{content:'';position:absolute;width:16px;height:16px;pointer-events:none;
   border:2px solid #00e5ff;filter:drop-shadow(0 0 4px rgba(0,229,255,.7))}
 .card::before{top:-1px;left:-1px;border-right:none;border-bottom:none}
 .card::after{bottom:-1px;right:-1px;border-left:none;border-top:none}
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:4px}
 .brand svg{width:28px;height:28px;flex-shrink:0;filter:drop-shadow(0 0 6px rgba(0,229,255,.55))}
+.ping{position:relative;display:inline-block;width:8px;height:8px;border-radius:50%;
+      background:#39ff88;box-shadow:0 0 6px #39ff88;flex-shrink:0;margin-left:auto}
+.ping::before{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid #39ff88;opacity:0}
+@media (prefers-reduced-motion: no-preference){.ping::before{animation:ping 2.4s cubic-bezier(0,0,.2,1) infinite}}
+@keyframes ping{0%{transform:scale(.6);opacity:.8}75%,100%{transform:scale(2.4);opacity:0}}
 h1{font:700 16px/1 ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",monospace;
    letter-spacing:1.5px;text-transform:uppercase;
    background:linear-gradient(135deg,#00e5ff 0%,#7cf2ff 45%,#b026ff 100%);
@@ -725,7 +730,6 @@ button:focus{outline:2px solid #00e5ff;outline-offset:3px}
 </style>
 </head>
 <body>
-<div class="crt-sweep" aria-hidden="true"></div>
 <main>
 <div class="card">
   <div class="brand">
@@ -741,6 +745,7 @@ button:focus{outline:2px solid #00e5ff;outline-offset:3px}
       <path d="M28 74 Q50 84 72 74" stroke="url(#sg1)" stroke-width="3.4" fill="none" opacity=".3"/>
     </svg>
     <h1>MagicBridge</h1>
+    <span class="ping" aria-hidden="true" title="System online"></span>
   </div>
   <p class="sub">Stealth configuration panel</p>
   {% if error %}
@@ -792,11 +797,6 @@ body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opac
   background:
     repeating-linear-gradient(90deg, rgba(0,229,255,.025) 0px, rgba(0,229,255,.025) 1px, transparent 1px, transparent 46px),
     repeating-linear-gradient(0deg, rgba(0,229,255,.025) 0px, rgba(0,229,255,.025) 1px, transparent 1px, transparent 46px)}
-.crt-sweep{position:fixed;left:0;right:0;top:-2px;height:2px;z-index:30;pointer-events:none;
-  background:linear-gradient(90deg,transparent,rgba(0,229,255,.5),transparent);
-  box-shadow:0 0 14px rgba(0,229,255,.45)}
-@media (prefers-reduced-motion: no-preference){.crt-sweep{animation:sweep 7s linear infinite}}
-@keyframes sweep{0%{top:-2px}100%{top:100%}}
 ::selection{background:rgba(0,229,255,.28);color:#fff}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:var(--bg)}
@@ -815,6 +815,11 @@ header{
   background:linear-gradient(135deg,#00e5ff 0%,#7cf2ff 45%,#b026ff 100%);
   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
   text-shadow:0 0 16px rgba(0,229,255,.25)}
+.ping{position:relative;display:inline-block;width:8px;height:8px;border-radius:50%;
+      background:var(--ok);box-shadow:0 0 6px var(--ok);flex-shrink:0}
+.ping::before{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--ok);opacity:0}
+@media (prefers-reduced-motion: no-preference){.ping::before{animation:ping 2.4s cubic-bezier(0,0,.2,1) infinite}}
+@keyframes ping{0%{transform:scale(.6);opacity:.8}75%,100%{transform:scale(2.4);opacity:0}}
 .bdg{font:600 10px/1 var(--mono);padding:3px 9px;border-radius:3px;
      letter-spacing:1px;text-transform:uppercase;border:1px solid}
 .b-ok{background:var(--ok-bg);color:var(--ok);border-color:rgba(57,255,136,.4);box-shadow:0 0 10px rgba(57,255,136,.25)}
@@ -828,6 +833,11 @@ main{position:relative;z-index:1;padding:14px 16px;display:grid;gap:14px}
 .full{grid-column:1/-1}
 .card{position:relative;background:rgba(6,12,22,.82);border:1px solid var(--br);border-radius:6px;
       overflow:hidden;box-shadow:0 0 0 1px rgba(0,229,255,.03),0 0 24px rgba(0,229,255,.05)}
+@media (prefers-reduced-motion: no-preference){.card{animation:cardBreathe 5s ease-in-out infinite}}
+@keyframes cardBreathe{
+  0%,100%{box-shadow:0 0 0 1px rgba(0,229,255,.03),0 0 24px rgba(0,229,255,.05)}
+  50%{box-shadow:0 0 0 1px rgba(0,229,255,.07),0 0 34px rgba(0,229,255,.12)}
+}
 .card::before,.card::after{content:'';position:absolute;width:12px;height:12px;z-index:2;pointer-events:none;
   border:2px solid rgba(0,229,255,.65);filter:drop-shadow(0 0 3px rgba(0,229,255,.5))}
 .card::before{top:-1px;left:-1px;border-right:none;border-bottom:none}
@@ -897,11 +907,11 @@ hr{border:none;border-top:1px solid var(--br);margin:10px 0}
 </style>
 </head>
 <body>
-<div class="crt-sweep" aria-hidden="true"></div>
 <a href="#mc" class="sk">Skip to main content</a>
 
 <header role="banner">
   <span class="logo">MagicBridge</span>
+  <span class="ping" aria-hidden="true" title="System online"></span>
   <span class="bdg b-ok" id="ps" role="status" aria-live="polite">Active</span>
   <nav style="margin-left:auto" aria-label="Panel controls">
     <button class="btn" onclick="lock()" aria-label="Lock and log out">Lock</button>
