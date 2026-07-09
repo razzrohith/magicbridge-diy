@@ -659,53 +659,79 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 <title>MagicBridge Stealth</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{min-height:100%;background:#05070d;
-  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#f3ecdd}
+html,body{min-height:100%;background:#02040a;
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#d8f6ff}
 body{display:flex;align-items:center;justify-content:center;padding:1.5rem;position:relative;overflow:hidden}
 body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   background:
-    radial-gradient(ellipse 900px 620px at 10% -10%, rgba(201,161,92,.16), transparent 60%),
-    radial-gradient(ellipse 760px 560px at 110% 15%, rgba(240,214,152,.11), transparent 60%),
-    radial-gradient(ellipse 820px 640px at 50% 120%, rgba(138,106,47,.08), transparent 62%),
-    linear-gradient(180deg,#05070d 0%,#080b16 55%,#05070d 100%);}
-.card{position:relative;z-index:1;background:rgba(19,26,44,.62);backdrop-filter:blur(20px) saturate(140%);
+    radial-gradient(ellipse 900px 620px at 8% -10%, rgba(0,229,255,.15), transparent 60%),
+    radial-gradient(ellipse 760px 560px at 110% 15%, rgba(176,38,255,.12), transparent 60%),
+    radial-gradient(ellipse 820px 640px at 50% 120%, rgba(0,229,255,.07), transparent 62%),
+    linear-gradient(180deg,#02040a 0%,#05101a 55%,#02040a 100%);}
+body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.4;
+  background:
+    repeating-linear-gradient(0deg, rgba(0,229,255,.05) 0px, rgba(0,229,255,.05) 1px, transparent 1px, transparent 3px),
+    repeating-linear-gradient(90deg, rgba(0,229,255,.03) 0px, rgba(0,229,255,.03) 1px, transparent 1px, transparent 46px),
+    repeating-linear-gradient(0deg, rgba(0,229,255,.03) 0px, rgba(0,229,255,.03) 1px, transparent 1px, transparent 46px);}
+.crt-sweep{position:fixed;left:0;right:0;top:-2px;height:2px;z-index:2;pointer-events:none;
+  background:linear-gradient(90deg,transparent,rgba(0,229,255,.6),transparent);
+  box-shadow:0 0 14px rgba(0,229,255,.55)}
+@media (prefers-reduced-motion: no-preference){.crt-sweep{animation:sweep 5s linear infinite}}
+@keyframes sweep{0%{top:-2px}100%{top:100%}}
+.card{position:relative;z-index:1;background:rgba(6,13,22,.68);backdrop-filter:blur(20px) saturate(140%);
       -webkit-backdrop-filter:blur(20px) saturate(140%);
-      border:0.5px solid rgba(240,214,152,.12);border-radius:16px;
-      padding:2.1rem 2rem;width:100%;max-width:320px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+      border:1px solid rgba(0,229,255,.25);border-radius:6px;
+      padding:2.1rem 2rem;width:100%;max-width:320px;
+      box-shadow:0 0 0 1px rgba(0,229,255,.04),0 0 44px rgba(0,229,255,.14),0 20px 60px rgba(0,0,0,.6)}
+.card::before,.card::after{content:'';position:absolute;width:16px;height:16px;pointer-events:none;
+  border:2px solid #00e5ff;filter:drop-shadow(0 0 4px rgba(0,229,255,.7))}
+.card::before{top:-1px;left:-1px;border-right:none;border-bottom:none}
+.card::after{bottom:-1px;right:-1px;border-left:none;border-top:none}
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:4px}
-.brand svg{width:28px;height:28px;flex-shrink:0}
-h1{font-size:16px;font-weight:700;letter-spacing:-.2px;
-   background:linear-gradient(135deg,#c9a15c 0%,#f0d698 40%,#8a6a2f 100%);
-   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
-.sub{font-size:11.5px;color:#9a9280;margin:4px 0 1.6rem}
-label{display:block;font-size:11px;color:#9a9280;margin-bottom:5px;font-weight:500}
+.brand svg{width:28px;height:28px;flex-shrink:0;filter:drop-shadow(0 0 6px rgba(0,229,255,.55))}
+h1{font:700 16px/1 ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",monospace;
+   letter-spacing:1.5px;text-transform:uppercase;
+   background:linear-gradient(135deg,#00e5ff 0%,#7cf2ff 45%,#b026ff 100%);
+   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+   text-shadow:0 0 22px rgba(0,229,255,.3)}
+.sub{font:11.5px/1.4 ui-monospace,"SF Mono","Cascadia Code",monospace;color:#5f8ba3;
+     margin:7px 0 1.6rem;letter-spacing:.5px}
+.sub::before{content:'// '}
+label{display:block;font:600 10.5px/1 ui-monospace,"SF Mono","Cascadia Code",monospace;
+      color:#5f8ba3;margin-bottom:7px;letter-spacing:1.2px;text-transform:uppercase}
+label::before{content:'> '}
 input[type=password]{
-  width:100%;padding:10px 12px;background:rgba(5,7,13,.7);
-  border:0.5px solid rgba(240,214,152,.16);border-radius:9px;
-  color:#f3ecdd;font-size:13px;outline:none;transition:border .15s}
-input[type=password]:focus{border-color:#c9a15c;box-shadow:0 0 0 2px rgba(201,161,92,.15)}
+  width:100%;padding:10px 12px;background:rgba(2,4,10,.85);
+  border:1px solid rgba(0,229,255,.22);border-radius:3px;letter-spacing:3px;
+  color:#d8f6ff;font:13px ui-monospace,"SF Mono",monospace;outline:none;transition:border .15s,box-shadow .15s}
+input[type=password]:focus{border-color:#00e5ff;
+  box-shadow:0 0 0 2px rgba(0,229,255,.18),0 0 18px rgba(0,229,255,.25)}
 button{
-  margin-top:1rem;width:100%;padding:10px;
-  background:linear-gradient(135deg,#c9a15c 0%,#f0d698 40%,#8a6a2f 100%);
-  border:none;border-radius:9px;color:#1a1408;font-size:13px;font-weight:700;cursor:pointer;
-  transition:filter .15s,transform .1s}
-button:hover{filter:brightness(1.08)}
+  margin-top:1rem;width:100%;padding:11px;
+  background:linear-gradient(135deg,#00e5ff 0%,#00b8d9 55%,#7c2fff 100%);
+  border:none;border-radius:3px;color:#02040a;font:700 12.5px ui-monospace,"SF Mono",monospace;
+  letter-spacing:2.5px;text-transform:uppercase;cursor:pointer;
+  transition:filter .15s,transform .1s,box-shadow .15s;box-shadow:0 0 22px rgba(0,229,255,.28)}
+button:hover{filter:brightness(1.15);box-shadow:0 0 30px rgba(0,229,255,.48)}
 button:active{transform:scale(.98)}
-button:focus{outline:2px solid #c9a15c;outline-offset:3px}
+button:focus{outline:2px solid #00e5ff;outline-offset:3px}
 .err{
-  margin-top:.8rem;padding:9px 11px;
-  background:rgba(244,63,94,.1);border:0.5px solid rgba(244,63,94,.3);
-  border-radius:8px;font-size:12px;color:#fb7185}
-.hint{margin-top:1rem;font-size:11px;color:#4d4a3f;text-align:center}
+  margin-top:.8rem;padding:9px 11px;font:11.5px ui-monospace,"SF Mono",monospace;letter-spacing:.3px;
+  background:rgba(255,46,99,.1);border:1px solid rgba(255,46,99,.35);
+  border-radius:3px;color:#ff5c82}
+.err::before{content:'! '}
+.hint{margin-top:1.1rem;font:10.5px ui-monospace,"SF Mono",monospace;color:#5f8ba3;
+      text-align:center;letter-spacing:.3px}
 </style>
 </head>
 <body>
+<div class="crt-sweep" aria-hidden="true"></div>
 <main>
 <div class="card">
   <div class="brand">
     <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
       <defs><linearGradient id="sg1" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="#f0d698"/><stop offset="100%" stop-color="#8a6a2f"/>
+        <stop offset="0%" stop-color="#00e5ff"/><stop offset="100%" stop-color="#b026ff"/>
       </linearGradient></defs>
       <path d="M15 40 C15 25 30 20 50 20 C70 20 85 25 85 40 C85 55 72 58 50 58 C28 58 15 55 15 40 Z" fill="none" stroke="url(#sg1)" stroke-width="5"/>
       <path d="M50 20 L50 58" stroke="url(#sg1)" stroke-width="3.4" opacity=".4"/>
@@ -744,97 +770,134 @@ MAIN_HTML = r"""<!DOCTYPE html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#05070d; --sf:#0a0d16; --sf2:#0f1424;
-  --br:#241f10; --br2:#3a3018;
-  --t1:#f3ecdd; --t2:#9a9280; --t3:#4d4a3f;
-  --ac:#c9a15c; --ac-bg:rgba(201,161,92,.12);
-  --ok:#10b981; --ok-bg:rgba(16,185,129,.1);
-  --wa:#f59e0b; --wa-bg:rgba(245,158,11,.1);
-  --er:#f43f5e; --er-bg:rgba(244,63,94,.1);
+  --bg:#02040a; --sf:#060c16; --sf2:#0a1220;
+  --br:#0f2836; --br2:#1c3f52;
+  --t1:#d8f6ff; --t2:#6f93a8; --t3:#5a7f99;
+  --ac:#00e5ff; --ac-bg:rgba(0,229,255,.12);
+  --ac2:#b026ff; --ac2-bg:rgba(176,38,255,.12);
+  --ok:#39ff88; --ok-bg:rgba(57,255,136,.1);
+  --wa:#ffb020; --wa-bg:rgba(255,176,32,.1);
+  --er:#ff2e63; --er-bg:rgba(255,46,99,.1);
+  --mono:ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",monospace;
 }
 html{font:13px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
      background:var(--bg);color:var(--t1)}
+body{position:relative}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
+  background:
+    radial-gradient(ellipse 900px 600px at 6% -10%, rgba(0,229,255,.10), transparent 60%),
+    radial-gradient(ellipse 760px 560px at 108% 8%, rgba(176,38,255,.08), transparent 60%),
+    radial-gradient(ellipse 900px 640px at 50% 118%, rgba(0,229,255,.05), transparent 62%)}
+body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.3;
+  background:
+    repeating-linear-gradient(90deg, rgba(0,229,255,.025) 0px, rgba(0,229,255,.025) 1px, transparent 1px, transparent 46px),
+    repeating-linear-gradient(0deg, rgba(0,229,255,.025) 0px, rgba(0,229,255,.025) 1px, transparent 1px, transparent 46px)}
+.crt-sweep{position:fixed;left:0;right:0;top:-2px;height:2px;z-index:30;pointer-events:none;
+  background:linear-gradient(90deg,transparent,rgba(0,229,255,.5),transparent);
+  box-shadow:0 0 14px rgba(0,229,255,.45)}
+@media (prefers-reduced-motion: no-preference){.crt-sweep{animation:sweep 7s linear infinite}}
+@keyframes sweep{0%{top:-2px}100%{top:100%}}
+::selection{background:rgba(0,229,255,.28);color:#fff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--br2);border-radius:5px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:var(--ac)}
 .sk{position:absolute;top:-999px;left:0;padding:6px 12px;
-    background:var(--ac);color:#fff;font-size:12px;z-index:9999;
-    border-radius:0 0 6px 0;text-decoration:none}
+    background:var(--ac);color:#02040a;font-size:12px;z-index:9999;
+    border-radius:0 0 6px 0;text-decoration:none;font-weight:700}
 .sk:focus{top:0}
 header{
-  display:flex;align-items:center;gap:10px;padding:10px 16px;
-  background:var(--sf);border-bottom:0.5px solid var(--br);
-  position:sticky;top:0;z-index:20}
-.logo{font-size:14px;font-weight:600;letter-spacing:.3px}
-.bdg{font-size:10px;padding:2px 8px;border-radius:20px;
-     font-weight:500;border:0.5px solid}
-.b-ok{background:var(--ok-bg);color:var(--ok);border-color:rgba(76,190,130,.3)}
-.b-er{background:var(--er-bg);color:var(--er);border-color:rgba(224,80,80,.3)}
+  position:relative;z-index:20;display:flex;align-items:center;gap:10px;padding:10px 16px;
+  background:var(--sf);border-bottom:1px solid var(--br);
+  box-shadow:0 1px 16px rgba(0,229,255,.1);
+  position:sticky;top:0}
+.logo{font:700 14px/1 var(--mono);letter-spacing:1.6px;text-transform:uppercase;
+  background:linear-gradient(135deg,#00e5ff 0%,#7cf2ff 45%,#b026ff 100%);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
+  text-shadow:0 0 16px rgba(0,229,255,.25)}
+.bdg{font:600 10px/1 var(--mono);padding:3px 9px;border-radius:3px;
+     letter-spacing:1px;text-transform:uppercase;border:1px solid}
+.b-ok{background:var(--ok-bg);color:var(--ok);border-color:rgba(57,255,136,.4);box-shadow:0 0 10px rgba(57,255,136,.25)}
+.b-er{background:var(--er-bg);color:var(--er);border-color:rgba(255,46,99,.4);box-shadow:0 0 10px rgba(255,46,99,.25)}
 .sbar{
-  display:flex;gap:16px;flex-wrap:wrap;padding:6px 16px;
-  background:var(--sf2);border-bottom:0.5px solid var(--br);
-  font-size:11px;color:var(--t3)}
-main{padding:14px 16px;display:grid;gap:14px}
+  position:relative;z-index:15;display:flex;gap:16px;flex-wrap:wrap;padding:6px 16px;
+  background:var(--sf2);border-bottom:1px solid var(--br);
+  font:11px/1.6 var(--mono);color:var(--t3);letter-spacing:.3px}
+main{position:relative;z-index:1;padding:14px 16px;display:grid;gap:14px}
 @media(min-width:680px){main{grid-template-columns:1fr 1fr}}
 .full{grid-column:1/-1}
-.card{background:var(--sf);border:0.5px solid var(--br);border-radius:10px;overflow:hidden}
-.ch{padding:10px 14px;border-bottom:0.5px solid var(--br);
+.card{position:relative;background:rgba(6,12,22,.82);border:1px solid var(--br);border-radius:6px;
+      overflow:hidden;box-shadow:0 0 0 1px rgba(0,229,255,.03),0 0 24px rgba(0,229,255,.05)}
+.card::before,.card::after{content:'';position:absolute;width:12px;height:12px;z-index:2;pointer-events:none;
+  border:2px solid rgba(0,229,255,.65);filter:drop-shadow(0 0 3px rgba(0,229,255,.5))}
+.card::before{top:-1px;left:-1px;border-right:none;border-bottom:none}
+.card::after{bottom:-1px;right:-1px;border-left:none;border-top:none}
+.ch{padding:10px 14px;border-bottom:1px solid var(--br);
     display:flex;align-items:center;gap:8px}
-.ch h2{font-size:13px;font-weight:500;flex:1;color:var(--t1)}
+.ch h2{font:600 12px/1 var(--mono);letter-spacing:1px;text-transform:uppercase;flex:1;color:var(--t1)}
+.ch h2::before{content:'▸ ';color:var(--ac)}
 .ch .cd{font-size:11px;color:var(--t3)}
 .cb{padding:12px 14px}
 .field{margin-bottom:10px}
 .field:last-child{margin-bottom:0}
-.fl{display:block;font-size:11px;color:var(--t3);margin-bottom:3px}
+.fl{display:block;font:600 10.5px/1 var(--mono);color:var(--t3);margin-bottom:5px;letter-spacing:.6px;text-transform:uppercase}
 .fd{display:block;font-size:11px;color:var(--t3);margin-top:3px;line-height:1.4;opacity:.8}
 .frow{display:flex;gap:7px;align-items:flex-start;flex-wrap:wrap}
 input[type=text],input[type=password],select,textarea{
-  background:var(--bg);border:0.5px solid var(--br2);border-radius:6px;
+  background:var(--bg);border:1px solid var(--br2);border-radius:4px;
   color:var(--t1);font-size:12px;padding:6px 9px;
-  outline:none;transition:border .15s;font-family:inherit}
+  outline:none;transition:border .15s,box-shadow .15s;font-family:inherit}
 input:focus,select:focus,textarea:focus{
-  border-color:var(--ac);box-shadow:0 0 0 2px rgba(74,158,255,.12)}
+  border-color:var(--ac);box-shadow:0 0 0 2px rgba(0,229,255,.15),0 0 12px rgba(0,229,255,.2)}
 select{cursor:pointer}
-textarea{resize:vertical;min-height:58px;font-family:monospace;
+textarea{resize:vertical;min-height:58px;font-family:var(--mono);
          font-size:10px;width:100%;line-height:1.5}
 .btn{
-  padding:5px 13px;border-radius:6px;font-size:12px;font-weight:500;
-  cursor:pointer;border:0.5px solid var(--br2);
+  padding:5px 13px;border-radius:4px;font:600 11px/1.4 var(--mono);letter-spacing:.5px;
+  cursor:pointer;border:1px solid var(--br2);text-transform:uppercase;
   background:var(--sf2);color:var(--t2);
-  transition:background .15s,color .15s;font-family:inherit;line-height:1.4}
-.btn:hover{background:var(--br2);color:var(--t1)}
+  transition:background .15s,color .15s,border-color .15s,box-shadow .15s}
+.btn:hover{background:var(--br2);color:var(--t1);border-color:var(--ac)}
 .btn:focus{outline:2px solid var(--ac);outline-offset:2px}
-.btn-p{background:var(--ac);border-color:transparent;color:#fff}
-.btn-p:hover{opacity:.83;background:var(--ac)}
-.btn-d{background:var(--er-bg);border-color:rgba(224,80,80,.3);color:var(--er)}
-.btn-d:hover{background:rgba(224,80,80,.18)}
+.btn-p{background:linear-gradient(135deg,var(--ac) 0%,#00b8d9 60%,var(--ac2) 100%);
+       border-color:transparent;color:#02040a;box-shadow:0 0 14px rgba(0,229,255,.3)}
+.btn-p:hover{filter:brightness(1.12);box-shadow:0 0 22px rgba(0,229,255,.5)}
+.btn-d{background:var(--er-bg);border-color:rgba(255,46,99,.4);color:var(--er)}
+.btn-d:hover{background:rgba(255,46,99,.2);border-color:var(--er);box-shadow:0 0 12px rgba(255,46,99,.25)}
 .pills{display:flex;flex-wrap:wrap;gap:5px;margin:5px 0 8px}
 .pill{
-  padding:3px 10px;border-radius:20px;font-size:11px;
-  border:0.5px solid var(--br2);background:transparent;color:var(--t2);
-  cursor:pointer;font-family:inherit;transition:all .15s}
+  padding:3px 10px;border-radius:20px;font:11px var(--mono);letter-spacing:.3px;
+  border:1px solid var(--br2);background:transparent;color:var(--t2);
+  cursor:pointer;transition:all .15s}
 .pill:hover{border-color:var(--ac);color:var(--ac)}
-.pill.on{border-color:var(--ac);background:var(--ac-bg);color:var(--ac)}
+.pill.on{border-color:var(--ac);background:var(--ac-bg);color:var(--ac);box-shadow:0 0 8px rgba(0,229,255,.25)}
 .pill:focus{outline:2px solid var(--ac);outline-offset:2px}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;
      vertical-align:middle;margin-right:4px}
-.d-ok{background:var(--ok)} .d-er{background:var(--er)} .d-wa{background:var(--wa)}
+.d-ok{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.d-er{background:var(--er);box-shadow:0 0 6px var(--er)}
+.d-wa{background:var(--wa);box-shadow:0 0 6px var(--wa)}
 .log{
-  background:var(--bg);border:0.5px solid var(--br);border-radius:6px;
-  padding:8px 10px;font-family:monospace;font-size:10px;color:var(--t3);
+  background:var(--bg);border:1px solid var(--br);border-radius:4px;
+  padding:8px 10px;font-family:var(--mono);font-size:10px;color:var(--t3);
   height:130px;overflow-y:auto;white-space:pre-wrap;
   word-break:break-all;line-height:1.5;margin-top:4px}
-hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
+hr{border:none;border-top:1px solid var(--br);margin:10px 0}
 .ibar{height:2px;background:var(--br);position:sticky;bottom:0}
-.ifill{height:100%;background:var(--ac);border-radius:1px;transition:width 1s linear}
+.ifill{height:100%;background:linear-gradient(90deg,var(--ac),var(--ac2));border-radius:1px;
+       transition:width 1s linear;box-shadow:0 0 8px rgba(0,229,255,.5)}
 #toast{
-  position:fixed;bottom:14px;right:14px;
-  background:var(--sf);border:0.5px solid var(--br2);border-radius:8px;
-  padding:9px 15px;font-size:12px;opacity:0;transition:opacity .25s;
-  pointer-events:none;z-index:999;max-width:260px}
+  position:fixed;bottom:14px;right:14px;z-index:999;
+  background:var(--sf);border:1px solid var(--br2);border-radius:6px;
+  padding:9px 15px;font:12px var(--mono);opacity:0;transition:opacity .25s;
+  pointer-events:none;max-width:260px}
 #toast.show{opacity:1}
-#toast.ok{border-left:3px solid var(--ok);color:var(--ok)}
-#toast.er{border-left:3px solid var(--er);color:var(--er)}
+#toast.ok{border-left:3px solid var(--ok);color:var(--ok);box-shadow:0 0 18px rgba(57,255,136,.2)}
+#toast.er{border-left:3px solid var(--er);color:var(--er);box-shadow:0 0 18px rgba(255,46,99,.2)}
 </style>
 </head>
 <body>
+<div class="crt-sweep" aria-hidden="true"></div>
 <a href="#mc" class="sk">Skip to main content</a>
 
 <header role="banner">
