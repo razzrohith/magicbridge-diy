@@ -209,4 +209,65 @@ Everything below landed between the July 4 revision of this handbook and the Jul
 | Fan control (`mb-setup-fan.sh`) | One-time GPIO fan overlay setup via `config.txt`, deliberately a static script (not a daemon) so it survives `magicbridge.py` being down | Working |
 | EDID identity spoofing (`mb_edidconf.py`) | Clones/spoofs the monitor EDID the target PC sees, per `EDID_CLONING_WORKFLOW.md` | Code-complete, verified only against a synthetic EDID structure — **hardware-pending**, needs the real C790 + a target monitor (task #7 below) |
 | LUKS config-directory encryption | Encrypts `/etc/magicbridge` at rest with boot-time auto-unlock | Working — first deploy attempt failed on a `cryptsetup` PATH-detection bug, fixed same session, then verified end-to-end against a real reboot |
-| RAM-only (tmpfs) logs | Moves auth/session/nginx logs off the SD card | Working — first attempt failed on a symlink-dereference bug in the verification script, fixed in a follow-up stage. A related logrotate `su`-permission warning surfaced during that fix; a follow-up log exists but wasn't re-confirmed as part of this pass — worth a spot-check next 
+| RAM-only (tmpfs) logs | Moves auth/session/nginx logs off the SD card | Working — first attempt failed on a symlink-dereference bug in the verification script, fixed in a follow-up stage. A related logrotate `su`-permission warning surfaced during that fix; a follow-up log exists but wasn't re-confirmed as part of this pass — worth a spot-check next session |
+| USB hardening | Full-speed USB enumeration cap (best-effort, non-fatal), optional 3rd "aux" idle HID interface | Working |
+| HID auto-disconnect | Idle unbind/rebind of the USB gadget, off by default | Working — documented interaction: if the mouse jiggler is also enabled, writes fail silently until the next real session reconnects the gadget. Not fixed, just documented |
+| Typing jitter | Randomized inter-keystroke delay on paste, for realism | Working |
+| Mouse jiggler | Randomized net-zero mouse movement, 4 presets, pauses on real input | Working (shipped just before this window, confirmed still solid) |
+| Update-available indicator | Pulsing "Update available" button in the frontend when a new commit exists upstream | Working |
+| IA merge / UI flatten / HUD redesign / mobile fix / system-tab redesign | Consolidated the frontend from an earlier 5-tab layout to Stream/Network/Agent/System; various UI cleanups | Working |
+| GitHub repo sync | Created `github.com/razzrohith/MagicBridge`; reconciled Pi, laptop clone, and GitHub `main` — latest commit `3b2d766` (was `13246c7` at initial sync) | Done — see updated §4 table |
+
+**Same-day follow-up (2026-07-09, after a full feature audit):**
+- **Fixed**: MAC address randomize-and-apply now persists automatically (previously the randomized MAC only took effect live and reverted on reboot unless the user separately re-applied it through the manual MAC field — a real UX/persistence gap). `stealth-dashboard.py`'s `rand_mac` action now calls `_persist_mac()` same as the manual `mac` action.
+- **Improved**: USB identity presets (`USB_PROFILES` in `stealth-dashboard.py`) now carry an explicit `"verified"` flag — `True` for Logitech (checked against a real device descriptor), `False` for Microsoft/Dell (VID:PID researched against public USB-ID/driver databases and believed accurate, but interface count/serial presence unconfirmed without the physical dongles). The stealth panel UI now labels unverified presets and shows a tooltip explaining the gap, instead of presenting all three as equally battle-tested.
+
+**UI/UX overhaul (2026-07-09, commit `1a3f686`):** brightened low-contrast CSS vars (`--muted`, `--sub`, `--border`) that were failing WCAG AA in most places they were used; redesigned the login page to match the app's cyan HUD branding instead of an unrelated gold theme; hid the AI Agent tab from nav and gated all `/api/ai/*` routes behind `AGENT_FEATURE_ENABLED = False` (single flag to reveal later); added an OLED master on/off toggle (`oled.py` blanks the panel and idles without re-probing hardware when off).
+
+**mDNS fix + Escape hold-to-exit (2026-07-09, commit `3b2d766`):**
+- **Fixed — `magicbridge.local`/`raj.local` not resolving.** Root cause: the Pi's hostname had drifted to an SD-card-imaging-tool placeholder (`DESKTOP-XKWQUIV`), and `avahi-daemon.service` **and** `avahi-daemon.socket` were both masked (masked is stronger than disabled — refuses even a direct `start`). Neither is anything `install.sh` ever set; both fail silently with no error until someone tries to browse to the `.local` name. Fix is durable, not a one-off SSH patch: new `mb-mdns-alias.sh`/`.service` publish both hostnames as standing avahi aliases independent of whatever the system hostname is; `mb-provision.sh` now self-heals both masked units and a bogus hostname on **every boot**, not just first-provision; `install.sh` hardened the same way for fresh installs, plus added `avahi-utils` for verification tooling.
+- **Changed — Escape key behavior during screen control.** A quick Escape tap while controlling the remote screen is now forwarded to the remote PC instead of exiting control (was breaking any Esc-driven function on the remote side). Uses the Keyboard Lock API (`navigator.keyboard.lock(['Escape'])`, which requires Fullscreen simultaneously — `capture()` now auto-enters it). Exiting control requires holding Escape or Right Ctrl for **~2 seconds** — browsers enforce a fixed ~2s floor on Keyboard Lock's force-exit safety valve, so 2s is the fastest achievable, not a shortcut of the 3s originally requested.
+
+**Stealth panel redesign + Funnel fix (2026-07-09, commits `a486f32`, `72f9f88`, `eebfb64`):**
+- **Changed — stealth admin panel (`/stealth/`, port 7777) visual theme.** Replaced the warm gold/luxury look with a cyberpunk/HUD theme (near-black background, cyan `#00e5ff` + violet `#b026ff` accents, monospace uppercase type, neon glow on cards/buttons/badges) — same CSS custom properties, so no HTML/JS changed. An initial full-viewport scanline sweep animation was tried, reported as distracting during real use, and removed in favor of a subtle card-border "breathing" glow plus a small fixed "system online" ping indicator next to the logo.
+- **Fixed — Tailscale Funnel toggle silently claimed success.** See §11 issues table — was fire-and-forget, now blocks on the real command and reports actual success/failure.
+
+## 11. Known Issues / Pending Tasks (snapshot)
+
+| # | Task | Status |
+|---|---|---|
+| 1 | Find Pi 4 acrylic-layer case on AliExpress | Pending |
+| 7 | Draft EDID cloning workflow | Pending — needs the real C790 + a target monitor to capture actual EDID bytes. Code is complete and safe without the hardware (§11a) |
+| 8 | Write/update master setup script for the other 2 physical units | **Done 2026-07-09** — GitHub repo created and reconciled with the Pi and this laptop (§4, §11a); use the `mb_git_*` script pattern for future syncs |
+| 9 | Full hardware-dependent build + validation once C790 arrives | Pending — see §9. Also gates OLED (I2C not detected yet) and EDID (§11a) |
+| — | AI Agent plaintext key storage | Open design decision. Worth re-checking whether the new LUKS-encrypted `/etc/magicbridge` (§11a) now covers `config.json` and supersedes this concern — not confirmed either way yet |
+| — | MAC randomize didn't persist across reboot | **Fixed 2026-07-09** — see §11a |
+| — | Microsoft/Dell USB presets presented as equally trustworthy as the verified Logitech one | **Improved 2026-07-09** — `verified` flag added, surfaced in UI (§11a). Still not verified against real hardware; that part is unresolved without the physical dongles |
+| — | No real OS clipboard sync (only local "Clips" snippets, browser-side) | Open — feature gap, not a bug. Likely the most-requested KVM capability still missing |
+| — | CSRF protection only on the stealth admin panel, not the main KVM app's state-changing routes | Open — main app relies on its session cookie's `samesite=Lax` + auth gate alone |
+| — | Keyboard layout support | Open — only `us` is built out/verified; UK/DE/FR exist as UI scaffolding only |
+| — | Tailscale Funnel toggle | **Fixed 2026-07-09** (commit `eebfb64`) — was fire-and-forget, always claimed success even when `tailscale funnel` failed (it had been failing on this unit every time — real status was "No serve config"). Now blocks on the real command and surfaces actual success/error to the UI |
+| — | `pmic_read_adc` in power/thermal health reporting | Open — confirmed missing on the current dev unit ("Command not registered"); throttle-bit detection still works fine |
+| — | Dead `/janus-http/` nginx proxy location | Open, harmless — nothing listens on port 8088 today; candidate for cleanup |
+
+Everything else from earlier sessions (SSL SAN fix, WiFi listing/onclick bugs, video.py `is_running()`/watchdog bugs, JS syntax crash, Tailscale logout, raj.local mDNS alias, GitHub update endpoint) is done and stable — see git history / prior session logs if you need the exact diffs, they're not repeated here to keep this file current rather than exhaustive.
+
+A full feature-by-feature audit (67 features scored working/partial/missing, with suggestions) was done 2026-07-09 and saved as `MagicBridge_Feature_Table.xlsx` in this project folder — check there for the complete inventory rather than duplicating it here.
+
+---
+
+## 12. Hard Rules (condensed — also enforced via this project's standing instructions)
+
+1. Sandbox can't reach the Pi. All Pi access = Windows Python + paramiko, run via the File Explorer address-bar trick (§3).
+2. Never shell-redirect a deploy script's output (`> log.txt`) — it writes its own log internally.
+3. Large files (HTML/Python) deploy via SFTP, never base64/echo.
+4. No admin rights on the Windows laptop.
+5. Sudo on the Pi: `echo 'lol' | sudo -S bash -c '<command>'`.
+6. Never put `JSON.stringify(x)` inside an HTML `onclick` attribute — use `data-*` attributes (`el.closest('[data-net]').dataset.net`), a real bug hit and fixed in an earlier session.
+7. Real backend is `/opt/magicbridge/core/magicbridge.py` — `/opt/magicbridge/magicbridge.py` is an empty decoy.
+8. Use the `Read` tool (not bash) as ground truth for any `_live_pull`/`pi_source` file edited via `Edit` this session — see the drift-risk note in §4.
+9. Follow the backup→SFTP→verify→restart deploy pattern in §3 for every change — don't blind-reload nginx without `nginx -t` first.
+
+---
+
+*Source of truth: the live Pi filesystem is still ground truth for anything not yet synced. As of 2026-07-09, `github.com/razzrohith/MagicBridge` (`main`, commit `13246c7` as of this writing) and the laptop clone at `C:\Users\razzr\Claude\Projects\MagicBridge\repo\` are reconciled with it — prefer editing the repo clone and deploying via SFTP + `mb_git_*` sync over the older `_live_pull\`/`pi_source\` mirrors where both exist. Deploy-script staging area (not source of truth): `E:\Startup\magicbridge\`. Pi: `172.16.20.116`, user `raj`, password `lol`.*
