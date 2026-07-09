@@ -869,6 +869,7 @@ textarea{resize:vertical;min-height:58px;font-family:var(--mono);
   transition:background .15s,color .15s,border-color .15s,box-shadow .15s}
 .btn:hover{background:var(--br2);color:var(--t1);border-color:var(--ac)}
 .btn:focus{outline:2px solid var(--ac);outline-offset:2px}
+.btn:disabled{opacity:.4;cursor:wait;pointer-events:none}
 .btn-p{background:linear-gradient(135deg,var(--ac) 0%,#00b8d9 60%,var(--ac2) 100%);
        border-color:transparent;color:#02040a;box-shadow:0 0 14px rgba(0,229,255,.3)}
 .btn-p:hover{filter:brightness(1.12);box-shadow:0 0 22px rgba(0,229,255,.5)}
@@ -1408,9 +1409,10 @@ async function tsUp() {
 }
 
 async function loadFunnel() {
-  const r = await api('/stealth/api/funnel');
   const el = document.getElementById('fn-st');
   if (!el) return;
+  el.innerHTML = '<span class="dot d-wa"></span>Checking…';
+  const r = await api('/stealth/api/funnel');
   if (r.active && r.url)
     el.innerHTML = '<span class="dot d-ok"></span>Active: <a href="'+r.url+'" target="_blank" style="color:var(--ac)">'+r.url+'</a>';
   else if (r.active)
@@ -1420,15 +1422,37 @@ async function loadFunnel() {
 }
 
 async function funnelOn() {
+  const btns = document.querySelectorAll('[onclick="funnelOn()"],[onclick="funnelOff()"]');
+  btns.forEach(b => b.disabled = true);
+  toast('Enabling funnel — talking to Tailscale…', 'ok');
+  // Backend now blocks on the real `tailscale funnel 443` call (up to 20s)
+  // instead of firing it and forgetting, so r.ok here reflects what actually
+  // happened, not just "the process launched".
   const r = await api('/stealth/api/apply', {action:'ts_funnel_on'});
-  toast(r.ok ? 'Funnel enabling…' : (r.error||'Error'), r.ok?'ok':'er');
-  if (r.ok) setTimeout(loadFunnel, 5000);
+  btns.forEach(b => b.disabled = false);
+  if (r.ok) {
+    toast('Funnel enabled ✓', 'ok');
+    await loadFunnel();
+    setTimeout(loadFunnel, 3000); // catch propagation lag on the tailnet side
+  } else {
+    toast('Funnel enable failed: ' + (r.error || 'unknown error'), 'er');
+    await loadFunnel(); // reflect real (unchanged) state, don't leave "Checking…" stuck
+  }
 }
 
 async function funnelOff() {
+  const btns = document.querySelectorAll('[onclick="funnelOn()"],[onclick="funnelOff()"]');
+  btns.forEach(b => b.disabled = true);
+  toast('Disabling funnel…', 'ok');
   const r = await api('/stealth/api/apply', {action:'ts_funnel_off'});
-  toast(r.ok ? 'Funnel disabled' : (r.error||'Error'), r.ok?'ok':'er');
-  if (r.ok) setTimeout(loadFunnel, 2000);
+  btns.forEach(b => b.disabled = false);
+  if (r.ok) {
+    toast('Funnel disabled ✓', 'ok');
+    await loadFunnel();
+  } else {
+    toast('Funnel disable failed: ' + (r.error || 'unknown error'), 'er');
+    await loadFunnel();
+  }
 }
 
 /* DuckDNS */
@@ -1961,16 +1985,43 @@ def api_apply():
             return jsonify({"ok": True})
 
         elif act == "ts_funnel_on":
-            subprocess.Popen(["tailscale","funnel","443"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _log_sess("Tailscale Funnel enabled :443")
-            return jsonify({"ok": True})
+            # Was subprocess.Popen (fire-and-forget) - returned ok:True the
+            # instant the process launched, before tailscale even talked to
+            # the control server, so a real failure (Funnel not enabled on
+            # the tailnet's ACL, tailscale too old, not logged in, etc.) was
+            # silently swallowed and the UI had nothing but a hopeful toast
+            # to show. Blocking on subprocess.run so we can report what
+            # actually happened.
+            try:
+                r = subprocess.run(["tailscale","funnel","443"],
+                                    capture_output=True, text=True, timeout=20)
+                out = (r.stderr or r.stdout).strip()
+                if r.returncode == 0:
+                    _log_sess("Tailscale Funnel enabled :443")
+                    return jsonify({"ok": True, "out": out})
+                _log_sess(f"Tailscale Funnel enable FAILED: {out}")
+                return jsonify({"ok": False,
+                                 "error": out or "tailscale funnel 443 exited non-zero"})
+            except subprocess.TimeoutExpired:
+                _log_sess("Tailscale Funnel enable TIMED OUT")
+                return jsonify({"ok": False,
+                                 "error": "Timed out talking to Tailscale - it may still be applying in the background, check status in a moment"})
 
         elif act == "ts_funnel_off":
-            subprocess.Popen(["tailscale","funnel","--remove"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            _log_sess("Tailscale Funnel disabled")
-            return jsonify({"ok": True})
+            try:
+                r = subprocess.run(["tailscale","funnel","--remove"],
+                                    capture_output=True, text=True, timeout=20)
+                out = (r.stderr or r.stdout).strip()
+                if r.returncode == 0:
+                    _log_sess("Tailscale Funnel disabled")
+                    return jsonify({"ok": True, "out": out})
+                _log_sess(f"Tailscale Funnel disable FAILED: {out}")
+                return jsonify({"ok": False,
+                                 "error": out or "tailscale funnel --remove exited non-zero"})
+            except subprocess.TimeoutExpired:
+                _log_sess("Tailscale Funnel disable TIMED OUT")
+                return jsonify({"ok": False,
+                                 "error": "Timed out talking to Tailscale - it may still be applying in the background, check status in a moment"})
 
         else:
             return jsonify({"error": f"Unknown action: {act}"}), 400
