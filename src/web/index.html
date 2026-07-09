@@ -2096,9 +2096,30 @@ async function sysCheckVer(){
   }catch(e){toast('Check failed');}
 }
 async function sysUpdate(){
+  // Re-check against GitHub first (cheap, read-only fetch+compare) instead of
+  // trusting whatever sysCheckVer() last showed - avoids a stale "Update
+  // available" state triggering a pull that has nothing to actually pull.
+  toast('Checking for updates…',8000);
+  const out=document.getElementById('sys-update-out');
+  let d0;
+  try{
+    const r0=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'status'})});
+    d0=await r0.json();
+  }catch(e){toast('Check failed: '+e);return;}
+  sysCheckVer(); // refresh the on-screen version/status now that we just checked
+
+  if(!d0.update_available){
+    // Already up to date: confirm and stop here - do NOT call action:'update'.
+    // That endpoint runs `git pull` and, if it applied anything, redeploys +
+    // restarts services; skipping it here means a no-op click never touches
+    // GitHub's write path or bounces the running services for nothing.
+    toast('✓ Already up to date - nothing to pull');
+    if(out){out.textContent='Already up to date ('+(d0.version||'')+')';out.style.display='block';}
+    return;
+  }
+
   if(!confirm('Pull latest from GitHub and restart magicbridge?\nThis will briefly disconnect you.'))return;
   toast('Updating…',30000);
-  const out=document.getElementById('sys-update-out');
   out.textContent='Pulling from GitHub…';out.style.display='block';
   try{
     const r=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update'})});
