@@ -478,8 +478,8 @@ body:not(.fs) .fs-hud{display:none!important}
 <div id="recapture" onclick="capture()">
   <div class="rc-ring"></div>
   <div class="rc-title">Click to Recapture</div>
-  <div class="rc-sub">Esc was sent to your remote PC</div>
-  <div class="rc-hint">Hold Right Ctrl 2 s to release intentionally</div>
+  <div class="rc-sub">Control released</div>
+  <div class="rc-hint">Hold Esc or Right Ctrl 2s to release intentionally · a quick Esc tap is sent to the remote PC instead</div>
   <div class="rc-timer" id="rc-timer"></div>
 </div>
 
@@ -568,7 +568,7 @@ body:not(.fs) .fs-hud{display:none!important}
       <button id="retrybtn" onclick="retryStream()">↺ Retry</button>
     </div>
     <div id="cur-dot"></div>
-    <div id="hint">Click to capture · Esc = remote Esc (click overlay to re-enter)</div>
+    <div id="hint">Click to capture · Esc tap → sent to remote · hold Esc or Right Ctrl 2s to exit control</div>
   </div>
 
   <div id="sbdrop" onclick="toggleSidebar()"></div>
@@ -655,8 +655,8 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Shortcuts</div>
           <div class="srow"><span class="sk">Capture</span><span class="sv">Click</span></div>
-          <div class="srow"><span class="sk">Release</span><span class="sv">Right Ctrl (hold 2s)</span></div>
-          <div class="srow"><span class="sk">Esc key</span><span class="sv">Sent to remote PC</span></div>
+          <div class="srow"><span class="sk">Release</span><span class="sv">Right Ctrl or Esc (hold 2s)</span></div>
+          <div class="srow"><span class="sk">Esc key (quick tap)</span><span class="sv">Sent to remote PC</span></div>
           <div class="srow"><span class="sk">Fullscreen</span><span class="sv">⛶ button</span></div>
           <div class="srow"><span class="sk">Paste</span><span class="sv">Ctrl+V or bottom bar</span></div>
         </div>
@@ -1305,6 +1305,19 @@ setInterval(()=>{
 const $view=document.getElementById('view');
 const $relbar=document.getElementById('relbar');
 let _intentional=false, _escTime=0, _rCtrlDown=0, _rcTimer=null;
+// Keyboard Lock: the browser ALWAYS exits pointer lock the instant Escape is
+// pressed - that's a hard, unblockable browser safety rule, not something
+// preventDefault() can stop. The only sanctioned way around it is the
+// Keyboard Lock API (navigator.keyboard.lock), which can only capture keys
+// while the page is BOTH fullscreen and pointer-locked. When it's active, a
+// single Escape tap becomes a normal keydown/keyup we forward to the remote
+// PC like any other key - real control-exit then only happens if the user
+// holds physical Escape down, which the browser itself force-releases after
+// ~2s (a fixed, non-configurable safety floor - can't be tuned to exactly
+// 3s, and can't be disabled, by design, so nobody can ever truly get stuck).
+// Chrome/Edge only; other browsers silently keep the old instant-exit
+// behavior via the .catch() below - not a regression, just no capture.
+let _kbLockActive=false, _autoFsFromCapture=false;
 
 $view.addEventListener('click', e=>{
   if(document.getElementById('vkbd').classList.contains('on')) return;
@@ -1313,10 +1326,24 @@ $view.addEventListener('click', e=>{
 });
 
 function capture(){
+  if(!document.fullscreenElement && document.documentElement.requestFullscreen){
+    _autoFsFromCapture=true;
+    document.documentElement.requestFullscreen().catch(()=>{_autoFsFromCapture=false;});
+  }
+  if(navigator.keyboard && navigator.keyboard.lock){
+    navigator.keyboard.lock(['Escape']).then(()=>{_kbLockActive=true;}).catch(()=>{_kbLockActive=false;});
+  }
   const req=$view.requestPointerLock||$view.mozRequestPointerLock||$view.webkitRequestPointerLock;
   if(!req) return;
   const p=req.call($view,{unadjustedMovement:true});
   if(p&&p.catch) p.catch(()=>req.call($view));
+}
+
+function _kbUnlockAndMaybeExitFs(){
+  if(navigator.keyboard && navigator.keyboard.unlock){ try{navigator.keyboard.unlock();}catch(e){} }
+  _kbLockActive=false;
+  if(_autoFsFromCapture && document.fullscreenElement){ document.exitFullscreen().catch(()=>{}); }
+  _autoFsFromCapture=false;
 }
 
 ['pointerlockchange','mozpointerlockchange','webkitpointerlockchange'].forEach(ev=>{
@@ -1331,11 +1358,15 @@ function capture(){
       hideRecapture();
       setSidebarForControl(false);
     } else if(prev){
-      // Lost capture. Was it Esc?
-      if(!_intentional && (Date.now()-_escTime)<1000){
+      // Lost capture. Was it Esc? (Widened to 3s: with Keyboard Lock active,
+      // a lost-capture event caused by Escape only happens after the
+      // browser's own ~2s hold-to-exit fires, not on a quick tap - a quick
+      // tap is now forwarded to the remote instead of exiting at all.)
+      if(!_intentional && (Date.now()-_escTime)<3000){
         showRecapture();
       }
       _intentional=false;
+      _kbUnlockAndMaybeExitFs();
       document.getElementById('cur-dot').style.display='none';
       setSidebarForControl(true);
     }
@@ -1364,6 +1395,7 @@ document.getElementById('recapture').addEventListener('click',()=>{
 function releaseAll(){
   _intentional=true;
   hideRecapture();
+  _kbUnlockAndMaybeExitFs();
   const ex=document.exitPointerLock||document.mozExitPointerLock||document.webkitExitPointerLock;
   if(ex) ex.call(document);
   ['ShiftLeft','ControlLeft','AltLeft','MetaLeft'].forEach(c=>send({type:'keyup',code:c}));

@@ -83,7 +83,7 @@ APT_PKGS=(
     # Provisioning AP
     hostapd dnsmasq
     # mDNS
-    avahi-daemon libnss-mdns
+    avahi-daemon libnss-mdns avahi-utils
     # Firewall
     iptables
     # Misc
@@ -166,7 +166,8 @@ cp "$SRC_DIR/src/provision/mb-setup-ui.py"       "$INSTALL_DIR/provision/"
 cp "$SRC_DIR/src/core/mb-gadget.sh"    /usr/local/bin/mb-gadget.sh
 cp "$SRC_DIR/src/provision/mb-provision.sh" /usr/local/bin/mb-provision.sh
 cp "$SRC_DIR/src/core/mb-lockdown.sh"  /usr/local/bin/mb-lockdown.sh
-chmod +x /usr/local/bin/mb-gadget.sh /usr/local/bin/mb-provision.sh /usr/local/bin/mb-lockdown.sh
+cp "$SRC_DIR/src/core/mb-mdns-alias.sh" /usr/local/bin/mb-mdns-alias.sh
+chmod +x /usr/local/bin/mb-gadget.sh /usr/local/bin/mb-provision.sh /usr/local/bin/mb-lockdown.sh /usr/local/bin/mb-mdns-alias.sh
 
 ok "Files installed"
 
@@ -260,12 +261,14 @@ cp "$SRC_DIR/src/core/mb-gadget.service"         /etc/systemd/system/
 cp "$SRC_DIR/src/core/magicbridge.service"        /etc/systemd/system/
 cp "$SRC_DIR/src/dashboard/stealth-dashboard.service" /etc/systemd/system/
 cp "$SRC_DIR/src/provision/mb-provision.service" /etc/systemd/system/
+cp "$SRC_DIR/src/core/mb-mdns-alias.service"     /etc/systemd/system/
 
 systemctl daemon-reload
 systemctl enable mb-gadget
 systemctl enable magicbridge
 systemctl enable stealth-dashboard
 systemctl enable mb-provision
+systemctl enable mb-mdns-alias
 
 # Note: ustreamer.service is intentionally NOT installed or enabled here.
 # video.py starts and manages ustreamer itself as a subprocess (and stops
@@ -328,6 +331,12 @@ if ! grep -q "^127.0.1.1.*$HOSTNAME_NEW" /etc/hosts; then
     sed -i "/^127.0.1.1/d" /etc/hosts
     echo "127.0.1.1  $HOSTNAME_NEW.local  $HOSTNAME_NEW" >> /etc/hosts
 fi
+# unmask first: a masked service refuses to start even after `enable`, and
+# this exact thing was found masked on a live unit on 2026-07-09 with no
+# clear cause - cheap insurance against a fresh install inheriting a masked
+# state from whatever image/tooling prepared the SD card.
+systemctl unmask avahi-daemon 2>/dev/null || true
+systemctl unmask avahi-daemon.socket 2>/dev/null || true
 systemctl enable avahi-daemon
 systemctl restart avahi-daemon
 ok "Hostname '$HOSTNAME_NEW.local' active"

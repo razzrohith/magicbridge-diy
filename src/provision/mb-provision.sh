@@ -30,6 +30,46 @@ TS_KEY_TMP="/tmp/mb-ts-key"
 exec >> "$LOG" 2>&1
 echo "[$(date)] mb-provision.sh starting"
 
+# --- mDNS self-heal (2026-07-09) -----------------------------------------
+# avahi-daemon was found masked+inactive on a live unit, and the hostname
+# had been reset to a bogus "DESKTOP-XXXXXXX"-style placeholder (an
+# SD-card-imaging-tool leftover, not anything MagicBridge set - install.sh
+# has always set hostname="magicbridge" correctly at install time). Both
+# silently break magicbridge.local / <hostname>.local with no visible error
+# until someone tries to browse there. Checked and self-healed every boot,
+# not just at first-provision time, so a future regression of either kind
+# doesn't require another manual SSH session to notice and fix.
+ensure_mdns_healthy() {
+    # avahi-daemon.socket can be masked independently of avahi-daemon.service
+    # (systemd treats them as separate units) - both have to be unmasked or
+    # the service refuses to start with "Unit avahi-daemon.socket is masked."
+    # even though avahi-daemon.service itself looks fine. Found this the hard
+    # way: unmasking just the .service left restart failing silently.
+    for u in avahi-daemon avahi-daemon.socket; do
+        if systemctl is-enabled "$u" 2>/dev/null | grep -q masked; then
+            echo "[$(date)] $u was masked - unmasking"
+            systemctl unmask "$u"
+        fi
+    done
+    systemctl enable avahi-daemon --now 2>/dev/null || systemctl restart avahi-daemon || true
+
+    # Only resets an obviously-bogus placeholder hostname - never touches a
+    # hostname someone actually chose on purpose.
+    CUR_HOST=$(hostname)
+    if [[ "$CUR_HOST" =~ ^DESKTOP-.* || "$CUR_HOST" =~ ^WIN-.* || "$CUR_HOST" == "localhost" ]]; then
+        echo "[$(date)] Hostname '$CUR_HOST' looks like an imaging-tool default, resetting to 'magicbridge'"
+        hostnamectl set-hostname magicbridge
+        sed -i "s/^127\.0\.1\.1.*/127.0.1.1\tmagicbridge/" /etc/hosts
+        systemctl restart avahi-daemon || true
+    fi
+
+    # magicbridge.local is published as its own standing alias (see
+    # mb-mdns-alias.service) specifically so it keeps working even if the
+    # box's own hostname drifts again for some other reason in the future.
+    systemctl enable mb-mdns-alias.service --now 2>/dev/null || true
+}
+ensure_mdns_healthy
+
 # Check for live network (WiFi, Ethernet, or otherwise) via NetworkManager's
 # overall state, not just wlan0 specifically - this fires the setup hotspot
 # only when the Pi genuinely has no way onto any network, every boot.
