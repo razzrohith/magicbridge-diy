@@ -34,6 +34,7 @@ except ImportError:
 
 # Local modules (same directory)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import hid
 from hid   import HIDKeyboard, HIDMouse
 from video import VideoManager
 
@@ -404,6 +405,17 @@ keyboard = HIDKeyboard("/dev/hidg0")
 mouse    = HIDMouse("/dev/hidg1")
 video    = VideoManager()
 
+# Apply whatever target-keyboard-layout was saved last time, so a reboot
+# doesn't silently fall back to the "us" default for someone who set it to
+# something else. See hid.py's CHAR_MAPS comment for why this matters -
+# wrong layout means garbled paste/AI-typed text, not a crash, so this is
+# easy to miss without checking on every boot.
+try:
+    _boot_cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+    hid.set_layout(_boot_cfg.get("keyboard", {}).get("layout", "us"))
+except Exception:
+    pass
+
 # Connected WebSocket clients (for count tracking)
 _ws_clients: set = set()
 
@@ -560,6 +572,103 @@ class MouseJiggler:
 jiggler = MouseJiggler(mouse)
 
 
+# ---------------------------------------------------------------------------
+# HID connect-only-during-active-use: optionally unbinds the USB gadget from
+# its UDC (the Pi disappears from the target's USB bus entirely) after an
+# idle period with no connected KVM session, and rebinds the instant a new
+# session connects. Off by default - opt-in.
+#
+# Why: a HID device that stays enumerated 24/7, including at 3am with nobody
+# using it, is itself a fingerprint an always-on presence is more
+# noticeable than one that's only there while actually in use.
+#
+# Interaction with the mouse jiggler: enabling both isn't harmful, just
+# pointless while HID is unbound - jiggler's mouse writes fail silently
+# (it already tolerates HID errors, see MouseJiggler._loop) until the next
+# real session reconnects the gadget. If you rely on jiggler to keep a
+# target screen awake between sessions, keep this feature off, or expect
+# jiggler to go quiet whenever it's disconnected you.
+# ---------------------------------------------------------------------------
+class HidAutoDisconnect:
+    def __init__(self):
+        self.enabled = False
+        self.idle_minutes = 15
+        self._task = None
+        self._udc_name = None
+
+    def configure(self, enabled: bool, idle_minutes):
+        self.enabled = bool(enabled)
+        try:
+            self.idle_minutes = max(1, min(180, int(idle_minutes)))
+        except (TypeError, ValueError):
+            self.idle_minutes = 15
+
+    def status(self) -> dict:
+        return {
+            "enabled": self.enabled,
+            "idle_minutes": self.idle_minutes,
+            "connected": self._is_bound(),
+        }
+
+    def _is_bound(self) -> bool:
+        return bool(_usb_r("UDC"))
+
+    def _discover_udc(self) -> str:
+        if self._udc_name:
+            return self._udc_name
+        try:
+            entries = sorted(os.listdir("/sys/class/udc"))
+            if entries:
+                self._udc_name = entries[0]
+        except Exception:
+            pass
+        return self._udc_name or ""
+
+    def ensure_connected(self):
+        """Call at the start of a new WS session. Rebinds the gadget if it's
+        currently unbound; cheap no-op otherwise. Safe to call from a
+        thread-pool executor (blocking file I/O + a brief settle sleep)."""
+        if not self.enabled or self._is_bound():
+            return
+        udc = self._discover_udc()
+        if not udc:
+            log.warning("hid-autodisconnect: no UDC found, cannot rebind")
+            return
+        _usb_w("UDC", udc)
+        log.info("hid-autodisconnect: rebound gadget to %s (new session)", udc)
+        time.sleep(0.35)  # brief settle so /dev/hidg* is ready for the caller
+
+    def start(self):
+        if self._task is None:
+            self._task = asyncio.create_task(self._loop())
+
+    def stop(self):
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+
+    async def _loop(self):
+        while True:
+            await asyncio.sleep(30)
+            if not self.enabled:
+                continue
+            if _ws_clients:
+                continue  # a session is active, never disconnect mid-use
+            if not self._is_bound():
+                continue  # already disconnected
+            idle_for = time.time() - _last_real_input[0]
+            if idle_for < self.idle_minutes * 60:
+                continue
+            try:
+                _usb_w("UDC", "")
+                log.info("hid-autodisconnect: unbound gadget after %dm idle", self.idle_minutes)
+            except Exception:
+                log.warning("hid-autodisconnect: unbind failed", exc_info=True)
+
+
+hid_autodc = HidAutoDisconnect()
+
+
 # WebSocket: keyboard / mouse input handler
 
 
@@ -612,6 +721,10 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     _sess_log(sid, ip, ua, "connect")
 
     loop = asyncio.get_running_loop()
+    if hid_autodc.enabled:
+        # Blocking file I/O + a brief settle sleep - runs off the event loop
+        # so one reconnecting client doesn't stall every other connection.
+        await loop.run_in_executor(None, hid_autodc.ensure_connected)
 
     try:
         async for msg in ws:
@@ -685,6 +798,138 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
 
 # HTTP handlers
 
+def _decode_throttled(bits: int) -> dict:
+    """Decode vcgencmd get_throttled's bitmask into plain states.
+
+    Bit meanings per Raspberry Pi firmware docs:
+      0  under-voltage NOW           16  under-voltage has occurred since boot
+      1  arm freq capped NOW         17  arm freq capped has occurred
+      2  currently throttled        18  throttling has occurred
+      3  soft temp limit active NOW 19  soft temp limit has occurred
+    """
+    uv_now         = bool(bits & (1 << 0))
+    cap_now        = bool(bits & (1 << 1))
+    throttled_now  = bool(bits & (1 << 2))
+    temp_now       = bool(bits & (1 << 3))
+    uv_ever        = bool(bits & (1 << 16))
+    cap_ever       = bool(bits & (1 << 17))
+    throttled_ever = bool(bits & (1 << 18))
+    temp_ever      = bool(bits & (1 << 19))
+
+    if uv_now:
+        state = "under_voltage"
+    elif throttled_now or temp_now:
+        state = "throttled"
+    elif uv_ever or throttled_ever or temp_ever or cap_ever:
+        state = "was_throttled"
+    else:
+        state = "ok"
+
+    return {
+        "state": state,
+        "uv_now": uv_now, "uv_ever": uv_ever,
+        "throttled_now": throttled_now, "throttled_ever": throttled_ever,
+        "temp_limit_now": temp_now, "temp_limit_ever": temp_ever,
+        "freq_capped_now": cap_now, "freq_capped_ever": cap_ever,
+    }
+
+
+def _gather_power_health() -> dict:
+    """Everything here shells out or hits /proc - always call via
+    run_in_executor, never directly from an async handler (same rule as
+    the AI Agent's _fetch_json below).
+
+    pmic_read_adc is best-effort: not all Pi 4 firmware/EEPROM versions
+    register that vcgencmd command (confirmed missing on the current dev
+    unit - it returns 'Command not registered'). get_throttled is the
+    reliable source for the actual health signal and is always used;
+    pmic_read_adc just adds a numeric volts/amps reading when available.
+    """
+    import subprocess
+
+    power = {"state": "unknown"}
+    try:
+        out = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True,
+                              text=True, timeout=3).stdout.strip()
+        if "=" in out:
+            bits = int(out.split("=", 1)[1].strip(), 16)
+            power = _decode_throttled(bits)
+    except Exception:
+        pass
+
+    volts_in = amps_in = watts_in = None
+    try:
+        out = subprocess.run(["vcgencmd", "pmic_read_adc"], capture_output=True,
+                              text=True, timeout=3).stdout
+        v = a = None
+        for line in out.splitlines():
+            u = line.strip().upper()
+            if "5V" in u and "VOLT(" in u:
+                try: v = float(line.strip().split("=", 1)[1].rstrip("Vv"))
+                except Exception: pass
+            elif "5V" in u and "CURRENT(" in u:
+                try: a = float(line.strip().split("=", 1)[1].rstrip("Aa"))
+                except Exception: pass
+        volts_in, amps_in = v, a
+        if v is not None and a is not None:
+            watts_in = round(v * a, 2)
+    except Exception:
+        pass
+
+    clock_mhz = None
+    try:
+        out = subprocess.run(["vcgencmd", "measure_clock", "arm"], capture_output=True,
+                              text=True, timeout=3).stdout.strip()
+        if "=" in out:
+            clock_mhz = round(int(out.split("=", 1)[1]) / 1_000_000)
+    except Exception:
+        pass
+
+    load1 = load_pct = None
+    try:
+        load1 = float(Path("/proc/loadavg").read_text().split()[0])
+        ncpu = os.cpu_count() or 4
+        load_pct = round(min(load1 / ncpu, 1.0) * 100, 1)
+    except Exception:
+        pass
+
+    mem_used_pct = mem_used_gb = mem_total_gb = None
+    try:
+        mem_total_kb = mem_avail_kb = None
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal:"):
+                mem_total_kb = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                mem_avail_kb = int(line.split()[1])
+        if mem_total_kb:
+            mem_total_gb = round(mem_total_kb / 1_048_576, 2)
+            if mem_avail_kb is not None:
+                mem_used_pct = round((1 - mem_avail_kb / mem_total_kb) * 100, 1)
+                mem_used_gb = round((mem_total_kb - mem_avail_kb) / 1_048_576, 2)
+    except Exception:
+        pass
+
+    services = {}
+    try:
+        out = subprocess.run(
+            ["systemctl", "is-active", "magicbridge", "stealth-dashboard"],
+            capture_output=True, text=True, timeout=3,
+        ).stdout.strip().splitlines()
+        for name, state in zip(["magicbridge", "stealth-dashboard"], out):
+            services[name] = (state.strip() == "active")
+    except Exception:
+        pass
+
+    return {
+        "power": power,
+        "volts_in": volts_in, "amps_in": amps_in, "watts_in": watts_in,
+        "clock_mhz": clock_mhz,
+        "load1": load1, "load_pct": load_pct,
+        "mem_used_pct": mem_used_pct, "mem_used_gb": mem_used_gb, "mem_total_gb": mem_total_gb,
+        "services": services,
+    }
+
+
 async def index_handler(request: web.Request) -> web.Response:
     path = Path(WEB_ROOT) / "index.html"
     if path.exists():
@@ -720,38 +965,60 @@ async def api_status(request: web.Request) -> web.Response:
             pass
         return uptime, temp, local_ip
 
+    def _gather_tailscale():
+        tailscale_ip = ""
+        tailscale_up = False
+        try:
+            import subprocess as _sp, json as _json_ts
+            # Check the actual backend state, not just whether "tailscale ip"
+            # returns something. Tailscale can still report a cached IP via
+            # "tailscale ip -4" even while the backend is fully stopped, which
+            # made this disagree with /api/tailscale's (correct) check.
+            _r = _sp.run(["tailscale", "status", "--json"], capture_output=True, text=True, timeout=3)
+            if _r.returncode == 0:
+                _st = _json_ts.loads(_r.stdout)
+                tailscale_up = _st.get("BackendState") == "Running"
+                if tailscale_up:
+                    _ri = _sp.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=3)
+                    if _ri.returncode == 0:
+                        tailscale_ip = _ri.stdout.strip().split()[0]
+        except Exception:
+            pass
+        return tailscale_ip, tailscale_up
+
     loop = asyncio.get_running_loop()
     uptime, temp, local_ip = await loop.run_in_executor(None, _gather)
+    health = await loop.run_in_executor(None, _gather_power_health)
+    # video.status() shells out to v4l2-ctl per detected device (and, since
+    # this session, arecord -l for audio detection) - genuinely blocking,
+    # same class of bug as the AI agent's urlopen call fixed earlier. Run it
+    # off the event loop like everything else here rather than adding a new
+    # blocking call to the one still-synchronous spot in this handler.
+    stream_status = await loop.run_in_executor(None, video.status)
+    tailscale_ip, tailscale_up = await loop.run_in_executor(None, _gather_tailscale)
 
-    tailscale_ip = ""
-    tailscale_up = False
-    try:
-        import subprocess as _sp, json as _json_ts
-        # Check the actual backend state, not just whether "tailscale ip"
-        # returns something. Tailscale can still report a cached IP via
-        # "tailscale ip -4" even while the backend is fully stopped, which
-        # made this disagree with /api/tailscale's (correct) check.
-        _r = _sp.run(["tailscale", "status", "--json"], capture_output=True, text=True, timeout=3)
-        if _r.returncode == 0:
-            _st = _json_ts.loads(_r.stdout)
-            tailscale_up = _st.get("BackendState") == "Running"
-            if tailscale_up:
-                _ri = _sp.run(["tailscale", "ip", "-4"], capture_output=True, text=True, timeout=3)
-                if _ri.returncode == 0:
-                    tailscale_ip = _ri.stdout.strip().split()[0]
-    except Exception:
-        pass
     return web.json_response({
         "version":    VERSION,
         "clients":    len(_ws_clients),
         "hid_kb":     os.path.exists("/dev/hidg0"),
         "hid_ms":     os.path.exists("/dev/hidg1"),
-        "stream":     video.status(),
+        "stream":     stream_status,
         "uptime":     uptime,
         "temp_c":     temp,
         "local_ip":     local_ip,
         "tailscale_ip": tailscale_ip,
         "tailscale_up": tailscale_up,
+        "power":        health["power"],
+        "volts_in":     health["volts_in"],
+        "amps_in":      health["amps_in"],
+        "watts_in":     health["watts_in"],
+        "clock_mhz":    health["clock_mhz"],
+        "load1":        health["load1"],
+        "load_pct":     health["load_pct"],
+        "mem_used_pct": health["mem_used_pct"],
+        "mem_used_gb":  health["mem_used_gb"],
+        "mem_total_gb": health["mem_total_gb"],
+        "services":     health["services"],
     })
 
 
@@ -798,7 +1065,224 @@ async def api_stream_settings(request: web.Request) -> web.Response:
         except Exception:
             pass
 
-    return web.json_response({"ok": ok, "status": video.status()})
+    stream_status = await loop.run_in_executor(None, video.status)
+    return web.json_response({"ok": ok, "status": stream_status})
+
+
+# OLED status-display settings. Stored in the same shared CONFIG_PATH under
+# an "oled" key so it follows the exact same read/merge/write pattern as the
+# "video" section above. oled.py (a separate process/service) reads this
+# same file directly and hot-reloads on mtime change - no restart needed
+# for changes made here to take effect on the physical panel.
+OLED_DEFAULTS = {
+    "line1_mode": "app",          # app | hostname | custom
+    "line1_custom": "",
+    "line2_mode": "ip",           # ip | tailscale | custom | blank
+    "line2_custom": "",
+    "line3_show_temp": True,
+    "line3_show_uptime": True,
+    "line3_show_service": True,
+    "line3_show_stream": True,
+    "line3_custom_enabled": False,
+    "line3_custom": "",
+    # 4th line is opt-in and off by default - the panel is only 32px tall and
+    # already uses every pixel row for 3 lines at the normal font size, so
+    # turning this on makes oled.py switch ALL lines to a smaller font to
+    # fit 4 rows (see oled.py FONT_SIZE_SMALL). Not just an extra row "for
+    # free" - the UI must warn about this before it's enabled.
+    "line4_enabled": False,
+    "line4_mode": "blank",        # blank | hostname | tailscale | custom
+    "line4_custom": "",
+    "refresh_sec": 2,
+}
+
+
+async def api_oled_settings(request: web.Request) -> web.Response:
+    if request.method == "GET":
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        oled_cfg = dict(OLED_DEFAULTS)
+        oled_cfg.update(cfg.get("oled", {}))
+        return web.json_response({"ok": True, "config": oled_cfg, "defaults": OLED_DEFAULTS})
+
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+
+    # Only accept known keys - anything else is silently dropped rather than
+    # stored, so a bad/old client can't wedge unexpected data into config.json.
+    allowed = set(OLED_DEFAULTS.keys())
+    incoming = {k: v for k, v in d.items() if k in allowed}
+
+    if "refresh_sec" in incoming:
+        try:
+            incoming["refresh_sec"] = max(1, min(30, int(incoming["refresh_sec"])))
+        except Exception:
+            incoming.pop("refresh_sec", None)
+    for k in ("line1_custom", "line2_custom", "line3_custom", "line4_custom"):
+        if k in incoming and incoming[k] is not None:
+            incoming[k] = str(incoming[k])[:21]
+
+    try:
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        merged = dict(OLED_DEFAULTS)
+        merged.update(cfg.get("oled", {}))
+        merged.update(incoming)
+        cfg["oled"] = merged
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
+
+    return web.json_response({"ok": True, "config": merged})
+
+
+async def api_oled_reset(request: web.Request) -> web.Response:
+    try:
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        cfg["oled"] = dict(OLED_DEFAULTS)
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": "Could not reset: " + str(e)}, status=500)
+    return web.json_response({"ok": True, "config": dict(OLED_DEFAULTS)})
+
+
+# Wake-on-LAN. Stored under a "wol" key in the same shared CONFIG_PATH,
+# following the identical read/merge/write pattern as OLED_DEFAULTS above.
+# Sending the magic packet needs no saved state on the Pi beyond the MAC -
+# it's a fire-and-forget UDP broadcast, not a persistent connection.
+WOL_DEFAULTS = {
+    "mac": "",
+    "broadcast": "255.255.255.255",
+    "port": 9,
+}
+
+
+def _wol_normalize_mac(raw: str) -> str:
+    """Accepts AA:BB:CC:DD:EE:FF, AA-BB-CC-DD-EE-FF or bare hex; returns
+    colon-separated uppercase form, or raises ValueError if not a MAC."""
+    cleaned = str(raw).strip().replace("-", ":").replace(".", ":")
+    parts = cleaned.split(":") if ":" in cleaned else [cleaned[i:i+2] for i in range(0, len(cleaned), 2)]
+    hexonly = "".join(parts)
+    if len(hexonly) != 12 or any(c not in "0123456789abcdefABCDEF" for c in hexonly):
+        raise ValueError("Not a valid MAC address")
+    hexonly = hexonly.upper()
+    return ":".join(hexonly[i:i+2] for i in range(0, 12, 2))
+
+
+def _wol_send_packet(mac: str, broadcast: str = "255.255.255.255", port: int = 9) -> None:
+    import socket as _socket
+    mac_bytes = bytes.fromhex(mac.replace(":", ""))
+    packet = b"\xff" * 6 + mac_bytes * 16
+    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
+    try:
+        sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_BROADCAST, 1)
+        sock.sendto(packet, (broadcast, port))
+    finally:
+        sock.close()
+
+
+async def api_wol_settings(request: web.Request) -> web.Response:
+    if request.method == "GET":
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        wol_cfg = dict(WOL_DEFAULTS)
+        wol_cfg.update(cfg.get("wol", {}))
+        return web.json_response({"ok": True, "config": wol_cfg, "defaults": WOL_DEFAULTS})
+
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+
+    incoming = {}
+    if "mac" in d:
+        raw = str(d.get("mac") or "").strip()
+        if raw == "":
+            incoming["mac"] = ""
+        else:
+            try:
+                incoming["mac"] = _wol_normalize_mac(raw)
+            except ValueError:
+                return web.json_response({"ok": False, "error": "Invalid MAC address format"}, status=400)
+    if "broadcast" in d:
+        incoming["broadcast"] = str(d.get("broadcast") or WOL_DEFAULTS["broadcast"])[:64]
+    if "port" in d:
+        try:
+            incoming["port"] = max(1, min(65535, int(d["port"])))
+        except Exception:
+            pass
+
+    try:
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        merged = dict(WOL_DEFAULTS)
+        merged.update(cfg.get("wol", {}))
+        merged.update(incoming)
+        cfg["wol"] = merged
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
+
+    return web.json_response({"ok": True, "config": merged})
+
+
+async def api_wol_wake(request: web.Request) -> web.Response:
+    """POST /api/wol/wake: send the magic packet to the saved MAC."""
+    cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+    wol_cfg = dict(WOL_DEFAULTS)
+    wol_cfg.update(cfg.get("wol", {}))
+    mac = wol_cfg.get("mac", "")
+    if not mac:
+        return web.json_response({"ok": False, "error": "No MAC address saved yet"}, status=400)
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _wol_send_packet, mac, wol_cfg.get("broadcast", "255.255.255.255"), wol_cfg.get("port", 9))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": "Could not send packet: " + str(e)}, status=500)
+    return web.json_response({"ok": True, "mac": mac})
+
+
+# Target keyboard layout. See hid.py's CHAR_MAPS comment for the underlying
+# reason this exists: HID usage codes are physical-position, not character,
+# so the paste/AI-typed-text feature needs to know what layout the TARGET OS
+# is set to or it types the wrong characters. Only "us" is a verified table
+# right now (see hid.get_layout_names()) - the setting exists so this is a
+# one-line config change later, not a code change, once another layout is
+# actually verified and added to CHAR_MAPS.
+KEYBOARD_DEFAULTS = {"layout": "us"}
+
+
+async def api_keyboard_settings(request: web.Request) -> web.Response:
+    if request.method == "GET":
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        kb_cfg = dict(KEYBOARD_DEFAULTS)
+        kb_cfg.update({k: v for k, v in cfg.get("keyboard", {}).items() if k in KEYBOARD_DEFAULTS})
+        return web.json_response({"ok": True, "config": kb_cfg, "available_layouts": hid.get_layout_names()})
+
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+
+    layout = str(d.get("layout", "")).strip()
+    if layout and layout not in hid.get_layout_names():
+        return web.json_response({"ok": False, "error": f"Unknown layout: {layout}"}, status=400)
+
+    try:
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        kb_cfg = cfg.setdefault("keyboard", {})
+        if layout:
+            kb_cfg["layout"] = layout
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
+
+    if layout:
+        hid.set_layout(layout)
+
+    return web.json_response({"ok": True, "config": dict(KEYBOARD_DEFAULTS, **kb_cfg)})
 
 
 # App factory
@@ -1124,6 +1608,25 @@ async def api_jiggler(request):
     return web.json_response({"ok": True, **jiggler.status()})
 
 
+async def api_hid_autodisconnect(request):
+    """GET /api/hid-autodisconnect: current enabled/idle_minutes/connected state.
+    POST /api/hid-autodisconnect: {"enabled": bool, "idle_minutes": int} -
+    updates live and persists."""
+    if request.method == "GET":
+        return web.json_response({"ok": True, **hid_autodc.status()})
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    enabled = bool(d.get("enabled", hid_autodc.enabled))
+    idle_minutes = d.get("idle_minutes", hid_autodc.idle_minutes)
+    hid_autodc.configure(enabled, idle_minutes)
+    cfg = _load_cfg()
+    cfg["hid_autodisconnect"] = {"enabled": enabled, "idle_minutes": hid_autodc.idle_minutes}
+    _save_cfg(cfg)
+    return web.json_response({"ok": True, **hid_autodc.status()})
+
+
 async def api_wifi(request):
     import subprocess as _sp, json as _j
     if request.method == "GET":
@@ -1328,18 +1831,103 @@ async def api_stealth_logs(request):
     return web.json_response({"ok": True, "sessions": list(reversed(data[-200:]))})
 
 
+# AI settings: provider/model/cloud-enabled prefs + per-provider API keys,
+# stored server-side in the shared CONFIG_PATH under an "ai" key. Keys are
+# write-only from the browser's perspective - GET only ever returns a
+# per-provider boolean (keys_set), never the raw value - closing the old gap
+# where every provider's key sat in localStorage (readable by any same-
+# origin XSS, or by anyone who pulls the SD card and reads the browser
+# profile). The key itself is still plaintext in config.json for now; full
+# at-rest encryption of config.json is a separate, larger piece of work
+# (see the data-at-rest phase) and deliberately not duplicated here.
+AI_DEFAULTS = {
+    "provider": "openrouter",
+    "model": "",
+    "cloud_enabled": True,   # explicit opt-out gate - off disables all cloud AI calls
+}
+
+
+async def api_ai_settings(request: web.Request) -> web.Response:
+    if request.method == "GET":
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        ai_cfg = dict(AI_DEFAULTS)
+        ai_cfg.update({k: v for k, v in cfg.get("ai", {}).items() if k in AI_DEFAULTS})
+        keys = cfg.get("ai", {}).get("keys", {})
+        keys_set = {p: bool(keys.get(p)) for p in ("openrouter", "claude", "openai", "gemini")}
+        return web.json_response({"ok": True, "config": ai_cfg, "keys_set": keys_set})
+
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+
+    incoming = {k: v for k, v in d.items() if k in AI_DEFAULTS}
+    if "cloud_enabled" in incoming:
+        incoming["cloud_enabled"] = bool(incoming["cloud_enabled"])
+
+    try:
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        ai_cfg = cfg.setdefault("ai", {})
+        merged = dict(AI_DEFAULTS)
+        merged.update({k: v for k, v in ai_cfg.items() if k in AI_DEFAULTS})
+        merged.update(incoming)
+        ai_cfg.update(merged)
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
+
+    keys = cfg.get("ai", {}).get("keys", {})
+    keys_set = {p: bool(keys.get(p)) for p in ("openrouter", "claude", "openai", "gemini")}
+    return web.json_response({"ok": True, "config": merged, "keys_set": keys_set})
+
+
+async def api_ai_key(request: web.Request) -> web.Response:
+    """POST /api/ai/key: set (or clear, if key is empty) one provider's API
+    key. Write-only - there is no GET that returns the raw value."""
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+    provider = str(d.get("provider", "")).strip()
+    key = str(d.get("key", "")).strip()
+    if provider not in ("openrouter", "claude", "openai", "gemini"):
+        return web.json_response({"ok": False, "error": "Unknown provider"}, status=400)
+    try:
+        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+        ai_cfg = cfg.setdefault("ai", {})
+        keys = ai_cfg.setdefault("keys", {})
+        if key:
+            keys[provider] = key
+        else:
+            keys.pop(provider, None)
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
+    return web.json_response({"ok": True, "has_key": bool(key)})
+
+
 async def api_ai_run(request):
     """POST /api/ai/run: proxy a natural-language command into a KVM action sequence."""
     try:
         d = await request.json()
     except Exception:
         return web.json_response({"ok": False, "error": "bad json"}, status=400)
-    provider = d.get("provider", "openrouter")
-    api_key  = d.get("key", "").strip()
+    cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+    ai_cfg = dict(AI_DEFAULTS)
+    ai_cfg.update({k: v for k, v in cfg.get("ai", {}).items() if k in AI_DEFAULTS})
+    if not ai_cfg.get("cloud_enabled", True):
+        return web.json_response({"ok": False, "error": "Cloud AI is turned off in settings."})
+
+    provider = d.get("provider", ai_cfg.get("provider", "openrouter"))
     model    = d.get("model", "").strip()
     command  = d.get("command", "").strip()
+    # The key is looked up server-side from config.json - the browser no
+    # longer sends it on every request (see AI_DEFAULTS comment above).
+    api_key  = cfg.get("ai", {}).get("keys", {}).get(provider, "").strip()
     if not api_key:
-        return web.json_response({"ok": False, "error": "No API key provided"})
+        return web.json_response({"ok": False, "error": f"No API key saved for {provider} - add one in AI Agent settings."})
     if not command:
         return web.json_response({"ok": False, "error": "No command provided"})
 
@@ -1361,6 +1949,22 @@ async def api_ai_run(request):
     )
 
     import urllib.request as _ur, json as _jj
+
+    def _fetch_json(req):
+        # Runs in a thread executor (see run_in_executor calls below), NOT
+        # directly on the event loop. urllib.request.urlopen is a blocking
+        # call; the AI providers this hits can take several seconds (up to
+        # the 30s timeout) to respond, and aiohttp is single-threaded, so
+        # calling this straight from the coroutine used to freeze the WHOLE
+        # server - every other connected client's keyboard/mouse input over
+        # /ws, video status polling, everything - for the entire duration of
+        # one person's AI request. Moving just this blocking part off the
+        # event loop fixes that without restructuring the rest of the
+        # per-provider logic below.
+        with _ur.urlopen(req, timeout=30) as r:
+            return _jj.loads(r.read())
+
+    loop = asyncio.get_event_loop()
     try:
         if provider in ("openrouter", "claude_or"):
             if not model: model = "anthropic/claude-haiku-4-5"
@@ -1378,8 +1982,7 @@ async def api_ai_run(request):
                          "Authorization": "Bearer " + api_key,
                          "HTTP-Referer": "https://magicbridge.local",
                          "X-Title": "MagicBridge"})
-            with _ur.urlopen(req, timeout=30) as r:
-                raw = _jj.loads(r.read())
+            raw = await loop.run_in_executor(None, _fetch_json, req)
             text = raw["choices"][0]["message"]["content"].strip()
 
         elif provider == "gemini":
@@ -1393,8 +1996,7 @@ async def api_ai_run(request):
                 "https://generativelanguage.googleapis.com/v1beta/models/"
                 + model + ":generateContent?key=" + api_key,
                 data=payload, headers={"Content-Type": "application/json"})
-            with _ur.urlopen(req, timeout=30) as r:
-                raw = _jj.loads(r.read())
+            raw = await loop.run_in_executor(None, _fetch_json, req)
             text = raw["candidates"][0]["content"]["parts"][0]["text"].strip()
 
         elif provider == "openai":
@@ -1411,8 +2013,7 @@ async def api_ai_run(request):
                 "https://api.openai.com/v1/chat/completions", data=payload,
                 headers={"Content-Type": "application/json",
                          "Authorization": "Bearer " + api_key})
-            with _ur.urlopen(req, timeout=30) as r:
-                raw = _jj.loads(r.read())
+            raw = await loop.run_in_executor(None, _fetch_json, req)
             text = raw["choices"][0]["message"]["content"].strip()
 
         elif provider == "claude":
@@ -1427,8 +2028,7 @@ async def api_ai_run(request):
                 headers={"Content-Type": "application/json",
                          "x-api-key": api_key,
                          "anthropic-version": "2023-06-01"})
-            with _ur.urlopen(req, timeout=30) as r:
-                raw = _jj.loads(r.read())
+            raw = await loop.run_in_executor(None, _fetch_json, req)
             text = raw["content"][0]["text"].strip()
 
         else:
@@ -1458,11 +2058,21 @@ def build_app() -> web.Application:
     app.router.add_get("/api/devices",           api_devices)
     app.router.add_get("/api/stream/settings",   api_stream_settings)
     app.router.add_post("/api/stream/settings",  api_stream_settings)
+    app.router.add_get("/api/oled/settings",   api_oled_settings)
+    app.router.add_post("/api/oled/settings",  api_oled_settings)
+    app.router.add_post("/api/oled/reset",     api_oled_reset)
+    app.router.add_get("/api/wol/settings",    api_wol_settings)
+    app.router.add_post("/api/wol/settings",   api_wol_settings)
+    app.router.add_post("/api/wol/wake",       api_wol_wake)
+    app.router.add_get("/api/keyboard/settings",  api_keyboard_settings)
+    app.router.add_post("/api/keyboard/settings", api_keyboard_settings)
     app.router.add_post("/api/power",     api_power)
     app.router.add_get("/api/identity",  api_identity)
     app.router.add_post("/api/identity", api_identity)
     app.router.add_get("/api/jiggler",  api_jiggler)
     app.router.add_post("/api/jiggler", api_jiggler)
+    app.router.add_get("/api/hid-autodisconnect",  api_hid_autodisconnect)
+    app.router.add_post("/api/hid-autodisconnect", api_hid_autodisconnect)
     app.router.add_get("/api/networks",   api_wifi)
     app.router.add_post("/api/networks",  api_wifi)
     app.router.add_get("/api/tailscale",  api_tailscale_get)
@@ -1473,6 +2083,9 @@ def build_app() -> web.Application:
     app.router.add_get("/api/stealth/logs",  api_stealth_logs)
     app.router.add_get("/api/ai/run",         api_ai_run)
     app.router.add_post("/api/ai/run",        api_ai_run)
+    app.router.add_get("/api/ai/settings",    api_ai_settings)
+    app.router.add_post("/api/ai/settings",   api_ai_settings)
+    app.router.add_post("/api/ai/key",        api_ai_key)
 
     # Serve static files if present (CSS, JS, images, etc.)
     web_static = Path(WEB_ROOT) / "static"
@@ -1518,6 +2131,14 @@ async def main():
     jiggler.start()
     log.info("Jiggler ready (enabled=%s, style=%s)", jiggler.enabled, jiggler.style)
 
+    # HID connect-only-during-active-use: same load-then-always-start
+    # pattern as the jiggler above, off by default.
+    hc = cfg.get("hid_autodisconnect", {})
+    hid_autodc.configure(bool(hc.get("enabled", False)), hc.get("idle_minutes", 15))
+    hid_autodc.start()
+    log.info("HID auto-disconnect ready (enabled=%s, idle_minutes=%s)",
+             hid_autodc.enabled, hid_autodc.idle_minutes)
+
     # Start video stream
     vc  = cfg.get("video", {})
     loop = asyncio.get_running_loop()
@@ -1527,7 +2148,11 @@ async def main():
         resolution = vc.get("resolution", "1920x1080"),
         fps        = int(vc.get("fps", 30)),
         quality    = int(vc.get("quality", 80)),
-        mode       = vc.get("mode", "mjpeg"),
+        # Default to the WebRTC/H.264 path (C790/CSI) — video.start() /
+        # _start_ustreamer_h264 auto-detects failure (no C790 yet, ustreamer
+        # build lacking Janus support, etc.) and falls back to mjpeg on its
+        # own, so this is safe even before the hardware/Janus stack exists.
+        mode       = vc.get("mode", "h264"),
     ))
     if ok:
         log.info("Stream started: %s", video.status())
@@ -1551,6 +2176,7 @@ async def main():
     finally:
         log.info("Shutting down…")
         jiggler.stop()
+        hid_autodc.stop()
         keyboard.release_all()
         mouse.release_all()
         video.stop()

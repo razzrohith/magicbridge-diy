@@ -1,4 +1,5 @@
 [Unit]
+RequiresMountsFor=/etc/magicbridge
 Description=MagicBridge KVM Server
 After=network.target mb-gadget.service
 Wants=mb-gadget.service

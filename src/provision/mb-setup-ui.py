@@ -3,7 +3,7 @@
 Usage: mb-setup-ui.py <bind_ip> <port> <wifi_file> <ts_key_file>
 Blocks until user submits WiFi credentials, then exits.
 """
-import sys, os, json, threading, time
+import sys, os, json, threading, time, html
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlparse
 
@@ -155,8 +155,15 @@ class Handler(BaseHTTPRequestHandler):
         length  = int(self.headers.get("Content-Length", 0))
         raw     = self.rfile.read(length).decode()
         params  = parse_qs(raw)
-        ssid    = params.get("ssid", [""])[0].strip()
-        pw      = params.get("pass", [""])[0]
+        # .strip() only trims the ends; an SSID/password containing an
+        # embedded newline (WiFi SSIDs allow almost any byte) would still
+        # corrupt WIFI_FILE's line-based format, which mb-provision.sh reads
+        # back with `sed -n '1p'`/`'2p'` - an embedded \n in the SSID would
+        # push everything after it onto what mb-provision.sh treats as the
+        # password line. Stripped here since a real SSID/password legitimately
+        # containing a newline isn't a case worth supporting.
+        ssid    = params.get("ssid", [""])[0].strip().replace("\n", "").replace("\r", "")
+        pw      = params.get("pass", [""])[0].replace("\n", "").replace("\r", "")
         tskey   = params.get("tskey", [""])[0].strip()
         if not ssid:
             page = HTML.replace("MSGBLOCK",
@@ -169,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(pw + "\n")
         except Exception as e:
             page = HTML.replace("MSGBLOCK",
-                f'<div class="msg er">Error: {e}</div>')
+                f'<div class="msg er">Error: {html.escape(str(e))}</div>')
             self._send(500, page); return
         # Write TS key if given
         if tskey:
@@ -178,7 +185,12 @@ class Handler(BaseHTTPRequestHandler):
                     f.write(tskey)
             except Exception:
                 pass
-        page = SUCCESS_HTML.replace("SSID_PLACEHOLDER", ssid)
+        # html.escape: ssid is attacker-controllable (it's a WiFi network
+        # name, chosen by whoever set up that network, not necessarily the
+        # person using this portal) and was previously substituted into the
+        # response page raw - a network named e.g. "<script>...</script>"
+        # would have executed in the setup browser. Real, if narrow, XSS.
+        page = SUCCESS_HTML.replace("SSID_PLACEHOLDER", html.escape(ssid))
         self._send(200, page)
         # Signal main thread to stop
         threading.Timer(1.5, _done.set).start()

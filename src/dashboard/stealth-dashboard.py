@@ -27,8 +27,9 @@ app.config.update(
 CONFIG_PATH     = "/etc/magicbridge/config.json"
 USB_DIR         = "/sys/kernel/config/usb_gadget/g1"
 GADGET_SH       = "/usr/local/bin/mb-gadget.sh"
-AUTH_LOG        = "/var/log/magicbridge-auth.log"
-SESS_LOG        = "/var/log/magicbridge-sessions.log"
+RAM_LOG_DIR     = "/var/log/magicbridge-ram"   # tmpfs mount, wiped on reboot/power-loss
+AUTH_LOG        = f"{RAM_LOG_DIR}/magicbridge-auth.log"
+SESS_LOG        = f"{RAM_LOG_DIR}/magicbridge-sessions.log"
 SESSION_TIMEOUT = 1800   # 30 min idle
 
 # NOTE: the stealth panel and the main KVM page used to share one session
@@ -72,6 +73,30 @@ def _gen_default_serial() -> str:
     yr = rng.randint(19, 23); mo = rng.randint(1, 12)
     return "%02d%02dLK%05d" % (yr, mo, rng.randint(10000, 99999))
 
+
+def _gen_profile_serial(idx: int, pfx: str) -> str:
+    """Deterministic per-Pi, per-profile serial. Same reasoning as
+    _gen_default_serial() above, generalized to any USB_PROFILES entry:
+    a fixed placeholder serial baked into every MagicBridge unit would link
+    them to each other, but regenerating a fresh random serial on every
+    single 'Apply preset' click is its own tell (a real device's serial
+    doesn't change every time you plug it in). Seeding from this Pi's own
+    MAC plus the profile index gives a value that's stable across repeated
+    applies of the same profile, differs between profiles, and differs
+    between physical Pis. _rand_serial()/api_randomize stay available as an
+    explicit opt-in for someone who actually wants to force a new one."""
+    import random as _rr, hashlib as _hh
+    try:
+        mac = Path("/sys/class/net/wlan0/address").read_text().strip().replace(":", "")
+    except Exception:
+        try:
+            mac = Path("/sys/class/net/eth0/address").read_text().strip().replace(":", "")
+        except Exception:
+            mac = "dca632c49b00"
+    seed = int(_hh.md5((mac + str(idx)).encode()).hexdigest()[:8], 16)
+    rng = _rr.Random(seed)
+    return pfx + "".join(rng.choice("0123456789ABCDEF") for _ in range(8))
+
 # Real wireless keyboard+mouse combo receiver dongles, chosen deliberately
 # over single-purpose keyboard models (see the ORIG comment above for why).
 # has_serial/extra_iface: only the Logitech entry is verified against a real
@@ -84,6 +109,27 @@ USB_PROFILES = [
     {"name":"Dell Wireless Combo",        "mfr":"Dell",      "prod":"Dell Wireless Keyboard and Mouse Combo", "vid":"0x413c","pid":"0x2513","pfx":"DEL","has_serial":True, "extra_iface":False},
 ]
 
+# EDID / display-identity presets. Identity-only (mfr PNP id / product name /
+# product id) - deliberately NOT paired with real donor timings, per
+# EDID_CLONING_WORKFLOW.md section 1: the Pi 4's 2-CSI-lane TC358743 path
+# tops out at 1080p50, so these presets always apply on top of the
+# Pi-4-safe base blob (edid_base_file below), never a wholesale monitor
+# EDID clone. "serial_prefix" mirrors USB_PROFILES' pfx pattern - the
+# actual serial is randomized per-apply from this prefix.
+EDID_PROFILES = [
+    {"name": "Generic Dell 24\"",   "mfr": "DEL", "product_name": "DELL P2419H", "product_id": 0xA06B, "serial_prefix": "DL"},
+    {"name": "Generic LG 27\"",     "mfr": "GSM", "product_name": "LG ULTRAWIDE", "product_id": 0x5A20, "serial_prefix": "LG"},
+    {"name": "Generic Samsung 24\"", "mfr": "SAM", "product_name": "SAMSUNG",     "product_id": 0x412D, "serial_prefix": "SM"},
+]
+
+EDID_DEFAULTS = {
+    "enabled": False,
+    "profile_idx": None,
+    "mfr": "", "product_name": "", "product_id": 0, "serial": "",
+    "base_file": "/etc/magicbridge/tc358743-edid.hex",
+    "applied_file": "/etc/magicbridge/tc358743-edid-identity.hex",
+}
+
 LOG_SOURCES = {
     "auth":      AUTH_LOG,
     "sessions":  SESS_LOG,
@@ -94,6 +140,14 @@ LOG_SOURCES = {
 }
 
 # Auth logging
+# Defensive mkdir: normally RAM_LOG_DIR is a tmpfs mount created at boot via
+# fstab, but if the service starts before the mount (or on a fresh deploy
+# before reboot), fall back to a plain directory on disk rather than
+# silently losing the FileHandler below.
+try:
+    Path(RAM_LOG_DIR).mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 _al = logging.getLogger("magicbridge.stealth")
 _al.setLevel(logging.INFO)
 try:
@@ -233,6 +287,87 @@ def _apply_usb(mfr: str, prod: str, ser: str, vid: str = None, pid: str = None,
 def _rand_serial(pfx: str = "MB") -> str:
     return pfx + secrets.token_hex(4).upper()
 
+# EDID / display identity helpers
+def _edid_video_device() -> str:
+    """Return the tc358743/C790 video device node if one is enumerated,
+    else ''. Never raises - the whole EDID feature must stay a graceful
+    no-op on the current MS2109-only setup (which has no such device, and
+    wouldn't support EDID writes even if it did - see workflow doc §0)."""
+    try:
+        out = subprocess.run(["v4l2-ctl", "--list-devices"], capture_output=True,
+                              text=True, timeout=5).stdout
+    except Exception:
+        return ""
+    m = re.search(r"tc358743[^\n]*\n\s*(/dev/video\d+)", out, re.IGNORECASE)
+    return m.group(1) if m else ""
+
+
+def _edid_hw_ready(cfg: dict) -> tuple[bool, str]:
+    """(ready, reason). ready=True only if BOTH a tc358743 device node is
+    present AND a base EDID blob exists on disk. Either missing is a normal,
+    expected state right now (C790 hasn't arrived) - not an error."""
+    dev = _edid_video_device()
+    if not dev:
+        return False, "No TC358743/C790 capture device detected (MS2109 doesn't support EDID writes)."
+    edid_cfg = dict(EDID_DEFAULTS)
+    edid_cfg.update(cfg.get("edid", {}))
+    base_file = edid_cfg.get("base_file", EDID_DEFAULTS["base_file"])
+    if not Path(base_file).exists():
+        return False, f"No base EDID installed at {base_file} yet (see EDID_CLONING_WORKFLOW.md §3)."
+    return True, dev
+
+
+def _edid_numeric_serial(serial_str: str) -> int:
+    """EDID's base-block serial (bytes 12-15) is a 32-bit int, but we want a
+    human-readable serial string like the USB profiles use (e.g. 'DL3F9A2B').
+    Derive a stable 32-bit value from the string via crc32 - NOT Python's
+    hash(), which is per-process randomized (PYTHONHASHSEED) and would give
+    a different EDID serial every service restart."""
+    import zlib
+    return zlib.crc32(serial_str.encode()) & 0xFFFFFFFF
+
+
+def _apply_edid(mfr: str, product_name: str, product_id: int, serial: str,
+                 profile_idx=None) -> dict:
+    """Persist the identity to config.json always; only touch real hardware
+    (write the overlaid EDID + reload via v4l2-ctl) when both the C790 and
+    a base blob are present. Never raises - callers get back a dict with
+    ok/applied_live/reason rather than a 500."""
+    cfg = _load()
+    edid_cfg = dict(EDID_DEFAULTS)
+    edid_cfg.update(cfg.get("edid", {}))
+    edid_cfg.update({
+        "enabled": True, "mfr": mfr, "product_name": product_name,
+        "product_id": product_id, "serial": serial,
+    })
+    if profile_idx is not None:
+        edid_cfg["profile_idx"] = profile_idx
+    cfg["edid"] = edid_cfg
+    _save(cfg)
+
+    ready, reason = _edid_hw_ready(cfg)
+    if not ready:
+        return {"ok": True, "applied_live": False, "reason": reason}
+
+    dev = reason  # _edid_hw_ready returns the device node as `reason` when ready
+    try:
+        import mb_edidconf
+    except ImportError as ex:
+        return {"ok": True, "applied_live": False, "reason": f"mb_edidconf module not installed: {ex}"}
+    try:
+        result = mb_edidconf.apply_identity_to_file(
+            edid_cfg["base_file"], edid_cfg["applied_file"],
+            mfr_pnp=mfr, product_id=product_id, serial=_edid_numeric_serial(serial),
+            product_name=product_name, ensure_basic_audio=True,
+        )
+        subprocess.run(["v4l2-ctl", "-d", dev, f"--set-edid=file={edid_cfg['applied_file']}",
+                        "--fix-edid-checksums"], capture_output=True, text=True, timeout=10, check=True)
+        return {"ok": True, "applied_live": True, "device": dev, "detail": result}
+    except mb_edidconf.EdidError as ex:
+        return {"ok": True, "applied_live": False, "reason": f"EDID build error: {ex}"}
+    except Exception as ex:
+        return {"ok": True, "applied_live": False, "reason": f"v4l2-ctl load failed: {ex}"}
+
 # Network helpers
 def _cur_mac(iface: str = "eth0") -> str:
     try:
@@ -281,8 +416,22 @@ def _write_mac_svc(cfg: dict):
     except Exception:
         pass
 
-def _rand_mac() -> str:
-    b = [0x00, 0x1a, 0x2b] + [secrets.randbits(8) for _ in range(3)]
+# Common-vendor OUI prefixes for MAC spoofing, so the device reads as a
+# real laptop/TV vendor on a router's client list or a network scan instead
+# of the same fixed 00:1a:2b prefix every time. Verified against the IEEE
+# OUI registry (each is a real MA-L allocation for that company) rather
+# than guessed - a made-up prefix that doesn't resolve to the claimed
+# vendor would look worse than no spoofing at all.
+MAC_PROFILES = [
+    {"name": "Dell",    "oui": [0x00, 0x14, 0x22]},
+    {"name": "HP",      "oui": [0x9C, 0x7B, 0xEF]},
+    {"name": "Samsung", "oui": [0x64, 0x1B, 0x2F]},
+]
+
+
+def _rand_mac(oui=None) -> str:
+    b = list(oui) if oui else [0x00, 0x1a, 0x2b]
+    b += [secrets.randbits(8) for _ in range(3)]
     return ":".join(f"{x:02x}" for x in b)
 
 def _tailscale_status() -> dict:
@@ -338,6 +487,63 @@ def _uptime() -> str:
         return "".join([f"{d}d " if d else "", f"{h}h " if h else "", f"{m}m"])
     except Exception:
         return ""
+
+# Onboard LEDs. ACT (green, SD-card activity) and PWR (red, always-on) are
+# the two physical LEDs on a Pi 4. Toggling is done two ways: live via sysfs
+# (immediate, no reboot) AND via a small systemd oneshot unit that re-applies
+# the saved state at boot (LED sysfs nodes reset to their default trigger on
+# every boot, so the live-only write wouldn't survive a power cycle). This
+# avoids touching /boot/firmware/config.txt dtparam overlays entirely - those
+# also work but their active-low polarity varies by board revision, and
+# getting it backwards would leave an LED stuck on instead of off. Writing
+# trigger=none + brightness=0 directly is unambiguous on any revision.
+LED_PATHS = ["/sys/class/leds/ACT", "/sys/class/leds/PWR"]
+LED_SERVICE_PATH = "/etc/systemd/system/mb-led.service"
+
+
+def _apply_leds(enabled: bool) -> dict:
+    """Best-effort live toggle (never raises - a missing/renamed LED sysfs
+    path on some board revision shouldn't break the rest of the apply call),
+    plus persistence: config.json + a systemd unit that re-applies at boot."""
+    results = {}
+    for path in LED_PATHS:
+        p = Path(path)
+        try:
+            if enabled:
+                (p / "trigger").write_text("mmc0" if "ACT" in path else "default-on")
+            else:
+                (p / "trigger").write_text("none")
+                (p / "brightness").write_text("0")
+            results[path] = "ok"
+        except Exception as e:
+            results[path] = f"skipped: {e}"
+
+    cfg = _load()
+    cfg["leds_enabled"] = enabled
+    _save(cfg)
+
+    try:
+        exec_lines = "\n".join(
+            f'ExecStart=/bin/bash -c "echo none > {path}/trigger 2>/dev/null || true; '
+            f'echo 0 > {path}/brightness 2>/dev/null || true"'
+            for path in LED_PATHS
+        ) if not enabled else "ExecStart=/bin/true"
+        svc = (
+            "[Unit]\nDescription=MagicBridge onboard LED state (persists across reboot)\n"
+            "After=sysinit.target\n\n"
+            "[Service]\nType=oneshot\n"
+            f"{exec_lines}\n"
+            "RemainAfterExit=yes\n\n"
+            "[Install]\nWantedBy=multi-user.target\n"
+        )
+        Path(LED_SERVICE_PATH).write_text(svc)
+        subprocess.run(["systemctl", "daemon-reload"], capture_output=True)
+        subprocess.run(["systemctl", "enable", "mb-led"], capture_output=True)
+    except Exception as e:
+        results["_service"] = f"failed: {e}"
+
+    return {"ok": True, "enabled": enabled, "detail": results}
+
 
 def _kvm_last() -> dict:
     try:
@@ -696,6 +902,52 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
   </div>
 </section>
 
+<!-- Display Identity (EDID) -->
+<section class="card" aria-labelledby="h-edid">
+  <div class="ch">
+    <h2 id="h-edid">Display identity (EDID)</h2>
+    <span class="cd">How this device's HDMI capture identifies itself as a monitor</span>
+  </div>
+  <div class="cb">
+    <div id="edid-hw-st" style="font-size:12px;color:var(--t3);margin:0 0 8px" role="status" aria-live="polite">Checking hardware…</div>
+    <div class="field">
+      <span class="fl" id="h-edid-preset">Quick preset</span>
+      <span class="fd">Pick a generic monitor identity (updates fields below). Click Apply to send.</span>
+      <div class="pills" role="group" aria-labelledby="h-edid-preset" id="edid-pills"></div>
+      <button class="btn btn-p" onclick="applyEdidPreset()" aria-label="Apply selected display preset">Apply preset</button>
+    </div>
+    <hr>
+    <div class="frow" style="margin-bottom:7px">
+      <div class="field" style="flex:1;min-width:80px">
+        <label class="fl" for="e-mfr">Manufacturer ID</label>
+        <input type="text" id="e-mfr" placeholder="DEL" maxlength="3" style="width:100%">
+      </div>
+      <div class="field" style="flex:2;min-width:140px">
+        <label class="fl" for="e-name">Monitor name</label>
+        <input type="text" id="e-name" placeholder="DELL P2419H" maxlength="12" style="width:100%">
+      </div>
+      <div class="field" style="flex:1;min-width:90px">
+        <label class="fl" for="e-pid">Product ID</label>
+        <input type="text" id="e-pid" placeholder="0xA06B" style="width:100%">
+      </div>
+      <div class="field" style="flex:1;min-width:90px">
+        <label class="fl" for="e-ser">Serial</label>
+        <input type="text" id="e-ser" style="width:100%">
+      </div>
+    </div>
+    <span class="fd" style="display:block;margin-bottom:8px">
+      Clones only the monitor's identity (name/manufacturer/serial) onto a base EDID capped at
+      1080p50 - the Pi 4's TC358743 capture ceiling. Never clones a donor's raw timings, so the
+      target can't be pushed into a resolution this Pi can't capture.
+    </span>
+    <div class="frow" style="flex-wrap:wrap;gap:6px">
+      <button class="btn btn-p" onclick="applyEdidCustom()" aria-label="Apply custom display identity">Apply identity</button>
+      <button class="btn" onclick="randEdidSerial()" aria-label="Generate random serial">Random serial</button>
+      <button class="btn btn-d" onclick="resetEdid()" aria-label="Reset display identity">Reset</button>
+    </div>
+  </div>
+</section>
+
 <!-- Network -->
 <section class="card" aria-labelledby="h-net">
   <div class="ch">
@@ -712,8 +964,10 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
         </select>
         <input type="text" id="net-mac" aria-label="MAC address" placeholder="00:1a:2b:xx:xx:xx" style="flex:1">
         <button class="btn" onclick="applyMac()" aria-label="Apply MAC">Apply</button>
-        <button class="btn" onclick="randMac()" aria-label="Random MAC">Random</button>
       </div>
+      <span class="fl" style="margin-top:8px;display:block" id="h-mac-vendor">Vendor (random suffix, real OUI)</span>
+      <div class="pills" role="group" aria-labelledby="h-mac-vendor" id="mac-pills"></div>
+      <button class="btn" onclick="randMac()" aria-label="Randomize MAC with selected vendor">Randomize</button>
       <span class="fd">Applied immediately and persists across reboots via systemd.</span>
       <div id="mac-persist-st" style="font-size:11px;color:var(--t3);margin-top:4px" role="status" aria-live="polite"></div>
     </div>
@@ -795,6 +1049,10 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
   </div>
   <div class="cb">
     <div id="sys-inf" style="font-size:12px;color:var(--t3);margin-bottom:10px" role="status" aria-live="polite">Loading…</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--t2);cursor:pointer;margin-bottom:10px">
+      <input type="checkbox" id="led-enabled" checked onchange="toggleLeds()">
+      Onboard LEDs (activity/power lights) on
+    </label>
     <div class="frow" style="gap:7px;flex-wrap:wrap">
       <button class="btn btn-d" onclick="doReboot()" aria-label="Reboot the Pi">Reboot device</button>
       <button class="btn" onclick="chPw()" aria-label="Change panel password">Change password</button>
@@ -865,7 +1123,11 @@ hr{border:none;border-top:0.5px solid var(--br);margin:10px 0}
 <script>
 const CSRF  = document.querySelector('meta[name="csrf-token"]').content;
 const PROFS = {{ profiles|tojson }};
+const EDID_PROFS = {{ edid_profiles|tojson }};
+const MAC_PROFS = {{ mac_profiles|tojson }};
 let selP = 0;
+let selE = 0;
+let selM = -1;  // -1 = plain random, no vendor OUI
 
 async function api(url, body) {
   const o = {headers: {'X-CSRF-Token': CSRF}};
@@ -948,6 +1210,60 @@ async function randSerial() {
   if (r.serial) { document.getElementById('u-ser').value = r.serial; toast('Serial: '+r.serial); }
 }
 
+/* Display identity (EDID) */
+function buildEdidPills() {
+  const c = document.getElementById('edid-pills');
+  if (!c) return;
+  c.innerHTML = '';
+  EDID_PROFS.forEach((p, i) => {
+    const b = document.createElement('button');
+    b.className = 'pill' + (i === selE ? ' on' : '');
+    b.setAttribute('aria-pressed', i === selE ? 'true' : 'false');
+    b.textContent = p.name;
+    b.onclick = () => {
+      selE = i; buildEdidPills();
+      document.getElementById('e-mfr').value  = p.mfr;
+      document.getElementById('e-name').value = p.product_name;
+      document.getElementById('e-pid').value  = '0x' + p.product_id.toString(16).toUpperCase();
+    };
+    c.appendChild(b);
+  });
+}
+
+function _edidNote(r) {
+  if (r.applied_live) return 'Applied to capture device ('+r.device+')';
+  return r.reason || 'Saved (hardware pending)';
+}
+
+async function applyEdidPreset() {
+  const r = await api('/stealth/api/apply', {action:'edid_profile', idx:selE});
+  toast(r.ok ? _edidNote(r) : (r.error||'Error'), r.ok?'ok':'er');
+  if (r.ok) loadStatus();
+}
+
+async function applyEdidCustom() {
+  const r = await api('/stealth/api/apply', {
+    action:'edid_identity',
+    mfr: document.getElementById('e-mfr').value,
+    product_name: document.getElementById('e-name').value,
+    product_id: document.getElementById('e-pid').value,
+    serial: document.getElementById('e-ser').value,
+  });
+  toast(r.ok ? _edidNote(r) : (r.error||'Error'), r.ok?'ok':'er');
+  if (r.ok) loadStatus();
+}
+
+async function randEdidSerial() {
+  const s = 'MB' + Math.random().toString(16).slice(2, 10).toUpperCase();
+  document.getElementById('e-ser').value = s;
+}
+
+async function resetEdid() {
+  const r = await api('/stealth/api/apply', {action:'edid_reset'});
+  toast(r.ok ? 'Display identity reset' : (r.error||'Error'), r.ok?'ok':'er');
+  if (r.ok) loadStatus();
+}
+
 async function safeMode() {
   const r = await api('/stealth/api/apply', {action:'safe_mode'});
   toast(r.ok ? (r.safe ? 'Safe mode ON' : 'Safe mode OFF') : 'Error', r.ok?'ok':'er');
@@ -965,9 +1281,27 @@ async function applyMac() {
   toast(r.ok ? 'MAC applied' : (r.error||'Error'), r.ok?'ok':'er');
 }
 
+function buildMacPills() {
+  const c = document.getElementById('mac-pills');
+  if (!c) return;
+  c.innerHTML = '';
+  const opts = [{name:'Random (no vendor)'}].concat(MAC_PROFS);
+  opts.forEach((p, i) => {
+    const idx = i - 1;  // -1 for the leading "Random" option
+    const b = document.createElement('button');
+    b.className = 'pill' + (idx === selM ? ' on' : '');
+    b.setAttribute('aria-pressed', idx === selM ? 'true' : 'false');
+    b.textContent = p.name;
+    b.onclick = () => { selM = idx; buildMacPills(); };
+    c.appendChild(b);
+  });
+}
+
 async function randMac() {
   const iface = document.getElementById('net-if').value;
-  const r = await api('/stealth/api/apply', {action:'rand_mac', iface});
+  const body = {action:'rand_mac', iface};
+  if (selM >= 0) body.vendor_idx = selM;
+  const r = await api('/stealth/api/apply', body);
   if (r.mac) { document.getElementById('net-mac').value = r.mac; toast('MAC: '+r.mac); }
 }
 
@@ -1047,6 +1381,27 @@ async function loadStatus() {
       ? '<span class="dot d-ok"></span>Boot persist: '+entries.map(([i,m])=>i+'→'+m).join(', ')
       : '';
   }
+  const ed = r.edid || {};
+  document.getElementById('e-mfr').value  = ed.mfr || '';
+  document.getElementById('e-name').value = ed.product_name || '';
+  document.getElementById('e-pid').value  = ed.product_id ? ('0x'+Number(ed.product_id).toString(16).toUpperCase()) : '';
+  document.getElementById('e-ser').value  = ed.serial || '';
+  const hw = r.edid_hw || {};
+  const hwEl = document.getElementById('edid-hw-st');
+  if (hwEl) {
+    hwEl.innerHTML = hw.ready
+      ? '<span class="dot d-ok"></span>C790/TC358743 detected - identity applies live.'
+      : '<span class="dot d-er"></span>'+(hw.reason || 'Hardware pending')+' Settings save now and apply automatically once ready.';
+  }
+  const ledChk = document.getElementById('led-enabled');
+  if (ledChk) ledChk.checked = r.leds_enabled !== false;
+}
+
+async function toggleLeds() {
+  const enabled = document.getElementById('led-enabled').checked;
+  const r = await api('/stealth/api/apply', {action:'leds', enabled});
+  toast(r.ok ? ('LEDs ' + (enabled ? 'on' : 'off')) : (r.error||'Error'), r.ok?'ok':'er');
+  if (!r.ok) document.getElementById('led-enabled').checked = !enabled;  // revert on failure
 }
 
 async function loadStats() {
@@ -1172,6 +1527,8 @@ async function savePw() {
 
 /* Init */
 buildPills();
+buildEdidPills();
+buildMacPills();
 loadStatus();
 loadStats();
 loadTs();
@@ -1222,7 +1579,12 @@ def index():
     if not _authed(): return redirect(_stealth("login"))
     profiles = [{"name":p["name"],"mfr":p["mfr"],"prod":p["prod"],
                  "vid":p["vid"],"pid":p["pid"]} for p in USB_PROFILES]
-    return render_template_string(MAIN_HTML, csrf=session.get("csrf",""), profiles=profiles)
+    edid_profiles = [{"name":p["name"],"mfr":p["mfr"],"product_name":p["product_name"],
+                       "product_id":p["product_id"]} for p in EDID_PROFILES]
+    mac_profiles = [{"name": p["name"]} for p in MAC_PROFILES]
+    return render_template_string(MAIN_HTML, csrf=session.get("csrf",""),
+                                   profiles=profiles, edid_profiles=edid_profiles,
+                                   mac_profiles=mac_profiles)
 
 
 @app.route("/api/status")
@@ -1239,6 +1601,9 @@ def api_status():
         "mac":         _cur_mac("eth0"),
         "ddns_host":   cfg.get("duckdns", {}).get("host", ""),
         "mac_persist": cfg.get("mac_persist", {}),
+        "edid":        {**dict(EDID_DEFAULTS), **cfg.get("edid", {})},
+        "edid_hw":     (lambda r: {"ready": r[0], "reason": r[1]})(_edid_hw_ready(cfg)),
+        "leds_enabled": cfg.get("leds_enabled", True),
     })
 
 
@@ -1378,7 +1743,9 @@ def api_apply():
                 return jsonify({"error": "Bad index"}), 400
             p   = USB_PROFILES[idx]
             has_ser = p.get("has_serial", True)
-            ser = _rand_serial(p["pfx"]) if has_ser else ""
+            # Stable per-Pi/per-profile, not freshly randomized on every
+            # click - see _gen_profile_serial() docstring.
+            ser = _gen_profile_serial(idx, p["pfx"]) if has_ser else ""
             _apply_usb(p["mfr"], p["prod"], ser, p["vid"], p["pid"],
                        has_serial=has_ser, extra_iface=p.get("extra_iface", False))
             # Reload fresh (don't reuse the cfg loaded at the top of this
@@ -1388,6 +1755,48 @@ def api_apply():
             cfg.setdefault("usb", {})["profile_idx"] = idx
             _save(cfg)
             _log_sess(f"USB profile: {p['name']}")
+            return jsonify({"ok": True})
+
+        elif act == "edid_profile":
+            idx = int(d.get("idx", 0))
+            if not 0 <= idx < len(EDID_PROFILES):
+                return jsonify({"error": "Bad index"}), 400
+            p = EDID_PROFILES[idx]
+            ser = _rand_serial(p["serial_prefix"])
+            result = _apply_edid(p["mfr"], p["product_name"], p["product_id"], ser, profile_idx=idx)
+            _log_sess(f"Display identity: {p['name']}"
+                      + ("" if result.get("applied_live") else " (saved, hardware pending)"))
+            return jsonify(result)
+
+        elif act == "edid_identity":
+            mfr = str(d.get("mfr", "")).strip()
+            product_name = str(d.get("product_name", "")).strip()[:12]
+            try:
+                product_id = int(str(d.get("product_id", 0)).strip() or "0", 0) & 0xFFFF
+            except (TypeError, ValueError):
+                return jsonify({"error": "Product ID must be a number (e.g. 0xA06B)"}), 400
+            ser = str(d.get("serial", "")).strip() or _rand_serial("MB")
+            try:
+                import mb_edidconf as _mec
+                _mec.encode_pnp_id(mfr)  # validate 3-letter PNP id before saving
+            except Exception as ex:
+                return jsonify({"error": f"Invalid manufacturer ID: {ex}"}), 400
+            result = _apply_edid(mfr, product_name, product_id, ser, profile_idx=None)
+            _log_sess(f"Display identity (custom): {mfr}/{product_name}"
+                      + ("" if result.get("applied_live") else " (saved, hardware pending)"))
+            return jsonify(result)
+
+        elif act == "leds":
+            enabled = bool(d.get("enabled", True))
+            result = _apply_leds(enabled)
+            _log_sess(f"Onboard LEDs: {'on' if enabled else 'off'}")
+            return jsonify(result)
+
+        elif act == "edid_reset":
+            cfg2 = _load()
+            cfg2["edid"] = dict(EDID_DEFAULTS)
+            _save(cfg2)
+            _log_sess("Display identity reset to default")
             return jsonify({"ok": True})
 
         elif act == "mac":
@@ -1401,9 +1810,18 @@ def api_apply():
 
         elif act == "rand_mac":
             iface = d.get("iface", "eth0")
-            mac   = _rand_mac()
+            idx = d.get("vendor_idx")
+            oui = None
+            vendor_name = "random"
+            if idx is not None:
+                idx = int(idx)
+                if not 0 <= idx < len(MAC_PROFILES):
+                    return jsonify({"error": "Bad vendor index"}), 400
+                oui = MAC_PROFILES[idx]["oui"]
+                vendor_name = MAC_PROFILES[idx]["name"]
+            mac = _rand_mac(oui)
             _set_mac(iface, mac)
-            _log_sess(f"MAC randomized {iface}: {mac}")
+            _log_sess(f"MAC randomized {iface}: {mac} ({vendor_name})")
             return jsonify({"ok": True, "mac": mac})
 
         elif act == "safe_mode":
@@ -1420,7 +1838,11 @@ def api_apply():
                 if 0 <= idx < len(USB_PROFILES):
                     p = USB_PROFILES[idx]
                     has_ser = p.get("has_serial", True)
-                    _apply_usb(p["mfr"], p["prod"], _rand_serial(p["pfx"]) if has_ser else "",
+                    # Restore the SAME stable serial this profile always
+                    # gets, not a freshly randomized one - exiting safe mode
+                    # should look like "the same device reconnected", not
+                    # "a different device with the same name showed up".
+                    _apply_usb(p["mfr"], p["prod"], _gen_profile_serial(idx, p["pfx"]) if has_ser else "",
                                p["vid"], p["pid"], has_serial=has_ser,
                                extra_iface=p.get("extra_iface", False))
                 new_safe = False
@@ -1480,7 +1902,18 @@ def api_reboot():
     return jsonify({"ok": True})
 
 
-# WiFi API (no auth, accessible from main KVM page via nginx /api/wifi/ proxy)
+# WiFi API. These used to be reachable unauthenticated via an nginx
+# /api/wifi/ passthrough intended for the main KVM page - that page has
+# since moved to its own authenticated /api/networks endpoint in
+# magicbridge.py, so the passthrough was pure dead weight left open to
+# anyone who could reach the Pi's HTTPS port with no login at all (add/
+# remove/force-connect WiFi networks, no credentials required). The nginx
+# location has been removed and every route below now requires an active
+# stealth-panel session, matching status-auth/psk-auth's existing pattern.
+# Kept at these same paths (not renamed) since the stealth panel's own JS
+# (loadWifiStatus/loadSavedWifi/addWifi/removeWifi/connectWifi) already
+# calls them through /stealth/api/wifi/... and already sends the CSRF
+# header on every request via the shared api() helper.
 
 def _nm(*args, timeout=15):
     return subprocess.run(["nmcli"] + list(args),
@@ -1489,6 +1922,7 @@ def _nm(*args, timeout=15):
 
 @app.route("/api/wifi/status")
 def api_wifi_status():
+    if not _authed(): return jsonify({"error":"auth"}), 401
     try:
         r = _nm("-t","-f","GENERAL.CONNECTION,GENERAL.STATE,IP4.ADDRESS",
                 "device","show","wlan0")
@@ -1517,6 +1951,7 @@ def api_wifi_status():
 
 @app.route("/api/wifi/saved")
 def api_wifi_saved():
+    if not _authed(): return jsonify({"error":"auth"}), 401
     try:
         r = _nm("-t","-f","NAME,TYPE,ACTIVE","connection","show")
         nets = []
@@ -1531,6 +1966,7 @@ def api_wifi_saved():
 
 @app.route("/api/wifi/scan")
 def api_wifi_scan():
+    if not _authed(): return jsonify({"error":"auth"}), 401
     try:
         r = _nm("-t","-f","SSID,SIGNAL,SECURITY","device","wifi","list","--rescan","yes",timeout=22)
         nets, seen = [], set()
@@ -1550,6 +1986,8 @@ def api_wifi_scan():
 
 @app.route("/api/wifi/add", methods=["POST"])
 def api_wifi_add():
+    if not _authed(): return jsonify({"error":"auth"}), 401
+    if not _csrf_ok(): return jsonify({"error":"csrf"}), 403
     d    = request.get_json(force=True, silent=True) or {}
     ssid = (d.get("ssid") or "").strip()
     pwd  = (d.get("password") or "").strip()
@@ -1570,6 +2008,8 @@ def api_wifi_add():
 
 @app.route("/api/wifi/remove", methods=["POST"])
 def api_wifi_remove():
+    if not _authed(): return jsonify({"error":"auth"}), 401
+    if not _csrf_ok(): return jsonify({"error":"csrf"}), 403
     d    = request.get_json(force=True, silent=True) or {}
     name = (d.get("name") or "").strip()
     if not name: return jsonify({"ok":False,"error":"name required"}), 400
@@ -1582,6 +2022,8 @@ def api_wifi_remove():
 
 @app.route("/api/wifi/connect", methods=["POST"])
 def api_wifi_connect():
+    if not _authed(): return jsonify({"error":"auth"}), 401
+    if not _csrf_ok(): return jsonify({"error":"csrf"}), 403
     d    = request.get_json(force=True, silent=True) or {}
     name = (d.get("name") or "").strip()
     if not name: return jsonify({"ok":False,"error":"name required"}), 400

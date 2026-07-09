@@ -6,12 +6,12 @@
 <title>MagicBridge</title>
 <style>
 :root{
-  --bg:#05070d;--surf:#0a0d16;--surf2:#0f1424;--card:#131a2c;--card2:#182036;
-  --border:rgba(240,214,152,.08);--border2:rgba(240,214,152,.18);
-  --accent:#e8c377;--accent2:#c9a15c;--accent-d:#a3792f;--accent-l:#f0d698;
-  --brand:linear-gradient(135deg,#f0d698 0%,#c9a15c 55%,#8a6a2f 100%);
+  --bg:#040911;--surf:#070d18;--surf2:#0a1220;--card:#0d1728;--card2:#111f34;
+  --border:rgba(110,210,255,.10);--border2:rgba(110,210,255,.24);
+  --accent:#22d3ee;--accent2:#0ea5c4;--accent-d:#0b7a94;--accent-l:#8beefc;
+  --brand:linear-gradient(135deg,#8beefc 0%,#22d3ee 55%,#0b7a94 100%);
   --green:#10b981;--red:#f43f5e;--yellow:#f59e0b;--purple:#a78bfa;--cyan:#22d3ee;
-  --text:#f3ecdd;--sub:#9a9280;--muted:#4d4a3f;
+  --text:#e9f7fb;--sub:#7fa0b5;--muted:#3d5568;
   --r:8px;--r2:13px;--sh:0 8px 32px rgba(0,0,0,.7);
   --topH:46px;--botH:50px;--sideW:310px;
 }
@@ -25,10 +25,20 @@ body{background:var(--bg);color:var(--text);
 body::before{
   content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
   background:
-    radial-gradient(ellipse 900px 620px at 12% -8%,  rgba(240,214,152,.10), transparent 60%),
-    radial-gradient(ellipse 760px 560px at 108% 18%, rgba(201,161,92,.12), transparent 60%),
-    radial-gradient(ellipse 820px 640px at 46% 118%, rgba(138,106,47,.10), transparent 62%),
-    linear-gradient(180deg,#05070d 0%,#080b16 55%,#05070d 100%);
+    radial-gradient(ellipse 900px 620px at 12% -8%,  rgba(34,211,238,.09), transparent 60%),
+    radial-gradient(ellipse 760px 560px at 108% 18%, rgba(14,165,196,.10), transparent 60%),
+    radial-gradient(ellipse 820px 640px at 46% 118%, rgba(11,122,148,.09), transparent 62%),
+    linear-gradient(180deg,#040911 0%,#060c17 55%,#040911 100%);
+}
+/* HUD instrument-panel texture: faint scanlines + grid, fixed, very low
+   opacity - reads as "precision instrument" without fighting content. */
+body::after{
+  content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.5;
+  background-image:
+    repeating-linear-gradient(180deg, rgba(120,220,255,.025) 0px, rgba(120,220,255,.025) 1px, transparent 1px, transparent 3px),
+    linear-gradient(rgba(120,220,255,.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120,220,255,.035) 1px, transparent 1px);
+  background-size:auto,42px 42px,42px 42px;
 }
 #topbar,#botbar,#sidebar,#main,#relbar,#recapture,#vkbd,#toast{position:relative;z-index:1}
 button,select,input,textarea{font-family:inherit;color:inherit}
@@ -90,7 +100,7 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar{display:none!important}
 .tbtn:hover{background:var(--card2);color:var(--text);border-color:var(--border2)}
 .tbtn:active{filter:brightness(.8)}
 .tbtn.icon{width:28px;padding:0;justify-content:center;font-size:15px}
-.tbtn.active{background:#2c2410;border-color:#c9a15c40;color:#f0d698}
+.tbtn.active{background:#0a2b33;border-color:#22d3ee40;color:#8beefc}
 #cwrap{position:relative}
 #cmenu{position:absolute;top:calc(100% + 5px);left:0;background:var(--surf2);
   border:1px solid var(--border2);border-radius:var(--r2);padding:4px;
@@ -159,6 +169,7 @@ body:not(.fs) .fs-hud{display:none!important}
   background:rgba(11,14,23,.78);backdrop-filter:blur(20px) saturate(140%);-webkit-backdrop-filter:blur(20px) saturate(140%);
   border-left:1px solid var(--border);display:flex;flex-direction:column}
 #sidebar.open{width:var(--sideW)}
+#sbdrop{display:none}
 #sidenav{flex-shrink:0;display:flex;border-bottom:1px solid var(--border);padding:0 8px;gap:2px}
 .snav-btn{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
   padding:8px 2px;cursor:pointer;border:none;background:none;color:var(--muted);
@@ -192,8 +203,8 @@ body:not(.fs) .fs-hud{display:none!important}
 .sbtn:last-child{margin-bottom:0}
 .sbtn:hover{background:var(--card);color:var(--text);border-color:var(--border2)}
 .sbtn:active{filter:brightness(.8)}
-.sbtn.pri{background:#2c2410;border-color:#c9a15c40;color:#f0d698}
-.sbtn.pri:hover{background:#3a2f16}
+.sbtn.pri{background:#0a2b33;border-color:#22d3ee40;color:#8beefc}
+.sbtn.pri:hover{background:#0d3843}
 .sbtn.suc{background:#0c2e20;border-color:#10b98133;color:#6ee7b7}
 .sbtn.dan{background:#2a0f0f;border-color:#ef444433;color:#fca5a5}
 .sbtn.warn{background:#2a1a07;border-color:#eab30833;color:#fcd34d}
@@ -226,6 +237,47 @@ body:not(.fs) .fs-hud{display:none!important}
   display:flex;align-items:center;justify-content:center;transition:background .12s,border-color .12s,color .12s}
 .wifi-eye:hover{background:var(--card);color:var(--text);border-color:var(--border2)}
 .wifi-eye:active{filter:brightness(.85)}
+
+/* System tab: category sub-nav uses the SAME visual language as the main
+   sidebar nav (.snav-btn) - flat, no background box, no decorative
+   backdrop - so Settings doesn't look like a different app glued onto
+   the sidebar. Cards below it are plain .scard, identical to every
+   other tab. */
+.sys-nav{display:flex;justify-content:space-between;gap:2px;
+  border-bottom:1px solid var(--border);padding:0 0 8px;margin-bottom:10px}
+.sys-nav-item{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;
+  background:none;border:none;cursor:pointer;padding:6px 1px 8px;max-width:64px;
+  color:var(--muted);font-size:8.5px;font-weight:600;letter-spacing:.3px;
+  text-transform:uppercase;border-bottom:2px solid transparent;
+  transition:color .15s,border-color .15s;margin-bottom:-9px}
+.sys-nav-item .ico{font-size:15px;line-height:1}
+.sys-nav-item:hover{color:var(--sub)}
+.sys-nav-item.active{color:var(--accent-l);border-bottom-color:var(--accent)}
+.sys-dot{display:inline-block;width:5px;height:5px;border-radius:50%;margin-left:3px;vertical-align:middle}
+.sys-dot.ok{background:var(--green)}.sys-dot.warn{background:var(--yellow)}.sys-dot.err{background:var(--red)}
+.sys-cat{display:none}
+.sys-cat.active{display:block}
+
+/* Hero gauge: circular CPU-temp dial, HUD signature element */
+.gauge-wrap{display:flex;align-items:center;gap:16px;padding:6px 4px 14px;flex-wrap:wrap}
+.gauge-ring-box{position:relative;width:104px;height:104px;flex-shrink:0}
+.gauge-ring-box svg{width:100%;height:100%;transform:rotate(-90deg)}
+.gauge-track{fill:none;stroke:var(--card2);stroke-width:8}
+.gauge-val{fill:none;stroke:var(--cyan);stroke-width:8;stroke-linecap:round;
+  transition:stroke-dashoffset .5s ease,stroke .3s ease}
+.gauge-center{position:absolute;inset:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center}
+.gauge-num{font-size:19px;font-weight:700;color:var(--text);line-height:1;font-variant-numeric:tabular-nums}
+.gauge-unit{font-size:9px;color:var(--muted);margin-top:2px;letter-spacing:.05em}
+.gauge-info{flex:1;min-width:0}
+.gauge-label{font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--sub);text-transform:uppercase}
+.gauge-status{font-size:11px;color:var(--green);margin-top:4px;display:flex;align-items:center;gap:5px}
+.gauge-status .gsd{width:6px;height:6px;border-radius:50%;background:var(--green);flex-shrink:0}
+.stat-tiles{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:4px}
+.stat-tile{border:1px solid var(--border);border-radius:var(--r);padding:8px 9px;background:var(--card2)}
+.stat-tile-k{font-size:8.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;font-weight:700}
+.stat-tile-v{font-size:12px;color:var(--text);font-weight:600;margin-top:3px}
+.stat-tile-v.warn{color:var(--yellow)}.stat-tile-v.ok{color:var(--green)}.stat-tile-v.err{color:var(--red)}
 .wifi-save-btn{height:38px;font-size:12.5px;font-weight:700;border-radius:10px;
   background:var(--brand);border:none;color:#04140f}
 .wifi-save-btn:hover{background:var(--brand);filter:brightness(1.08)}
@@ -233,12 +285,20 @@ body:not(.fs) .fs-hud{display:none!important}
 .tag-ok{background:#0c2e20;color:#6ee7b7;border:1px solid #10b98133}
 .tag-err{background:#2a0f0f;color:#fca5a5;border:1px solid #ef444433}
 .tag-warn{background:#2a1a07;color:#fcd34d;border:1px solid #eab30833}
-.tag-info{background:#2c2410;color:#f0d698;border:1px solid #c9a15c40}
+.tag-info{background:#0a2b33;color:#8beefc;border:1px solid #22d3ee40}
 .tag-pur{background:#1e1040;color:#c4b5fd;border:1px solid #a78bfa33}
+/* Power & Health: inline warning glyph, hover (desktop) or tap (touch) to reveal explanation */
+.ph-warn{position:relative;display:inline-block;margin-left:5px;color:var(--yellow);
+  cursor:help;font-size:12px;line-height:1}
+.ph-tip{position:absolute;bottom:130%;right:0;width:220px;max-width:60vw;
+  background:var(--surf2);border:1px solid var(--border2);border-radius:var(--r);
+  padding:8px 10px;font-size:10px;line-height:1.6;color:var(--sub);font-weight:400;
+  box-shadow:var(--sh);z-index:500;display:none;text-align:left;white-space:normal}
+.ph-warn:hover .ph-tip,.ph-warn.show .ph-tip{display:block}
 .cur-opts{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
 .cur-opt{height:26px;padding:0 10px;background:var(--card2);border:1px solid var(--border);
   border-radius:20px;color:var(--muted);font-size:10px;cursor:pointer;transition:all .12s}
-.cur-opt.active{background:#2c2410;border-color:#c9a15c40;color:#f0d698}
+.cur-opt.active{background:#0a2b33;border-color:#22d3ee40;color:#8beefc}
 .id-table{width:100%;border-collapse:collapse;font-size:11px}
 .id-table th{color:var(--muted);font-weight:600;text-align:left;
   padding:4px 6px;border-bottom:1px solid var(--border);font-size:10px;letter-spacing:.3px;text-transform:uppercase}
@@ -373,6 +433,33 @@ body:not(.fs) .fs-hud{display:none!important}
   opacity:0;transition:opacity .2s;pointer-events:none;z-index:700;
   white-space:nowrap;max-width:90vw;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--sh)}
 #toast.on{opacity:1}
+
+/* ===== Mobile / narrow-viewport overrides (phones, small tablets) =====
+   Nothing above this block changes for desktop. Everything here only
+   applies at <=720px so the dense desktop layout is untouched. */
+@media (max-width:720px){
+  /* Topbar: drop non-essential labels, keep every control reachable via
+     horizontal scroll as a safety net if it still doesn't all fit. */
+  #topbar{overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  #topbar::-webkit-scrollbar{display:none}
+  #logo{display:none}
+  #cdtxt{display:none}
+  #connpill{padding:3px 8px}
+  .stat-chip{display:none}
+  #relbar{padding:0 8px}
+  #rellbl{font-size:10px}
+
+  /* Sidebar becomes an overlay instead of squeezing the video area. */
+  #sidebar{position:fixed;top:var(--topH);bottom:var(--botH);right:0;
+    z-index:250;box-shadow:-10px 0 30px rgba(0,0,0,.55)}
+  #sidebar.open{width:min(var(--sideW),88vw)}
+  #sbdrop.on{display:block;position:fixed;top:var(--topH);left:0;right:0;
+    bottom:var(--botH);background:rgba(0,0,0,.45);z-index:220}
+
+  /* Fullscreen HUD bars: let them wrap instead of running off both edges. */
+  .fs-hud{max-width:94vw;flex-wrap:wrap;row-gap:8px;justify-content:center}
+  #fh-input{width:auto;flex:1 1 140px;min-width:120px}
+}
 </style>
 </head>
 <body>
@@ -398,7 +485,7 @@ body:not(.fs) .fs-hud{display:none!important}
     <svg id="logo-mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
       <defs>
         <linearGradient id="mbg1" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
-          <stop offset="0%" stop-color="#f0d698"/><stop offset="100%" stop-color="#8a6a2f"/>
+          <stop offset="0%" stop-color="#8beefc"/><stop offset="100%" stop-color="#0b7a94"/>
         </linearGradient>
       </defs>
       <path d="M15 40 C15 25 30 20 50 20 C70 20 85 25 85 40 C85 55 72 58 50 58 C28 58 15 55 15 40 Z" fill="none" stroke="url(#mbg1)" stroke-width="5"/>
@@ -424,11 +511,12 @@ body:not(.fs) .fs-hud{display:none!important}
     </div>
   </div>
   <button class="tbtn icon" id="kb-btn" onclick="toggleVKBD()" title="Virtual keyboard">⌨</button>
+  <button class="tbtn icon" id="audio-btn" onclick="toggleAudioMute()" title="Unmute target audio" style="display:none">🔇</button>
   <div id="sp"></div>
   <div class="stat-chip">🌡 <span id="sv-temp">—</span></div>
   <div class="stat-chip">⚡ <span id="sv-lat">—</span></div>
   <button class="tbtn icon" onclick="toggleFS()" title="Fullscreen">⛶</button>
-  <button class="tbtn active" id="set-btn" onclick="toggleSidebar()">⚙</button>
+  <button class="tbtn" id="set-btn" onclick="toggleSidebar()">⚙</button>
   <button class="tbtn icon" onclick="mbLogout()" title="Sign out">⏏</button>
 </div>
 
@@ -441,6 +529,7 @@ body:not(.fs) .fs-hud{display:none!important}
   <button class="fh-btn" onclick="fhCombo(['MetaLeft','KeyL'])">⊞+L</button>
   <button class="fh-btn" onclick="fhCombo(['MetaLeft','KeyD'])">⊞+D</button>
   <button class="fh-btn" onclick="toggleVKBD()">⌨ KB</button>
+  <button class="fh-btn" id="fh-audio-btn" onclick="toggleAudioMute()" style="display:none">🔇 Audio</button>
   <div class="fh-sep"></div>
   <button class="fh-btn" onclick="toggleFS()">⛶ Exit FS</button>
 </div>
@@ -464,6 +553,7 @@ body:not(.fs) .fs-hud{display:none!important}
 <div id="main">
   <div id="view">
     <img id="stream" src="/stream" alt="" onerror="onErr()" onload="onLoad()">
+    <video id="webrtc-view" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:contain;background:#000"></video>
     <div id="nosig">
       <svg class="nsico" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1">
         <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
@@ -477,10 +567,11 @@ body:not(.fs) .fs-hud{display:none!important}
     <div id="hint">Click to capture · Esc = remote Esc (click overlay to re-enter)</div>
   </div>
 
-  <aside id="sidebar" class="open">
+  <div id="sbdrop" onclick="toggleSidebar()"></div>
+
+  <aside id="sidebar">
     <nav id="sidenav">
       <button class="snav-btn active" onclick="showTab('stream')" id="tab-stream"><span class="ico">📹</span><span>Stream</span></button>
-      <button class="snav-btn" onclick="showTab('identity')" id="tab-identity"><span class="ico">🔌</span><span>Identity</span></button>
       <button class="snav-btn" onclick="showTab('network')" id="tab-network"><span class="ico">📶</span><span>Network</span></button>
       <button class="snav-btn" onclick="showTab('agent')" id="tab-agent"><span class="ico">🤖</span><span>Agent</span></button>
       <button class="snav-btn" onclick="showTab('system')" id="tab-system"><span class="ico">⚙</span><span>System</span></button>
@@ -492,12 +583,21 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Live</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="s-stream">—</span></div>
-          <div class="srow"><span class="sk">Latency</span><span class="sv ac" id="s-lat">—</span></div>
+          <div class="srow"><span class="sk">Ping</span><span class="sv ac" id="s-lat">—</span></div>
+          <div class="srow"><span class="sk">Video FPS</span><span class="sv ac" id="s-vfps">—</span></div>
           <div class="srow"><span class="sk">Temp</span><span class="sv" id="s-temp">—</span></div>
           <div class="srow"><span class="sk">Uptime</span><span class="sv" id="s-uptime">—</span></div>
+          <div class="srow" id="s-audio-row" style="display:none"><span class="sk">Audio</span><span class="sv" id="s-audio">—</span></div>
+          <button class="sbtn" onclick="takeScreenshot()" style="margin-top:6px">📷 Screenshot</button>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Video Quality</div>
+          <div class="srow"><span class="sk">Transport</span>
+            <select class="ssel" id="sel-mode" style="width:auto;margin:0">
+              <option value="h264" selected>WebRTC (C790/CSI) ★</option>
+              <option value="mjpeg">MJPEG (USB dongle)</option>
+            </select>
+          </div>
           <div class="srow"><span class="sk">Resolution</span>
             <select class="ssel" id="sel-res" style="width:auto;margin:0">
               <option value="1920x1080">1080p</option>
@@ -515,6 +615,7 @@ body:not(.fs) .fs-hud{display:none!important}
             </select>
           </div>
           <button class="sbtn pri" style="margin-top:6px" onclick="applyVideo()">▶ Apply</button>
+          <div style="font-size:11px;opacity:.6;margin-top:6px">WebRTC is used by default. Falls back to MJPEG automatically if the C790 board / Janus isn't detected.</div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Mouse Cursor</div>
@@ -535,43 +636,22 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="snote" style="margin-bottom:0">Opens the Windows display picker on the remote PC.</div>
         </div>
         <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>Wake-on-LAN</div>
+          <input class="sinput wifi-field" type="text" id="wol-mac" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" spellcheck="false" style="margin-bottom:8px">
+          <div style="display:flex;gap:8px">
+            <button class="sbtn" onclick="wolSave()" style="flex:1">💾 Save</button>
+            <button class="sbtn pri" onclick="wolWake()" style="flex:1">⚡ Wake PC</button>
+          </div>
+          <div class="snote" id="wol-msg" style="margin-bottom:0;margin-top:6px;display:none"></div>
+          <div class="snote" style="margin-bottom:0">Sends a magic packet to power on the target PC. Target must have WOL enabled in BIOS and NIC driver settings, and stay connected to power/ethernet while off.</div>
+        </div>
+        <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Shortcuts</div>
           <div class="srow"><span class="sk">Capture</span><span class="sv">Click</span></div>
           <div class="srow"><span class="sk">Release</span><span class="sv">Right Ctrl (hold 2s)</span></div>
           <div class="srow"><span class="sk">Esc key</span><span class="sv">Sent to remote PC</span></div>
           <div class="srow"><span class="sk">Fullscreen</span><span class="sv">⛶ button</span></div>
           <div class="srow"><span class="sk">Paste</span><span class="sv">Ctrl+V or bottom bar</span></div>
-        </div>
-      </div>
-
-      <!-- Identity tab (read-only, profile switching is in Stealth mode) -->
-      <div class="tab" id="panel-identity">
-        <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>Current Identity
-            <span id="id-tag" class="tag tag-ok" style="margin-left:auto">Default</span>
-          </div>
-          <div class="srow"><span class="sk">Device</span><span class="sv ac" id="id-prod">—</span></div>
-          <div class="srow"><span class="sk">Maker</span><span class="sv" id="id-mfr">—</span></div>
-          <div class="srow"><span class="sk">Serial</span><span class="sv" id="id-ser" style="font-family:monospace;font-size:11px">—</span></div>
-          <div class="srow"><span class="sk">VID/PID</span><span class="sv" id="id-ids" style="font-family:monospace;font-size:11px">—</span></div>
-        </div>
-        <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>Profile vs Current</div>
-          <table class="id-table">
-            <tr><th>Field</th><th>Profile Default</th><th>Now</th></tr>
-            <tr><td>Product</td><td class="id-orig">USB Receiver</td><td class="id-same" id="dd-prod">—</td></tr>
-            <tr><td>Maker</td><td class="id-orig">Logitech</td><td class="id-same" id="dd-mfr">—</td></tr>
-            <tr><td>Serial</td><td class="id-orig">(none)</td><td class="id-same" id="dd-ser">—</td></tr>
-            <tr><td>VID</td><td class="id-orig">0x046d</td><td class="id-same" id="dd-vid">—</td></tr>
-            <tr><td>PID</td><td class="id-orig">0xc52b</td><td class="id-same" id="dd-pid">—</td></tr>
-          </table>
-        </div>
-        <div class="scard" style="border-color:rgba(99,102,241,.15);background:#0a0a1a">
-          <div class="scard-title"><span class="dot-acc"></span>Profile Switching</div>
-          <div class="snote" style="margin-bottom:0">
-            🔒 Profile switching is only available in <strong style="color:var(--accent-l)">Stealth Mode</strong>.<br>
-            Open <code style="font-size:9px;color:var(--sub)">/stealth</code> to change USB device identity.
-          </div>
         </div>
       </div>
 
@@ -583,6 +663,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <span id="wifi-active-pill" style="margin-left:6px;font-size:9px;background:var(--green);color:#000;padding:1px 7px;border-radius:10px;font-weight:700;display:none"></span>
             <button class="sbtn" style="margin:0 0 0 auto;height:22px;padding:0 10px;font-size:10px" onclick="wifiRefresh()">↺</button>
           </div>
+          <div class="srow" style="margin-bottom:8px"><span class="sk">This device's IP</span><span class="sv" id="ss-ip">—</span></div>
 
           <!-- Saved networks list -->
           <div id="wifi-list" style="margin:4px 0 8px"></div>
@@ -654,21 +735,30 @@ body:not(.fs) .fs-hud{display:none!important}
             <span class="dot-pur" style="background:var(--purple)"></span>AI Agent
             <span class="tag tag-pur" style="margin-left:auto;font-size:9px">Beta</span>
           </div>
-          <div class="snote">Describe what you want to do on the remote PC. The AI generates keystrokes and sends them via the KVM. API key is stored in this browser only.</div>
-          <select class="ssel" id="ai-provider" onchange="aiProviderChange()">
-            <option value="openrouter">OpenRouter (Claude · GPT · Gemini · Llama)</option>
-            <option value="claude">Anthropic Claude (direct)</option>
-            <option value="openai">OpenAI / ChatGPT</option>
-            <option value="gemini">Google Gemini</option>
-          </select>
-          <select class="ssel" id="ai-model"></select>
-          <div style="display:flex;gap:5px;margin-bottom:6px">
-            <input class="sinput" type="password" id="ai-key" placeholder="API key" style="margin:0;flex:1" autocomplete="off" autocorrect="off">
-            <button class="sbtn" style="width:auto;padding:0 10px;margin:0;flex-shrink:0;height:28px" onclick="aiSaveKey()">Save</button>
+          <div class="snote" style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:6px;padding:6px 8px;margin-bottom:6px">
+            ⚠ Cloud AI sends your typed commands to a third-party API (OpenRouter/OpenAI/Gemini/Anthropic), tied to that account's billing. This is not anonymous - it's an off-box record outside your control. Turn it off below if you don't want that.
           </div>
-          <textarea id="ai-cmd" placeholder="E.g. 'Open Notepad and type Hello World' or 'Press Win+D then open Chrome'" autocomplete="off" spellcheck="false"></textarea>
-          <button class="sbtn pur" id="ai-run-btn" onclick="aiRun()">▶ Execute</button>
-          <div id="ai-log"></div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);cursor:pointer;margin-bottom:8px">
+            <input type="checkbox" id="ai-cloud-enabled" checked onchange="aiCloudToggle()" style="accent-color:var(--accent)">
+            Cloud AI enabled
+          </label>
+          <div id="ai-controls">
+            <select class="ssel" id="ai-provider" onchange="aiProviderChange()">
+              <option value="openrouter">OpenRouter (Claude · GPT · Gemini · Llama)</option>
+              <option value="claude">Anthropic Claude (direct)</option>
+              <option value="openai">OpenAI / ChatGPT</option>
+              <option value="gemini">Google Gemini</option>
+            </select>
+            <select class="ssel" id="ai-model"></select>
+            <div style="display:flex;gap:5px;margin-bottom:6px">
+              <input class="sinput" type="password" id="ai-key" placeholder="API key" style="margin:0;flex:1" autocomplete="off" autocorrect="off">
+              <button class="sbtn" style="width:auto;padding:0 10px;margin:0;flex-shrink:0;height:28px" onclick="aiSaveKey()">Save</button>
+            </div>
+            <div class="snote" style="margin-top:-4px">Key is saved server-side on this Pi, never in the browser. Re-enter to replace; leave blank and Save to clear.</div>
+            <textarea id="ai-cmd" placeholder="E.g. 'Open Notepad and type Hello World' or 'Press Win+D then open Chrome'" autocomplete="off" spellcheck="false"></textarea>
+            <button class="sbtn pur" id="ai-run-btn" onclick="aiRun()">▶ Execute</button>
+            <div id="ai-log"></div>
+          </div>
         </div>
 
         <div class="scard">
@@ -700,27 +790,65 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
           <button class="sbtn" onclick="macroAdd()">+ Save Macro</button>
         </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-cyn"></span>Keyboard Layout</div>
+          <div class="snote">What layout the remote PC is set to - affects Paste and AI-typed text only (not manual key presses, which already send physical key positions). Wrong layout types the wrong characters, not garbled/random ones.</div>
+          <select class="ssel" id="kb-layout" onchange="kbLayoutChange()">
+            <option value="us">US (QWERTY)</option>
+          </select>
+          <div class="snote" style="margin-bottom:0">Only US is verified so far. More layouts (UK/DE/FR…) can be added once needed - ask and it'll be a quick addition.</div>
+        </div>
       </div>
 
       <!-- System tab -->
       <div class="tab" id="panel-system">
+        <div class="sys-nav">
+          <button class="sys-nav-item active" data-cat="monitoring" onclick="sysNavShow('monitoring')" title="Monitoring">
+            <span class="ico">📊</span>
+            <span class="sys-nav-label">Monitor<span class="sys-dot ok" id="sys-dot-monitoring"></span></span>
+          </button>
+          <button class="sys-nav-item" data-cat="security" onclick="sysNavShow('security')" title="Security &amp; Account">
+            <span class="ico">🛡</span>
+            <span class="sys-nav-label">Security<span class="sys-dot warn" id="sys-dot-security"></span></span>
+          </button>
+          <button class="sys-nav-item" data-cat="power" onclick="sysNavShow('power')" title="Power &amp; Maintenance">
+            <span class="ico">⚡</span>
+            <span class="sys-nav-label">Power<span class="sys-dot ok" id="sys-dot-power"></span></span>
+          </button>
+          <button class="sys-nav-item" data-cat="peripherals" onclick="sysNavShow('peripherals')" title="Peripherals &amp; Identity">
+            <span class="ico">🖱</span>
+            <span class="sys-nav-label">Devices</span>
+          </button>
+        </div>
+        <div class="sys-content">
+
+        <div class="sys-cat active" data-cat="monitoring">
         <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>Account</div>
-          <div class="snote" style="margin-bottom:8px">Change the password for this KVM page. This is separate from the /stealth/ admin panel password.</div>
-          <label class="wifi-label" for="pw-current">Current password</label>
-          <input class="sinput wifi-field" type="password" id="pw-current" placeholder="Current password" autocomplete="current-password" style="margin-bottom:8px">
-          <label class="wifi-label" for="pw-new1">New password</label>
-          <input class="sinput wifi-field" type="password" id="pw-new1" placeholder="New password" autocomplete="new-password" style="margin-bottom:8px">
-          <label class="wifi-label" for="pw-new2">Confirm new password</label>
-          <input class="sinput wifi-field" type="password" id="pw-new2" placeholder="Confirm new password" autocomplete="new-password" style="margin-bottom:10px">
-          <button class="sbtn wifi-save-btn" onclick="changeMainPassword()" style="width:100%">🔑 Change Password</button>
-          <div id="pw-change-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+          <div class="scard-title"><span class="dot-yel"></span>At a Glance</div>
+          <div class="gauge-wrap">
+            <div class="gauge-ring-box">
+              <svg viewBox="0 0 104 104">
+                <circle class="gauge-track" cx="52" cy="52" r="44"/>
+                <circle class="gauge-val" id="gauge-temp-ring" cx="52" cy="52" r="44"
+                  stroke-dasharray="276.5" stroke-dashoffset="276.5"/>
+              </svg>
+              <div class="gauge-center">
+                <div class="gauge-num" id="gauge-temp-num">—</div>
+                <div class="gauge-unit">CPU TEMP</div>
+              </div>
+            </div>
+            <div class="gauge-info">
+              <div class="gauge-label">Core Status</div>
+              <div class="gauge-status" id="gauge-status"><span class="gsd"></span><span id="gauge-status-txt">Reading…</span></div>
+              <div class="stat-tiles" style="margin-top:10px">
+                <div class="stat-tile"><div class="stat-tile-k">Power</div><div class="stat-tile-v" id="gauge-power">—</div></div>
+                <div class="stat-tile"><div class="stat-tile-k">Uptime</div><div class="stat-tile-v" id="gauge-uptime">—</div></div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="scard">
-          <div class="scard-title"><span class="dot-yel"></span>Pi Status</div>
-          <div class="srow"><span class="sk">CPU temp</span><span class="sv" id="ss-temp">—</span></div>
-          <div class="srow"><span class="sk">Uptime</span><span class="sv" id="ss-uptime">—</span></div>
-          <div class="srow"><span class="sk">Local IP</span><span class="sv" id="ss-ip">—</span></div>
+          <div class="scard-title"><span class="dot-yel"></span>Connection &amp; Devices</div>
           <div class="srow"><span class="sk">HID KB</span><span class="sv" id="ss-hkb">—</span></div>
           <div class="srow"><span class="sk">HID Mouse</span><span class="sv" id="ss-hms">—</span></div>
           <div class="srow"><span class="sk">Video</span><span class="sv" id="ss-dev">—</span></div>
@@ -728,6 +856,28 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="srow"><span class="sk">Clients</span><span class="sv" id="ss-cl">—</span></div>
           <button class="sbtn" onclick="refreshStatus()" style="margin-top:6px">↺ Refresh</button>
         </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-yel" style="background:var(--cyan)"></span>Power &amp; Health</div>
+          <div class="srow">
+            <span class="sk">Input power</span>
+            <span class="sv" id="ph-power"><span id="ph-power-text">—</span><span class="ph-warn" id="ph-power-warn" style="display:none" onclick="this.classList.toggle('show')">⚠<span class="ph-tip">Under-voltage detected on the 5V input. This Pi is powered through the GPIO 5V pins from a 5V/3A barrel adapter — a weak adapter or a thin/long cable can't supply enough current under load. Try the original supply on a short, thick cable directly into the wall (not a hub/extension).</span></span></span>
+          </div>
+          <div class="srow"><span class="sk">Power state</span><span class="sv" id="ph-state">—</span></div>
+          <div class="srow">
+            <span class="sk">CPU temp</span>
+            <span class="sv" id="ph-temp"><span id="ph-temp-text">—</span><span class="ph-warn" id="ph-temp-warn" style="display:none" onclick="this.classList.toggle('show')">⚠<span class="ph-tip">The Pi is thermally throttling right now — CPU clock is being reduced to cool down. Check airflow/case ventilation.</span></span></span>
+          </div>
+          <div class="srow"><span class="sk">CPU load</span><span class="sv" id="ph-load">—</span></div>
+          <div class="srow"><span class="sk">CPU clock</span><span class="sv" id="ph-clock">—</span></div>
+          <div class="srow"><span class="sk">Memory</span><span class="sv" id="ph-mem">—</span></div>
+          <div class="srow"><span class="sk">Uptime</span><span class="sv" id="ph-uptime">—</span></div>
+          <div class="srow"><span class="sk">magicbridge</span><span class="tag" id="ph-svc-mb">—</span></div>
+          <div class="srow"><span class="sk">stealth-dashboard</span><span class="tag" id="ph-svc-sd">—</span></div>
+          <div class="srow"><span class="sk">ustreamer</span><span class="tag" id="ph-svc-us">—</span></div>
+        </div>
+        </div>
+
+        <div class="sys-cat" data-cat="power">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--red)"></span>Pi Power</div>
           <button class="sbtn warn" onclick="piPower('reboot')">↺ Reboot Pi</button>
@@ -742,6 +892,21 @@ body:not(.fs) .fs-hud{display:none!important}
           <button class="sbtn" onclick="sysCheckVer()" style="margin-top:6px">↺ Check Status</button>
           <button class="sbtn suc" id="sys-update-btn" onclick="sysUpdate()" style="margin-top:4px">⬆ Pull & Update from GitHub</button>
         </div>
+        </div>
+
+        <div class="sys-cat" data-cat="security">
+        <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>Account</div>
+          <div class="snote" style="margin-bottom:8px">Change the password for this KVM page. This is separate from the /stealth/ admin panel password.</div>
+          <label class="wifi-label" for="pw-current">Current password</label>
+          <input class="sinput wifi-field" type="password" id="pw-current" placeholder="Current password" autocomplete="current-password" style="margin-bottom:8px">
+          <label class="wifi-label" for="pw-new1">New password</label>
+          <input class="sinput wifi-field" type="password" id="pw-new1" placeholder="New password" autocomplete="new-password" style="margin-bottom:8px">
+          <label class="wifi-label" for="pw-new2">Confirm new password</label>
+          <input class="sinput wifi-field" type="password" id="pw-new2" placeholder="Confirm new password" autocomplete="new-password" style="margin-bottom:10px">
+          <button class="sbtn wifi-save-btn" onclick="changeMainPassword()" style="width:100%">🔑 Change Password</button>
+          <div id="pw-change-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+        </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>Network Lockdown</div>
           <div class="snote" style="margin-bottom:8px">Restrict the web UI to Tailscale only: no LAN or public access. Requires Tailscale to be connected first, or it refuses to enable.</div>
@@ -749,6 +914,9 @@ body:not(.fs) .fs-hud{display:none!important}
           <button class="sbtn" id="lockdown-btn" onclick="toggleLockdown()" style="margin-top:6px">Enable Tailscale-only Access</button>
           <div id="lockdown-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
+        </div>
+
+        <div class="sys-cat" data-cat="peripherals">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>Mouse Jiggler</div>
           <div class="snote" style="margin-bottom:8px">Nudges the remote mouse now and then to keep the screen/session awake. Timing and movement are randomized, not a fixed pattern, and it always pauses itself while you're actually using the KVM.</div>
@@ -762,6 +930,124 @@ body:not(.fs) .fs-hud{display:none!important}
           </select>
           <button class="sbtn" id="jiggler-btn" onclick="toggleJiggler()">Enable Jiggler</button>
           <div id="jiggler-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+        </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>HID Connect Only While In Use</div>
+          <div class="snote" style="margin-bottom:8px">When enabled, the USB keyboard/mouse device disconnects from the target entirely after an idle period with no active session, and reconnects the instant a new session starts (adds a brief ~1s delay on first input). Off by default. Note: this makes the mouse jiggler above go quiet while disconnected - the two aren't meant to run together.</div>
+          <div class="srow"><span class="sk">Status</span><span class="sv" id="hidautodc-status">—</span></div>
+          <label class="wifi-label" for="hidautodc-idle" style="margin-top:8px">Disconnect after (minutes idle)</label>
+          <input class="sinput wifi-field" id="hidautodc-idle" type="number" min="1" max="180" value="15" onchange="hidAutoDcIdleChanged()" style="margin-bottom:8px">
+          <button class="sbtn" id="hidautodc-btn" onclick="toggleHidAutoDc()">Enable Auto-Disconnect</button>
+          <div id="hidautodc-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+        </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>OLED Display</div>
+          <div class="snote" style="margin-bottom:8px">Customize what shows on the case's status screen. Changes apply live within a couple seconds - no reboot needed.</div>
+
+          <div style="display:flex;justify-content:center;margin-bottom:10px">
+            <div style="background:#2b2b28;border-radius:10px;padding:10px 12px;display:inline-flex;flex-direction:column;align-items:center;gap:6px">
+              <div style="position:relative;width:230px;height:57.5px;background:#000;border-radius:2px;overflow:hidden">
+                <div id="oled-prev-1" style="position:absolute;left:6px;top:3px;font-family:monospace;font-size:10px;letter-spacing:1px;color:#f2f2f0;white-space:nowrap"></div>
+                <div id="oled-prev-2" style="position:absolute;left:6px;top:21px;font-family:monospace;font-size:10px;letter-spacing:1px;color:#f2f2f0;white-space:nowrap"></div>
+                <div id="oled-prev-3" style="position:absolute;left:6px;top:39px;font-family:monospace;font-size:9px;letter-spacing:0.5px;color:#f2f2f0;white-space:nowrap"></div>
+                <div id="oled-prev-4" style="position:absolute;left:6px;top:39px;font-family:monospace;font-size:9px;letter-spacing:0.5px;color:#f2f2f0;white-space:nowrap;display:none"></div>
+              </div>
+              <span style="font-size:9px;color:var(--muted)">Live preview (sample values)</span>
+            </div>
+          </div>
+
+          <label class="wifi-label" for="oled-l1-mode">Line 1</label>
+          <select class="sinput wifi-field" id="oled-l1-mode" onchange="oledFormChanged()" style="margin-bottom:4px">
+            <option value="app">App name (MagicBridge)</option>
+            <option value="hostname">Hostname</option>
+            <option value="custom">Custom text</option>
+          </select>
+          <input class="sinput wifi-field" id="oled-l1-custom" type="text" maxlength="21" placeholder="Custom text for line 1" oninput="oledFormChanged()" style="margin-bottom:8px;display:none">
+
+          <label class="wifi-label" for="oled-l2-mode">Line 2</label>
+          <select class="sinput wifi-field" id="oled-l2-mode" onchange="oledFormChanged()" style="margin-bottom:4px">
+            <option value="ip">Local IP address</option>
+            <option value="tailscale">Tailscale IP</option>
+            <option value="custom">Custom text</option>
+            <option value="blank">Blank</option>
+          </select>
+          <input class="sinput wifi-field" id="oled-l2-custom" type="text" maxlength="21" placeholder="Custom text for line 2" oninput="oledFormChanged()" style="margin-bottom:8px;display:none">
+
+          <label class="wifi-label">Line 3</label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub);margin:0 0 8px">
+            <input type="checkbox" id="oled-l3-custom-chk" onchange="oledFormChanged()" style="accent-color:var(--accent)">
+            Use custom text instead
+          </label>
+          <input class="sinput wifi-field" id="oled-l3-custom" type="text" maxlength="21" placeholder="Custom text for line 3" oninput="oledFormChanged()" style="margin-bottom:8px;display:none">
+          <div id="oled-l3-checks">
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub);margin:0 0 6px">
+              <input type="checkbox" id="oled-l3-temp" checked onchange="oledFormChanged()" style="accent-color:var(--accent)">
+              CPU temperature
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub);margin:0 0 6px">
+              <input type="checkbox" id="oled-l3-uptime" checked onchange="oledFormChanged()" style="accent-color:var(--accent)">
+              Uptime
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub);margin:0 0 6px">
+              <input type="checkbox" id="oled-l3-service" checked onchange="oledFormChanged()" style="accent-color:var(--accent)">
+              magicbridge service status
+            </label>
+            <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub);margin:0 0 8px">
+              <input type="checkbox" id="oled-l3-stream" checked onchange="oledFormChanged()" style="accent-color:var(--accent)">
+              Stream live status
+            </label>
+          </div>
+
+          <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--sub);margin:4px 0 4px;cursor:pointer">
+            <input type="checkbox" id="oled-l4-enable" onchange="oledFormChanged()" style="accent-color:var(--accent)">
+            Enable 4th line
+          </label>
+          <div class="snote" style="margin:0 0 8px;color:var(--yellow)">⚠ Adding a 4th line shrinks the font on <b>all</b> lines to fit the screen - everything gets smaller, not just this one. Off by default (3 lines).</div>
+          <div id="oled-l4-wrap" style="display:none">
+            <label class="wifi-label" for="oled-l4-mode">Line 4</label>
+            <select class="sinput wifi-field" id="oled-l4-mode" onchange="oledFormChanged()" style="margin-bottom:4px">
+              <option value="blank">Blank</option>
+              <option value="hostname">Hostname</option>
+              <option value="tailscale">Tailscale IP</option>
+              <option value="custom">Custom text</option>
+            </select>
+            <input class="sinput wifi-field" id="oled-l4-custom" type="text" maxlength="21" placeholder="Custom text for line 4" oninput="oledFormChanged()" style="margin-bottom:8px;display:none">
+          </div>
+
+          <label class="wifi-label" for="oled-refresh" style="margin-top:2px">Refresh rate</label>
+          <select class="sinput wifi-field" id="oled-refresh" onchange="oledFormChanged()" style="margin-bottom:8px">
+            <option value="1">1 second</option>
+            <option value="2" selected>2 seconds</option>
+            <option value="5">5 seconds</option>
+            <option value="10">10 seconds</option>
+          </select>
+
+          <button class="sbtn suc" onclick="saveOledSettings()">Save</button>
+          <button class="sbtn" onclick="resetOledSettings()" style="margin-top:4px">↺ Reset to Default</button>
+          <div id="oled-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+        </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>Current Identity
+            <span id="id-tag" class="tag tag-ok" style="margin-left:auto">Default</span>
+          </div>
+          <div class="srow"><span class="sk">Device</span><span class="sv ac" id="id-prod">—</span></div>
+          <div class="srow"><span class="sk">Maker</span><span class="sv" id="id-mfr">—</span></div>
+          <div class="srow"><span class="sk">Serial</span><span class="sv" id="id-ser" style="font-family:monospace;font-size:11px">—</span></div>
+          <div class="srow"><span class="sk">VID/PID</span><span class="sv" id="id-ids" style="font-family:monospace;font-size:11px">—</span></div>
+        </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>Profile vs Current</div>
+          <table class="id-table">
+            <tr><th>Field</th><th>Profile Default</th><th>Now</th></tr>
+            <tr><td>Product</td><td class="id-orig">USB Receiver</td><td class="id-same" id="dd-prod">—</td></tr>
+            <tr><td>Maker</td><td class="id-orig">Logitech</td><td class="id-same" id="dd-mfr">—</td></tr>
+            <tr><td>Serial</td><td class="id-orig">(none)</td><td class="id-same" id="dd-ser">—</td></tr>
+            <tr><td>VID</td><td class="id-orig">0x046d</td><td class="id-same" id="dd-vid">—</td></tr>
+            <tr><td>PID</td><td class="id-orig">0xc52b</td><td class="id-same" id="dd-pid">—</td></tr>
+          </table>
+        </div>
+        </div>
+
         </div>
       </div>
 
@@ -863,6 +1149,14 @@ body:not(.fs) .fs-hud{display:none!important}
 
 <div id="toast"></div>
 
+<!-- WebRTC (C790/H.264) client libs — additive, only used when Transport is
+     set to WebRTC. Files are vendored by install_janus_webrtc.sh into
+     /opt/magicbridge/web/static/vendor/; if that script hasn't run yet (or
+     the C790 add-on isn't installed), these 404 harmlessly and startWebRTC()
+     detects the missing Janus global and no-ops back to MJPEG. -->
+<script src="/static/vendor/adapter.js" defer></script>
+<script src="/static/vendor/janus.js" defer></script>
+
 <script>
 // Auth
 function mbLogout(){ fetch('/logout',{method:'POST'}).finally(()=>{ location.href='/login'; }); }
@@ -939,21 +1233,59 @@ function dot(cls,txt){
 // Stream
 const $s=document.getElementById('stream');
 const $ns=document.getElementById('nosig');
+let _frameLoadTimes=[];
 function onLoad(){
+  // The MJPEG <img> keeps running in the background even while WebRTC is
+  // the active/visible transport (see setVideoTransport) — its own
+  // load/error events shouldn't overwrite the status pills that are
+  // currently describing the WebRTC stream the user can actually see.
+  if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
   $ns.style.display='none';
   document.getElementById('bd-stream').className='bd ok';
   document.getElementById('bv-stream').textContent='Live';
   document.getElementById('s-stream').textContent='Live';
   document.getElementById('s-stream').className='sv ok';
+  // Best-effort real video FPS. "Ping" above only measures the tiny WebSocket
+  // control channel round-trip (keyboard/mouse) — it says nothing about the
+  // video. Some browsers re-fire `load` on every multipart MJPEG part; where
+  // that happens this gives an honest "frames actually rendered per second"
+  // number instead. If it never updates in your browser, the control ping
+  // above is still accurate for input latency, just not for video.
+  const now=performance.now();
+  _frameLoadTimes.push(now);
+  if(_frameLoadTimes.length>12) _frameLoadTimes.shift();
+  if(_frameLoadTimes.length>=4){
+    const span=_frameLoadTimes[_frameLoadTimes.length-1]-_frameLoadTimes[0];
+    const fps=span>0?((_frameLoadTimes.length-1)*1000/span):0;
+    const el=document.getElementById('s-vfps');
+    if(el) el.textContent=fps.toFixed(1)+' fps';
+  }
 }
 function onErr(){
+  if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
   $ns.style.display='flex';
   document.getElementById('bd-stream').className='bd err';
   document.getElementById('bv-stream').textContent='No signal';
   document.getElementById('s-stream').textContent='No signal';
   document.getElementById('s-stream').className='sv err';
 }
-function retryStream(){ $s.src='/stream?_='+Date.now(); }
+function retryStream(){ $s.src='/stream?_='+Date.now(); _frameLoadTimes=[]; }
+
+// MJPEG-over-HTTP has no frame-dropping: TCP guarantees in-order delivery,
+// so if the browser or network ever falls behind the capture card's output
+// for even a moment, frames queue up and the picture keeps getting further
+// behind real time instead of catching back up — it never self-corrects.
+// That's the "video gets more delayed the longer I use it" behavior. A
+// silent periodic reconnect clears any backlog before it becomes visible.
+// Cost: one dropped frame (~40ms at 25fps) every 15s — imperceptible next
+// to the multi-second delay it prevents from accumulating.
+// Skipped entirely while WebRTC is the active transport — the MJPEG <img>
+// is hidden then and this would just churn its background connection.
+setInterval(()=>{
+  if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
+  const el=document.getElementById('s-stream');
+  if(el && el.textContent==='Live') retryStream();
+}, 15000);
 
 // Pointer lock
 const $view=document.getElementById('view');
@@ -983,6 +1315,7 @@ function capture(){
     if(captured){
       const r=$view.getBoundingClientRect(); _cx=r.width/2; _cy=r.height/2;
       hideRecapture();
+      setSidebarForControl(false);
     } else if(prev){
       // Lost capture. Was it Esc?
       if(!_intentional && (Date.now()-_escTime)<1000){
@@ -990,6 +1323,7 @@ function capture(){
       }
       _intentional=false;
       document.getElementById('cur-dot').style.display='none';
+      setSidebarForControl(true);
     }
   });
 });
@@ -1167,19 +1501,32 @@ async function fhSend(){
 document.getElementById('fh-input').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();fhSend();}});
 
 // Sidebar
-let _sideOpen=true;
+// On phones/narrow viewports start closed (it's an overlay there and would
+// otherwise cover the video on first load); desktop keeps its old default.
+let _sideOpen=window.matchMedia('(min-width:721px)').matches;
+if(_sideOpen){document.getElementById('sidebar').classList.add('open');document.getElementById('set-btn').classList.add('active');}
 function toggleSidebar(){
   _sideOpen=!_sideOpen;
   document.getElementById('sidebar').classList.toggle('open',_sideOpen);
   document.getElementById('set-btn').classList.toggle('active',_sideOpen);
+  document.getElementById('sbdrop').classList.toggle('on',_sideOpen);
+}
+// Auto-hide the settings sidebar while the user is actively controlling the
+// remote screen (pointer-locked), and bring it back once they exit control
+// (Esc / click away / lose lock). Doesn't touch _sideOpen — that's the
+// user's manual open/close preference via the settings button — this just
+// forces the visual state during capture without losing that preference.
+function setSidebarForControl(visible){
+  const on=visible && _sideOpen;
+  document.getElementById('sidebar').classList.toggle('open', on);
+  document.getElementById('sbdrop').classList.toggle('on', on);
 }
 function showTab(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.snav-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('panel-'+name).classList.add('active');
   document.getElementById('tab-'+name).classList.add('active');
-  if(name==='system'){refreshStatus();refreshJigglerStatus();sysCheckVer();}
-  if(name==='identity') identityRefresh();
+  if(name==='system'){refreshStatus();refreshJigglerStatus();refreshHidAutoDcStatus();sysCheckVer();refreshOledSettings();identityRefresh();}
   if(name==='network'){wifiRefresh();tsRefresh();}
 }
 
@@ -1220,26 +1567,315 @@ document.getElementById('pinput').addEventListener('keydown',e=>{if(e.key==='Ent
 async function applyVideo(){
   const res=document.getElementById('sel-res').value;
   const fps=parseInt(document.getElementById('sel-fps').value);
+  const mode=document.getElementById('sel-mode') ? document.getElementById('sel-mode').value : 'mjpeg';
   try{
-    const r=await fetch('/api/stream/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resolution:res,fps})});
+    const r=await fetch('/api/stream/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resolution:res,fps,mode})});
     const d=await r.json();
-    toast(d.ok?'Video updated ✓':'Failed: '+(d.error||''));
+    if(d.ok){
+      toast('Video updated ✓ — reconnecting stream…');
+      // Backend restarts ustreamer synchronously before this response comes
+      // back, so the new stream is already live at this point. The <img>
+      // element is still holding its old connection to the now-dead
+      // ustreamer process though, so without this it never shows the
+      // change until a full page reload. Force it to reconnect.
+      const actualMode=(d.status&&d.status.mode)||mode;
+      setVideoTransport(actualMode);
+    } else {
+      toast('Failed: '+(d.error||''));
+    }
   }catch(e){toast('Request failed');}
+}
+
+// --- WebRTC (C790/H.264 via Janus) -----------------------------------
+// WebRTC is the preferred/default transport (near-zero-latency hardware
+// H.264 over the C790/CSI path). MJPEG is the automatic fallback — used
+// whenever WebRTC can't actually be established, not just when the
+// dropdown says "mjpeg". Detection happens at two levels:
+//   1. Server-side: video.py's _start_ustreamer_h264 falls back to mjpeg
+//      on its own if ustreamer itself won't start in h264 mode (no C790,
+//      no Janus-enabled build, etc). /api/status then reports the real
+//      running mode, which syncVideoTransport() below picks up.
+//   2. Client-side: even when ustreamer's h264 sink IS running, Janus
+//      itself might not be (e.g. janus-webrtc.service not started yet —
+//      that's the current state until the C790 physically arrives). The
+//      Janus connect/attach error handlers and the connect-timeout guard
+//      below catch that case and switch the UI back to MJPEG live,
+//      without waiting for a page reload or another status poll.
+let _janus = null, _janusHandle = null, _activeTransport = null, _webrtcTimeout = null;
+
+function setVideoTransport(mode){
+  _activeTransport = mode;
+  const img = document.getElementById('stream');
+  const vid = document.getElementById('webrtc-view');
+  if(mode === 'h264'){
+    img.style.display = 'none';
+    vid.style.display = '';
+    startWebRTC();
+  } else {
+    stopWebRTC();
+    vid.style.display = 'none';
+    img.style.display = '';
+    retryStream();
+  }
+}
+
+// Called whenever WebRTC can't actually be delivered client-side, even
+// though the dropdown/server said h264. Drops back to MJPEG and corrects
+// the dropdown so the UI reflects what's actually on screen.
+function _webrtcFallbackToMjpeg(reason){
+  console.warn('WebRTC unavailable, falling back to MJPEG:', reason);
+  clearTimeout(_webrtcTimeout);
+  stopWebRTC();
+  const sel = document.getElementById('sel-mode');
+  if(sel) sel.value = 'mjpeg';
+  _activeTransport = 'mjpeg';
+  document.getElementById('webrtc-view').style.display = 'none';
+  document.getElementById('stream').style.display = '';
+  retryStream();
+  toast('WebRTC unavailable — using MJPEG');
+}
+
+function startWebRTC(){
+  if(typeof Janus === 'undefined'){
+    // janus.js not loaded (Janus not installed / vendor file missing yet).
+    _webrtcFallbackToMjpeg('janus.js not loaded');
+    return;
+  }
+  stopWebRTC();
+  // Give the whole attach/watch/jsep handshake a bounded amount of time.
+  // If no video track has arrived by then (Janus not running, plugin not
+  // loaded, ustreamer's h264-sink not actually feeding it, etc.), fall
+  // back rather than leaving the viewer stuck on a black video element.
+  clearTimeout(_webrtcTimeout);
+  _webrtcTimeout = setTimeout(()=>{
+    if(_activeTransport === 'h264') _webrtcFallbackToMjpeg('connect timeout (8s)');
+  }, 8000);
+  // Callback names/shape below (onremotetrack + manual MediaStream assembly,
+  // watch/start/jsep flow) match janus.js v1.0.0 specifically — that's the
+  // tag install_janus_webrtc.sh pins the server + this client library to,
+  // since ustreamer's bundled Janus plugin isn't guaranteed to compile
+  // against newer Janus API revisions. If the vendored janus.js is ever
+  // upgraded independently of the server, re-check pikvm/ustreamer's
+  // docs/h264.md sample against whatever version is in use.
+  Janus.init({debug: false, dependencies: Janus.useDefaultDependencies(), callback: function(){
+    _janus = new Janus({
+      server: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/janus-ws',
+      success: function(){
+        _janus.attach({
+          plugin: 'janus.plugin.ustreamer',
+          success: function(handle){
+            _janusHandle = handle;
+            _sendWatch(1);
+          },
+          onmessage: function(msg, jsep){
+            if(jsep) _janusHandle.createAnswer({
+              jsep: jsep,
+              media: {audioSend: false, videoSend: false},
+              success: function(answerJsep){ _janusHandle.send({message: {request: 'start'}, jsep: answerJsep}); },
+              error: function(err){ _webrtcFallbackToMjpeg('createAnswer error: '+err); }
+            });
+          },
+          onremotetrack: function(track, mid, added){
+            if(!added) return;
+            clearTimeout(_webrtcTimeout);
+            const vid = document.getElementById('webrtc-view');
+            if(vid.srcObject === null) vid.srcObject = new MediaStream();
+            vid.srcObject.addTrack(track.clone());
+            // Audio track only shows up if the C790 has I2S audio wired +
+            // Janus's audio block resolved a real ALSA device (see video.py
+            // _sync_janus_audio_cfg). Reveal the unmute control only when
+            // there's actually something to unmute - starts muted either
+            // way since browsers block autoplaying audio without a user
+            // gesture first (toggleAudioMute() below is that gesture).
+            if(track.kind === 'audio'){
+              document.getElementById('audio-btn').style.display = 'flex';
+              document.getElementById('fh-audio-btn').style.display = '';
+            }
+          },
+          error: function(err){ _webrtcFallbackToMjpeg('plugin attach error: '+err); }
+        });
+      },
+      error: function(err){ _webrtcFallbackToMjpeg('janus connect error: '+err); }
+    });
+  }});
+}
+
+// ustreamer's Janus plugin needs a moment after attach before it has a
+// video frame to hand back; per pikvm/ustreamer docs/h264.md, the first
+// "watch" can fail and the client is expected to retry.
+function _sendWatch(attemptsLeft){
+  if(!_janusHandle) return;
+  _janusHandle.send({
+    // audio:true just asks Janus to include an audio track IF the plugin's
+    // audio block resolved a real device - harmless to always send even
+    // with no C790/audio wired yet, it just won't produce an audio track.
+    message: {request: 'watch', params: {audio: true}},
+    error: function(){
+      if(attemptsLeft > 0) setTimeout(function(){ _sendWatch(attemptsLeft - 1); }, 1000);
+      else _webrtcFallbackToMjpeg('watch request failed after retries');
+    },
+  });
+}
+
+function toggleAudioMute(){
+  const vid = document.getElementById('webrtc-view');
+  vid.muted = !vid.muted;
+  const icon = vid.muted ? '🔇' : '🔊';
+  const abtn = document.getElementById('audio-btn');
+  const fabtn = document.getElementById('fh-audio-btn');
+  if(abtn){ abtn.textContent = icon; abtn.title = vid.muted ? 'Unmute target audio' : 'Mute target audio'; }
+  if(fabtn) fabtn.textContent = icon + ' Audio';
+  if(!vid.muted) vid.play().catch(()=>{});
+}
+
+// Reconciles the UI with whatever mode /api/status reports is actually
+// running (video.py may have silently fallen back server-side). Only
+// acts on real changes so this is safe to call on every status poll.
+function syncVideoTransport(mode){
+  if(!mode || mode === _activeTransport) return;
+  const sel = document.getElementById('sel-mode');
+  if(sel) sel.value = mode;
+  setVideoTransport(mode);
+}
+
+function stopWebRTC(){
+  try{
+    if(_janusHandle){ _janusHandle.hangup(); _janusHandle = null; }
+    if(_janus){ _janus.destroy(); _janus = null; }
+  }catch(e){}
+  const vid = document.getElementById('webrtc-view');
+  if(vid){ vid.srcObject = null; vid.muted = true; }
+  // No audio without an active WebRTC session (MJPEG carries no audio at
+  // all) - hide the controls rather than leave a stale enabled-looking
+  // button around with nothing behind it.
+  const abtn = document.getElementById('audio-btn');
+  const fabtn = document.getElementById('fh-audio-btn');
+  if(abtn){ abtn.style.display = 'none'; abtn.textContent = '🔇'; }
+  if(fabtn){ fabtn.style.display = 'none'; fabtn.textContent = '🔇 Audio'; }
 }
 function dispWinP(){send({type:'combo',codes:['MetaLeft','KeyP']});toast('Win+P →');}
 
 // Status
 function applyStatus(d){
-  if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;document.getElementById('ss-temp').textContent=t;}
-  if(d.uptime){document.getElementById('s-uptime').textContent=d.uptime;document.getElementById('ss-uptime').textContent=d.uptime;}
+  if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;}
+  if(d.uptime){document.getElementById('s-uptime').textContent=d.uptime;}
   if(d.local_ip) document.getElementById('ss-ip').textContent=d.local_ip;
   if(d.hid_kb!=null) document.getElementById('ss-hkb').textContent=d.hid_kb?'✓ /dev/hidg0':'✗';
   if(d.hid_ms!=null) document.getElementById('ss-hms').textContent=d.hid_ms?'✓ /dev/hidg1':'✗';
-  if(d.stream){const s=d.stream;document.getElementById('ss-dev').textContent=s.device||'—';document.getElementById('ss-str').textContent=s.running?'Running':'Stopped';}
+  if(d.stream){
+    const s=d.stream;
+    document.getElementById('ss-dev').textContent=s.device||'—';
+    document.getElementById('ss-str').textContent=s.running?'Running':'Stopped';
+    syncVideoTransport(s.mode);
+    // Audio pass-through status (C790 I2S -> Janus). Row only shows once a
+    // capture card actually reports an audio device - stays hidden entirely
+    // on the MS2109/MJPEG path or before the C790 is wired for audio.
+    const arow=document.getElementById('s-audio-row'), aval=document.getElementById('s-audio');
+    if(arow&&aval){
+      if(s.audio_device){arow.style.display='';aval.textContent='✓ '+s.audio_device;}
+      else{arow.style.display='none';}
+    }
+  }
   if(d.clients!=null) document.getElementById('ss-cl').textContent=String(d.clients);
+  applyPowerHealth(d);
+}
+
+// Power & Health card (System tab). Reconciles fully from whatever
+// /api/status reports each poll - no local state carried between calls.
+const _phStateLabel={ok:'Healthy',under_voltage:'Under-voltage now',throttled:'Throttled now',
+  was_throttled:'OK now — was throttled since boot',unknown:'Unavailable (vcgencmd)'};
+const _phStateCls={ok:'ok',under_voltage:'err',throttled:'err',was_throttled:'warn',unknown:''};
+function _phSvcPill(id,alive){
+  const el=document.getElementById(id); if(!el) return;
+  if(alive==null){el.textContent='—';el.className='tag';return;}
+  el.textContent=alive?'● active':'● stopped';
+  el.className='tag '+(alive?'tag-ok':'tag-err');
+}
+function applyPowerHealth(d){
+  const p=d.power||{state:'unknown'};
+  const stEl=document.getElementById('ph-state');
+  if(stEl){stEl.textContent=_phStateLabel[p.state]||p.state||'—';stEl.className='sv '+(_phStateCls[p.state]||'');}
+
+  const powTxt=document.getElementById('ph-power-text');
+  if(powTxt){
+    powTxt.textContent=(d.watts_in!=null&&d.volts_in!=null&&d.amps_in!=null)
+      ? d.volts_in.toFixed(2)+'V · '+d.amps_in.toFixed(2)+'A ('+d.watts_in+'W)'
+      : (_phStateLabel[p.state]||'—');
+  }
+  const powWarn=document.getElementById('ph-power-warn');
+  if(powWarn) powWarn.style.display=(p.uv_now||p.throttled_now)?'inline-block':'none';
+
+  const tempTxt=document.getElementById('ph-temp-text');
+  if(tempTxt) tempTxt.textContent=(d.temp_c!=null)?d.temp_c.toFixed(1)+'°C':'—';
+  const tempWarn=document.getElementById('ph-temp-warn');
+  if(tempWarn) tempWarn.style.display=p.temp_limit_now?'inline-block':'none';
+
+  // HUD gauge (Monitoring category "At a Glance" card)
+  const gNum=document.getElementById('gauge-temp-num');
+  const gRing=document.getElementById('gauge-temp-ring');
+  const gStatTxt=document.getElementById('gauge-status-txt');
+  const gStat=document.getElementById('gauge-status');
+  if(gNum && d.temp_c!=null){
+    gNum.textContent=d.temp_c.toFixed(1)+'°';
+    const CIRC=276.5, pct=Math.max(0,Math.min(1,d.temp_c/90));
+    if(gRing) gRing.style.strokeDashoffset=String(CIRC*(1-pct));
+    let hot=(p.throttled_now||p.temp_limit_now)||d.temp_c>=80;
+    let warm=!hot && d.temp_c>=65;
+    const col=hot?'var(--red)':(warm?'var(--yellow)':'var(--cyan)');
+    if(gRing) gRing.style.stroke=col;
+    if(gStatTxt) gStatTxt.textContent=hot?'Throttling / hot':(warm?'Running warm':'Nominal');
+    if(gStat){const dot=gStat.querySelector('.gsd'); const c=hot?'var(--red)':(warm?'var(--yellow)':'var(--green)');
+      gStat.style.color=c; if(dot) dot.style.background=c;}
+  }
+  const gPow=document.getElementById('gauge-power');
+  if(gPow) gPow.textContent=(d.watts_in!=null&&d.volts_in!=null)?d.volts_in.toFixed(1)+'V · NOM':(_phStateLabel[p.state]||'—');
+  const gUp=document.getElementById('gauge-uptime');
+  if(gUp&&d.uptime) gUp.textContent=d.uptime;
+
+  const loadEl=document.getElementById('ph-load');
+  if(loadEl) loadEl.textContent=(d.load_pct!=null)?d.load_pct+'% (avg '+d.load1+')':'—';
+  const clockEl=document.getElementById('ph-clock');
+  if(clockEl) clockEl.textContent=(d.clock_mhz!=null)?d.clock_mhz+' MHz':'—';
+  const memEl=document.getElementById('ph-mem');
+  if(memEl) memEl.textContent=(d.mem_used_pct!=null)?d.mem_used_pct+'% ('+d.mem_used_gb+'/'+d.mem_total_gb+' GB)':'—';
+  const upEl=document.getElementById('ph-uptime');
+  if(upEl&&d.uptime) upEl.textContent=d.uptime;
+
+  const svc=d.services||{};
+  _phSvcPill('ph-svc-mb', svc.magicbridge);
+  _phSvcPill('ph-svc-sd', svc['stealth-dashboard']);
+  _phSvcPill('ph-svc-us', d.stream?!!d.stream.running:null);
 }
 async function refreshStatus(){
   try{const r=await fetch('/api/status');const d=await r.json();applyStatus(d);}catch(e){}
+}
+
+// Screenshot - pure client-side canvas grab of whichever element is
+// actually rendering right now (WebRTC <video> or MJPEG <img>). No server
+// round-trip, no file ever touches the Pi - it's a browser download only.
+function takeScreenshot(){
+  const $webrtc = document.getElementById('webrtc-view');
+  const $img    = document.getElementById('stream');
+  const useVideo = $webrtc && $webrtc.style.display !== 'none' && $webrtc.videoWidth > 0;
+  const src = useVideo ? $webrtc : $img;
+  const w = useVideo ? src.videoWidth  : src.naturalWidth;
+  const h = useVideo ? src.videoHeight : src.naturalHeight;
+  if(!w || !h){ toast('No video frame to capture yet'); return; }
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  try{
+    cv.getContext('2d').drawImage(src, 0, 0, w, h);
+  }catch(e){ toast('Screenshot failed: '+e); return; }
+  cv.toBlob(blob=>{
+    if(!blob){ toast('Screenshot failed'); return; }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+    a.href = url; a.download = `magicbridge_${ts}.png`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+    toast('Screenshot saved 📷');
+  }, 'image/png');
 }
 
 // Power
@@ -1441,6 +2077,8 @@ async function refreshLockdownStatus(){
       b.textContent='Enable Tailscale-only Access';
     }
     b.dataset.enabled=d.tailscale_only?'1':'0';
+    const secDot=document.getElementById('sys-dot-security');
+    if(secDot) secDot.className='sys-dot '+(d.tailscale_only?'ok':'warn');
   }catch(e){}
 }
 async function toggleLockdown(){
@@ -1520,6 +2158,265 @@ function jigglerStyleChanged(){
   if(b.dataset.enabled==='1') _setJiggler(true);
 }
 
+// HID connect-only-during-active-use
+async function refreshHidAutoDcStatus(){
+  try{
+    const r=await fetch('/api/hid-autodisconnect');
+    const d=await r.json();
+    const s=document.getElementById('hidautodc-status');
+    const b=document.getElementById('hidautodc-btn');
+    const idle=document.getElementById('hidautodc-idle');
+    if(d.idle_minutes) idle.value=d.idle_minutes;
+    if(d.enabled){
+      s.textContent=(d.connected?'ON (connected)':'ON (disconnected, idle)'); s.className='sv ok';
+      b.textContent='Disable Auto-Disconnect';
+    }else{
+      s.textContent='OFF (always connected)'; s.className='sv';
+      b.textContent='Enable Auto-Disconnect';
+    }
+    b.dataset.enabled=d.enabled?'1':'0';
+  }catch(e){}
+}
+async function _setHidAutoDc(enabled){
+  const idle=document.getElementById('hidautodc-idle');
+  const msg=document.getElementById('hidautodc-msg');
+  const show=(text,ok)=>{
+    msg.textContent=text;
+    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
+      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+  };
+  try{
+    const r=await fetch('/api/hid-autodisconnect',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({enabled:enabled,idle_minutes:parseInt(idle.value,10)||15})});
+    const d=await r.json();
+    if(d.ok){
+      show(enabled?'✓ Auto-disconnect enabled ('+d.idle_minutes+'m idle)':'✓ Auto-disconnect disabled', true);
+      toast(enabled?'HID auto-disconnect enabled ✓':'HID auto-disconnect disabled ✓');
+      refreshHidAutoDcStatus();
+    }else{
+      show(d.error||'Failed', false);
+    }
+  }catch(e){show('Error: '+e,false);}
+}
+function toggleHidAutoDc(){
+  const b=document.getElementById('hidautodc-btn');
+  _setHidAutoDc(b.dataset.enabled!=='1');
+}
+function hidAutoDcIdleChanged(){
+  const b=document.getElementById('hidautodc-btn');
+  // Only push the new idle-minutes value live if the feature is currently
+  // on; if it's off, just remember the number for next time it's enabled.
+  if(b.dataset.enabled==='1') _setHidAutoDc(true);
+}
+
+// System tab category nav: switches which sys-cat panel is visible and
+// which sys-nav-item is highlighted. Purely a display/grouping change -
+// none of the underlying cards, IDs, or their refresh functions moved or
+// changed, so nothing else in this file needed to know about it.
+const SYS_CAT_LABELS={monitoring:'Monitoring',security:'Security & account',power:'Power & maintenance',peripherals:'Peripherals & identity'};
+function sysNavShow(cat){
+  document.querySelectorAll('.sys-nav-item').forEach(b=>b.classList.toggle('active',b.dataset.cat===cat));
+  document.querySelectorAll('.sys-cat').forEach(c=>c.classList.toggle('active',c.dataset.cat===cat));
+  const sub=document.getElementById('sys-cat-sub');
+  if(sub) sub.textContent=SYS_CAT_LABELS[cat]||cat;
+}
+
+// OLED display settings: fetch/populate form, live client-side preview
+// (sample values only - the real panel computes its own live temp/uptime/
+// etc, this just mirrors the layout logic in oled.py so the preview matches
+// what the device will actually show), save, and reset-to-default.
+const OLED_DEFAULTS = {
+  line1_mode:'app', line1_custom:'',
+  line2_mode:'ip', line2_custom:'',
+  line3_show_temp:true, line3_show_uptime:true, line3_show_service:true, line3_show_stream:true,
+  line3_custom_enabled:false, line3_custom:'',
+  line4_enabled:false, line4_mode:'blank', line4_custom:'',
+  refresh_sec:2
+};
+function _oledFormToConfig(){
+  return {
+    line1_mode: document.getElementById('oled-l1-mode').value,
+    line1_custom: document.getElementById('oled-l1-custom').value,
+    line2_mode: document.getElementById('oled-l2-mode').value,
+    line2_custom: document.getElementById('oled-l2-custom').value,
+    line3_custom_enabled: document.getElementById('oled-l3-custom-chk').checked,
+    line3_custom: document.getElementById('oled-l3-custom').value,
+    line3_show_temp: document.getElementById('oled-l3-temp').checked,
+    line3_show_uptime: document.getElementById('oled-l3-uptime').checked,
+    line3_show_service: document.getElementById('oled-l3-service').checked,
+    line3_show_stream: document.getElementById('oled-l3-stream').checked,
+    line4_enabled: document.getElementById('oled-l4-enable').checked,
+    line4_mode: document.getElementById('oled-l4-mode').value,
+    line4_custom: document.getElementById('oled-l4-custom').value,
+    refresh_sec: parseInt(document.getElementById('oled-refresh').value, 10) || 2,
+  };
+}
+function _oledConfigToForm(cfg){
+  const c = Object.assign({}, OLED_DEFAULTS, cfg||{});
+  document.getElementById('oled-l1-mode').value = c.line1_mode;
+  document.getElementById('oled-l1-custom').value = c.line1_custom;
+  document.getElementById('oled-l2-mode').value = c.line2_mode;
+  document.getElementById('oled-l2-custom').value = c.line2_custom;
+  document.getElementById('oled-l3-custom-chk').checked = !!c.line3_custom_enabled;
+  document.getElementById('oled-l3-custom').value = c.line3_custom;
+  document.getElementById('oled-l3-temp').checked = !!c.line3_show_temp;
+  document.getElementById('oled-l3-uptime').checked = !!c.line3_show_uptime;
+  document.getElementById('oled-l3-service').checked = !!c.line3_show_service;
+  document.getElementById('oled-l3-stream').checked = !!c.line3_show_stream;
+  document.getElementById('oled-l4-enable').checked = !!c.line4_enabled;
+  document.getElementById('oled-l4-mode').value = c.line4_mode;
+  document.getElementById('oled-l4-custom').value = c.line4_custom;
+  document.getElementById('oled-refresh').value = String(c.refresh_sec);
+  oledUpdatePreview();
+}
+function oledUpdatePreview(){
+  const cfg = _oledFormToConfig();
+  document.getElementById('oled-l1-custom').style.display = cfg.line1_mode==='custom' ? '' : 'none';
+  document.getElementById('oled-l2-custom').style.display = cfg.line2_mode==='custom' ? '' : 'none';
+  document.getElementById('oled-l3-custom').style.display = cfg.line3_custom_enabled ? '' : 'none';
+  document.getElementById('oled-l3-checks').style.display = cfg.line3_custom_enabled ? 'none' : '';
+  document.getElementById('oled-l4-wrap').style.display = cfg.line4_enabled ? '' : 'none';
+  document.getElementById('oled-l4-custom').style.display = (cfg.line4_enabled && cfg.line4_mode==='custom') ? '' : 'none';
+
+  let line1 = cfg.line1_mode==='custom' ? (cfg.line1_custom||'') :
+              cfg.line1_mode==='hostname' ? 'magicbridge' : 'MagicBridge';
+  let line2 = cfg.line2_mode==='custom' ? (cfg.line2_custom||'') :
+              cfg.line2_mode==='blank' ? '' :
+              cfg.line2_mode==='tailscale' ? '100.101.2.3' : '172.16.20.116';
+  let line3;
+  if(cfg.line3_custom_enabled){
+    line3 = cfg.line3_custom || '';
+  }else{
+    const parts=[];
+    if(cfg.line3_show_temp) parts.push('47.3C');
+    if(cfg.line3_show_uptime) parts.push('up4h18m');
+    const svc=[];
+    if(cfg.line3_show_service) svc.push('OK');
+    if(cfg.line3_show_stream) svc.push('LIVE');
+    if(svc.length) parts.push(svc.join('/'));
+    line3 = parts.join(' ');
+  }
+  let line4 = '';
+  if(cfg.line4_enabled){
+    line4 = cfg.line4_mode==='custom' ? (cfg.line4_custom||'') :
+            cfg.line4_mode==='hostname' ? 'magicbridge' :
+            cfg.line4_mode==='tailscale' ? '100.101.2.3' : '';
+  }
+
+  const p1=document.getElementById('oled-prev-1'), p2=document.getElementById('oled-prev-2'),
+        p3=document.getElementById('oled-prev-3'), p4=document.getElementById('oled-prev-4');
+  p1.textContent = line1; p2.textContent = line2; p3.textContent = line3; p4.textContent = line4;
+
+  // Mirrors oled.py: 4-line mode uses a smaller font for ALL rows so 4 fit
+  // in the same 32px-tall panel (scaled up ~1.8x here for the 230px-wide
+  // preview box) - this is the same layout tradeoff the on-device warning
+  // is telling the user about, shown visually here too.
+  if(cfg.line4_enabled){
+    p4.style.display = '';
+    [p1,p2,p3,p4].forEach(el=>{ el.style.fontSize='8px'; el.style.letterSpacing='0.5px'; });
+    p1.style.top='3px'; p2.style.top='17px'; p3.style.top='31px'; p4.style.top='45px';
+  }else{
+    p4.style.display = 'none';
+    p1.style.fontSize='10px'; p1.style.letterSpacing='1px';
+    p2.style.fontSize='10px'; p2.style.letterSpacing='1px';
+    p3.style.fontSize='9px';  p3.style.letterSpacing='0.5px';
+    p1.style.top='3px'; p2.style.top='21px'; p3.style.top='39px';
+  }
+}
+function oledFormChanged(){ oledUpdatePreview(); }
+async function refreshOledSettings(){
+  try{
+    const r = await fetch('/api/oled/settings');
+    const d = await r.json();
+    if(d.ok) _oledConfigToForm(d.config);
+  }catch(e){}
+}
+async function saveOledSettings(){
+  const msg=document.getElementById('oled-msg');
+  const show=(text,ok)=>{
+    msg.textContent=text;
+    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
+      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+  };
+  try{
+    const r = await fetch('/api/oled/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(_oledFormToConfig())});
+    const d = await r.json();
+    if(d.ok){
+      _oledConfigToForm(d.config);
+      show('✓ Saved - applies within a couple seconds', true);
+      toast('OLED settings saved ✓');
+    }else{
+      show(d.error||'Failed', false);
+    }
+  }catch(e){ show('Error: '+e, false); }
+}
+async function resetOledSettings(){
+  const msg=document.getElementById('oled-msg');
+  const show=(text,ok)=>{
+    msg.textContent=text;
+    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
+      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+  };
+  try{
+    const r = await fetch('/api/oled/reset', {method:'POST'});
+    const d = await r.json();
+    if(d.ok){
+      _oledConfigToForm(d.config);
+      show('✓ Reset to default', true);
+      toast('OLED display reset to default ✓');
+    }else{
+      show(d.error||'Failed', false);
+    }
+  }catch(e){ show('Error: '+e, false); }
+}
+
+// Wake-on-LAN
+function _wolShow(text, ok){
+  const msg=document.getElementById('wol-msg');
+  msg.textContent=text;
+  msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;margin-bottom:6px;margin-top:6px;'+
+    (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+        'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+}
+async function refreshWolSettings(){
+  try{
+    const r = await fetch('/api/wol/settings');
+    const d = await r.json();
+    if(d.ok) document.getElementById('wol-mac').value = d.config.mac || '';
+  }catch(e){}
+}
+async function wolSave(){
+  const mac = document.getElementById('wol-mac').value.trim();
+  try{
+    const r = await fetch('/api/wol/settings', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({mac})});
+    const d = await r.json();
+    if(d.ok){
+      document.getElementById('wol-mac').value = d.config.mac || '';
+      _wolShow('✓ MAC address saved', true);
+      toast('Wake-on-LAN MAC saved ✓');
+    }else{
+      _wolShow(d.error||'Failed to save', false);
+    }
+  }catch(e){ _wolShow('Error: '+e, false); }
+}
+async function wolWake(){
+  try{
+    const r = await fetch('/api/wol/wake', {method:'POST'});
+    const d = await r.json();
+    if(d.ok){
+      _wolShow('⚡ Magic packet sent to '+d.mac, true);
+      toast('Wake-on-LAN packet sent ✓');
+    }else{
+      _wolShow(d.error||'Failed to send', false);
+    }
+  }catch(e){ _wolShow('Error: '+e, false); }
+}
+
 // Agent: Quick Actions + Clips + Macros
 const _qa={lock:['MetaLeft','KeyL'],taskman:['ControlLeft','ShiftLeft','Escape'],desktop:['MetaLeft','KeyD'],explorer:['MetaLeft','KeyE'],settings:['MetaLeft','KeyI'],snip:['MetaLeft','ShiftLeft','KeyS']};
 function qa(k){if(_qa[k]) combo(_qa[k]);}
@@ -1561,27 +2458,66 @@ const _AI_MODELS={
   gemini:['gemini-1.5-flash','gemini-2.0-flash','gemini-1.5-pro']
 };
 
+let _aiKeysSet={};
+
+async function aiLoadSettings(){
+  try{
+    const r=await fetch('/api/ai/settings');
+    const d=await r.json();
+    if(!d.ok) return;
+    _aiKeysSet=d.keys_set||{};
+    const chk=document.getElementById('ai-cloud-enabled');
+    chk.checked=d.config.cloud_enabled!==false;
+    document.getElementById('ai-controls').style.opacity=chk.checked?'1':'.4';
+    document.getElementById('ai-controls').style.pointerEvents=chk.checked?'':'none';
+    if(d.config.provider) document.getElementById('ai-provider').value=d.config.provider;
+    aiProviderChange();
+  }catch(e){}
+}
+
 function aiProviderChange(){
   const p=document.getElementById('ai-provider').value;
   const ms=document.getElementById('ai-model');
   ms.innerHTML=(_AI_MODELS[p]||[]).map(m=>`<option value="${m}">${m}</option>`).join('');
-  const saved=localStorage.getItem('mb_ai_key_'+p)||'';
   const inp=document.getElementById('ai-key');
-  inp.dataset.real=saved;
-  inp.value=saved?'••••••••••••':'';
-  inp.placeholder=p==='openrouter'?'sk-or-v1-…':p==='gemini'?'AIza…':'sk-…';
+  // Server never returns the raw key - only whether one is saved. A masked
+  // placeholder shows "there's a key here"; typing replaces it, an empty
+  // Save clears it. This mirrors the change-password field pattern already
+  // used elsewhere (never round-trip the real secret to the browser).
+  const hasKey=!!_aiKeysSet[p];
+  inp.value='';
+  inp.placeholder=hasKey?'•••••••••••• (saved - type to replace)':
+    (p==='openrouter'?'sk-or-v1-…':p==='gemini'?'AIza…':'sk-…');
+  fetch('/api/ai/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({provider:p})}).catch(()=>{});
 }
 
-function aiSaveKey(){
+async function aiSaveKey(){
   const p=document.getElementById('ai-provider').value;
   const inp=document.getElementById('ai-key');
   const v=inp.value.trim();
-  if(v&&!v.startsWith('•')){
-    localStorage.setItem('mb_ai_key_'+p,v);
-    inp.dataset.real=v;
-    inp.value='••••••••••••';
-    toast('Key saved ✓');
-  }
+  try{
+    const r=await fetch('/api/ai/key',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({provider:p,key:v})});
+    const d=await r.json();
+    if(d.ok){
+      _aiKeysSet[p]=d.has_key;
+      inp.value='';
+      inp.placeholder=d.has_key?'•••••••••••• (saved - type to replace)':'API key';
+      toast(d.has_key?'Key saved ✓':'Key cleared');
+    }else{
+      toast(d.error||'Failed to save key');
+    }
+  }catch(e){ toast('Error: '+e.message); }
+}
+
+function aiCloudToggle(){
+  const on=document.getElementById('ai-cloud-enabled').checked;
+  document.getElementById('ai-controls').style.opacity=on?'1':'.4';
+  document.getElementById('ai-controls').style.pointerEvents=on?'':'none';
+  fetch('/api/ai/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cloud_enabled:on})}).catch(()=>{});
+  toast(on?'Cloud AI enabled':'Cloud AI disabled');
 }
 
 function aiLog(msg,cls=''){
@@ -1595,21 +2531,24 @@ function aiLog(msg,cls=''){
 }
 
 async function aiRun(){
+  if(!document.getElementById('ai-cloud-enabled').checked){
+    aiLog('⚠ Cloud AI is turned off','ai-err');return;
+  }
   const p=document.getElementById('ai-provider').value;
   const m=document.getElementById('ai-model').value;
-  const inp=document.getElementById('ai-key');
-  const k=(inp.dataset.real&&inp.dataset.real.length>4)?inp.dataset.real:inp.value.trim();
   const cmd=document.getElementById('ai-cmd').value.trim();
-  if(!k||k.startsWith('•')){aiLog('⚠ No API key, enter and click Save','ai-err');return;}
+  if(!_aiKeysSet[p]){aiLog('⚠ No API key saved for this provider, enter and click Save','ai-err');return;}
   if(!cmd){aiLog('⚠ Enter a command first','ai-err');return;}
   const btn=document.getElementById('ai-run-btn');
   btn.textContent='⏳ Thinking…';btn.disabled=true;
   aiLog('→ ['+p+'/'+m.split('/').pop()+'] '+cmd);
   try{
+    // Key is never sent from the browser - the server looks it up from its
+    // own server-side store (see /api/ai/key, /api/ai/settings).
     const r=await fetch('/api/ai/run',{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({provider:p,key:k,model:m,command:cmd})
+      body:JSON.stringify({provider:p,model:m,command:cmd})
     });
     const d=await r.json();
     if(!d.ok){aiLog('✗ '+d.error,'ai-err');return;}
@@ -1652,8 +2591,29 @@ async function aiExecActions(actions){
   aiLog('✓ Complete','ai-ok');
 }
 
-// Init AI provider selector
-aiProviderChange();
+// Keyboard layout
+async function kbLoadSettings(){
+  try{
+    const r=await fetch('/api/keyboard/settings');
+    const d=await r.json();
+    if(!d.ok) return;
+    const sel=document.getElementById('kb-layout');
+    // Populate from the server's actual verified-layout list rather than
+    // hardcoding options twice, so an added layout shows up automatically.
+    const labels={us:'US (QWERTY)', uk:'UK (QWERTY)', de:'German (QWERTZ)', fr:'French (AZERTY)'};
+    sel.innerHTML=(d.available_layouts||['us']).map(l=>`<option value="${l}">${labels[l]||l}</option>`).join('');
+    sel.value=d.config.layout||'us';
+  }catch(e){}
+}
+function kbLayoutChange(){
+  const layout=document.getElementById('kb-layout').value;
+  fetch('/api/keyboard/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({layout})}).then(()=>toast('Keyboard layout: '+layout)).catch(()=>{});
+}
+
+// Init AI provider selector (settings + keys_set loaded from server, not localStorage)
+aiLoadSettings();
+kbLoadSettings();
 
 // Virtual Keyboard
 let _vkMods={shift:false,ctrl:false,alt:false,win:false,caps:false};
@@ -1698,6 +2658,22 @@ document.addEventListener('mousemove',e=>{
   $vkbd.style.bottom='auto';$vkbd.style.transform='none';
 });
 document.addEventListener('mouseup',()=>{_dragging=false;$vkbd.style.transition='';});
+// Touch equivalent so the keyboard panel can be repositioned on phones/tablets.
+$vkbar.addEventListener('touchstart',e=>{
+  if(e.target.tagName==='BUTTON'||e.target.closest('button')||e.target.closest('#vk-styles')) return;
+  const t=e.touches[0]; if(!t) return;
+  _dragging=true;
+  const r=$vkbd.getBoundingClientRect();
+  _dragX=t.clientX-r.left;_dragY=t.clientY-r.top;
+  $vkbd.style.transition='none';
+},{passive:true});
+document.addEventListener('touchmove',e=>{
+  if(!_dragging) return;
+  const t=e.touches[0]; if(!t) return;
+  $vkbd.style.left=(t.clientX-_dragX)+'px';$vkbd.style.top=(t.clientY-_dragY)+'px';
+  $vkbd.style.bottom='auto';$vkbd.style.transform='none';
+},{passive:true});
+document.addEventListener('touchend',()=>{_dragging=false;$vkbd.style.transition='';});
 
 // Init
 connect();
@@ -1709,7 +2685,11 @@ renderClips();
 renderMacros();
 refreshLockdownStatus();
 refreshJigglerStatus();
+refreshHidAutoDcStatus();
 sysCheckVer();
+oledUpdatePreview();
+refreshOledSettings();
+refreshWolSettings();
 </script>
 </body>
 </html>

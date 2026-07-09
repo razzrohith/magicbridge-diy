@@ -1,0 +1,17 @@
+[Unit]
+Description=MagicBridge OLED status display (SSD1306, I2C)
+After=magicbridge.service
+Wants=magicbridge.service
+
+[Service]
+Type=simple
+User=root
+ExecStart=/usr/bin/python3 /opt/magicbridge/core/oled.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

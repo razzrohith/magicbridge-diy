@@ -36,8 +36,9 @@ class VideoManager:
         self.resolution = "1920x1080"
         self.fps        = 30
         self.quality    = 90      # MJPEG quality 1-100
-        self.mode       = "mjpeg" # "mjpeg" | "h264" (h264 needs ffmpeg)
+        self.mode       = "h264"  # "h264" (C790/CSI + Janus WebRTC, default/preferred) | "mjpeg" (MS2109/USB fallback)
         self.port       = STREAM_PORT
+        self.h264_sink  = None    # ustreamer memsink name, set when h264 mode starts
         self._lock      = threading.Lock()
         self._mon_thr   = None    # watchdog thread
 
@@ -68,17 +69,110 @@ class VideoManager:
         return devices
 
     def get_best_device(self) -> str:
-        """Return best V4L2 capture device, preferring USB over internal Pi devices."""
+        """Return best V4L2 capture device.
+
+        Priority order:
+          1. C790/TC358743 CSI capture node — matched by name/bus containing
+             "tc358743" or "unicam" (the kernel driver name for the Pi's CSI
+             receiver block that the TC358743 sits behind). This is the
+             board this whole video-latency upgrade is built around, so it
+             outranks everything else once present, INCLUDING a USB dongle
+             that might still be plugged in during a transition period.
+          2. USB capture devices (the MS2109 dongle, or any other UVC card).
+             Kept as the #2 priority for back-compat with the pre-C790 setup.
+          3. Anything else V4L2 reports (e.g. bcm2835-isp platform nodes) —
+             last resort, generic fallback. NOTE: with a real C790 attached,
+             several bcm2835-isp "platform:" nodes typically also show up
+             (ISP passthrough stages) alongside the actual unicam/tc358743
+             node — rule 1 exists specifically so auto-detect doesn't
+             accidentally land on one of those instead of the real capture
+             node. Confirm against `v4l2-ctl --list-devices` once the board
+             is physically installed; the exact "Card type"/"Bus info"
+             strings can vary by kernel version.
+        """
         devs = self.detect_devices()
         if not devs:
             return None
-        # Prefer USB devices (capture cards). Pi internal devices use "platform:" bus
+
+        def _is_csi_board(d):
+            blob = (d.get("name", "") + " " + d.get("bus", "")).lower()
+            return "tc358743" in blob or "unicam" in blob
+
+        csi = [d for d in devs if _is_csi_board(d)]
+        if csi:
+            log.info("Auto-selected C790/CSI capture device: %s (%s)", csi[0]["device"], csi[0]["name"])
+            return csi[0]["device"]
+
         usb = [d for d in devs if d["bus"].startswith("usb")]
         if usb:
             log.info("Auto-selected USB capture device: %s (%s)", usb[0]["device"], usb[0]["name"])
             return usb[0]["device"]
-        log.info("No USB capture device found, using: %s", devs[0]["device"])
+
+        log.info("No USB or C790/CSI device found, falling back to first V4L2 device: %s", devs[0]["device"])
         return devs[0]["device"]
+
+    # Audio (C790 I2S HDMI de-embedded audio -> Janus, see h264.md's audio block)
+
+    def detect_audio_device(self) -> str:
+        """Best-effort detection of the ALSA capture card fed by the C790's
+        I2S output (dtoverlay=tc358743-audio). Returns an "hw:N" string, or
+        None if nothing looks like it, so callers can fall back sanely
+        instead of feeding Janus a guess that's silently wrong.
+
+        Real ALSA card naming for this overlay varies (seen as "tc358743"
+        or similar in different kernel/overlay versions), so this matches
+        loosely on the card list rather than assuming a fixed index like
+        the upstream docs' "hw:1" example — that number depends on what
+        else (HDMI audio out, USB audio, etc.) is enumerated first on a
+        given boot, so hardcoding it is exactly the kind of guess this
+        avoids.
+        """
+        try:
+            out = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=3).stdout
+        except Exception:
+            return None
+        for line in out.splitlines():
+            m = re.match(r"card (\d+):.*\[(.*?)\]", line)
+            if m and ("tc358743" in line.lower() or "csi" in line.lower() or "hdmi" in line.lower()):
+                card = m.group(1)
+                log.info("Auto-detected C790 audio capture device: hw:%s (%s)", card, line.strip())
+                return f"hw:{card}"
+        log.info("No C790/TC358743 audio capture card found in `arecord -l` "
+                 "(expected if dtoverlay=tc358743-audio isn't loaded yet, or "
+                 "the board isn't wired for audio)")
+        return None
+
+    def _sync_janus_audio_cfg(self):
+        """Rewrite janus.plugin.ustreamer.jcfg's audio block with whatever
+        was actually detected, so a wrong install-time guess (or a card
+        index that shifts across boots) self-heals instead of silently
+        staying wrong. No-ops safely if Janus isn't installed at all (e.g.
+        before install_janus_webrtc.sh has ever been run) or no audio
+        device is found — h264 video keeps working either way; audio is
+        additive, never load-bearing for the video path.
+        """
+        jcfg_path = "/opt/janus/lib/janus/configs/janus.plugin.ustreamer.jcfg"
+        if not os.path.isfile(jcfg_path):
+            return
+        audio_dev = self.detect_audio_device()
+        if not audio_dev:
+            return
+        try:
+            text = open(jcfg_path).read()
+            new_block = (
+                "audio: {\n"
+                f'    device = "{audio_dev}"\n'
+                f'    tc358743 = "{self.device}"\n'
+                "}\n"
+            )
+            if re.search(r"audio:\s*\{[^}]*\}", text, re.S):
+                text = re.sub(r"audio:\s*\{[^}]*\}\s*", new_block, text, flags=re.S)
+            else:
+                text = text.rstrip() + "\n" + new_block
+            open(jcfg_path, "w").write(text)
+            log.info("Synced Janus audio config: device=%s tc358743=%s", audio_dev, self.device)
+        except Exception as e:
+            log.warning("Could not sync Janus audio config (non-fatal, video unaffected): %s", e)
 
     def get_resolutions(self, device: str = None) -> list:
         """Return sorted list of supported resolutions for a device."""
@@ -148,6 +242,14 @@ class VideoManager:
           1. Explicit `resolution` argument (e.g. from stealth panel override)
           2. Auto-detect highest native MJPEG resolution from capture card
           3. Self.resolution fallback (default 1280x720)
+
+        mode:
+          "mjpeg" (default) - existing MS2109/USB-dongle path, unchanged.
+          "h264"             - C790/CSI hardware H.264 + WebRTC path (see
+                               _start_ustreamer_h264). Only meaningful once
+                               the C790 board + Janus gateway are installed;
+                               automatically falls back to mjpeg if the
+                               ustreamer build or device don't support it.
         """
         with self._lock:
             if device:              self.device     = device
@@ -165,7 +267,9 @@ class VideoManager:
             # Auto-detect best native MJPEG resolution when not explicitly set.
             # This lets MagicBridge adapt to any laptop/screen resolution automatically:
             # 14" 1080p, 16" 1440p, 4K, etc. Just uses whatever the capture card signals.
-            if not resolution:
+            # Skipped in h264 mode: the C790/CSI path uses whatever resolution is
+            # already configured (typically 1920x1080), not the MJPEG-block scan.
+            if not resolution and self.mode != "h264":
                 best = self.get_best_mjpeg_resolution(self.device)
                 if best and best != self.resolution:
                     log.info("Auto-resolution: %s -> %s (native MJPEG from capture card)",
@@ -175,7 +279,10 @@ class VideoManager:
             self._stop_locked()
 
             if shutil.which("ustreamer"):
-                ok = self._start_ustreamer()
+                if self.mode == "h264":
+                    ok = self._start_ustreamer_h264()
+                else:
+                    ok = self._start_ustreamer()
             else:
                 log.info("ustreamer not found, using ffmpeg fallback")
                 ok = self._start_ffmpeg()
@@ -193,7 +300,10 @@ class VideoManager:
         with self._lock:
             if self.device:
                 if shutil.which("ustreamer"):
-                    self._start_ustreamer()
+                    if self.mode == "h264":
+                        self._start_ustreamer_h264()
+                    else:
+                        self._start_ustreamer()
                 else:
                     self._start_ffmpeg()
 
@@ -277,6 +387,112 @@ class VideoManager:
         except Exception as e:
             log.error("ustreamer start error: %s", e)
             return False
+
+    def _start_ustreamer_h264(self) -> bool:
+        """Launch ustreamer with hardware H.264 encode for the C790/CSI capture
+        path, feeding a memsink that the Janus WebRTC gateway's ustreamer
+        plugin reads from for near-zero-latency WebRTC delivery.
+
+        Requirements (see MAGICBRIDGE_HANDBOOK.md / video_latency_upgrade
+        notes for the full install steps):
+          - C790 HDMI-to-CSI2 board wired into the Pi 4 CSI port (not USB)
+          - ustreamer built with WITH_JANUS=1 (memsink support) — the plain
+            apt package may not have this; install_janus_webrtc.sh builds
+            Janus Gateway first (source, pinned tag — its headers are a
+            build-time dependency of ustreamer's Janus plugin) then
+            ustreamer, installing the result ahead of /usr/bin/ustreamer
+            in PATH
+          - Pi 4 GPU V4L2 M2M H.264 encoder available (stock Raspberry Pi
+            OS Bookworm exposes this automatically; ustreamer auto-selects
+            it, override via --h264-m2m-device if needed)
+          - Janus WebRTC Gateway installed & running with its ustreamer
+            plugin configured to read the same --h264-sink name below
+
+        Safe to call before any of the above exists: if the ustreamer binary
+        doesn't understand these flags, or the process dies immediately
+        (e.g. still pointed at the old MS2109 USB device), this method logs
+        why and falls back to the existing MJPEG path automatically so the
+        stream never just goes dark.
+        """
+        try:
+            import subprocess as _sp
+            _r = _sp.run(['systemctl', 'is-active', 'ustreamer.service'],
+                         capture_output=True, text=True, timeout=2)
+            if _r.stdout.strip() == 'active':
+                log.info("Stopping systemd-managed ustreamer.service to apply settings directly")
+                _sp.run(['systemctl', 'stop', 'ustreamer.service'],
+                        capture_output=True, timeout=5)
+                time.sleep(0.3)
+        except Exception:
+            pass
+
+        self._running = False
+        sink_name = "magicbridge::h264"
+        self.h264_sink = sink_name
+        # Base capture/encoder flags follow pikvm/ustreamer's documented
+        # TC358743-class recipe (README.md "Usage" section) — the C790 is
+        # the same class of HDMI-to-CSI2 DV-timings bridge chip. --encoder
+        # M2M-IMAGE is hardware JPEG encode for the plain /stream path
+        # (kept alive as a fallback even in h264 mode); it is NOT the H.264
+        # encoder — that's a separate, always-available GPU M2M path that
+        # --h264-sink below turns on regardless of --encoder.
+        #
+        # --h264-sink-mode/-rm are required per pikvm/ustreamer docs/h264.md
+        # so the shared-memory segment has sane permissions and doesn't
+        # linger after ustreamer exits (a stale segment from a previous run
+        # would otherwise block Janus from reading the new one).
+        cmd = [
+            "ustreamer",
+            "--device",          self.device,
+            "--format",          "UYVY",
+            "--encoder",         "M2M-IMAGE",
+            "--workers",          "3",
+            "--persistent",
+            "--dv-timings",
+            "--drop-same-frames", "30",
+            "--resolution",       self.resolution,
+            "--desired-fps",      str(self.fps),
+            "--host",             STREAM_HOST,
+            "--port",             str(self.port),
+            "--h264-sink",        sink_name,
+            "--h264-sink-mode",   "660",
+            "--h264-sink-rm",
+            "--h264-bitrate",     "5000",
+            "--h264-gop",         str(self.fps),    # ~1s keyframe interval
+        ]
+        try:
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+            )
+            time.sleep(1.0)
+            if self.process.poll() is not None:
+                log.warning(
+                    "ustreamer H.264 mode exited immediately (device=%s res=%s). "
+                    "Likely causes: ustreamer binary lacks --h264-sink/M2M support "
+                    "(needs the Janus-enabled build), C790 not yet connected, or "
+                    "wrong /dev/videoN selected. Falling back to MJPEG.",
+                    self.device, self.resolution,
+                )
+                self.process = None
+                self.mode = "mjpeg"
+                return self._start_ustreamer()
+            log.info("ustreamer H.264: %s %s %dfps -> sink=%s (Janus reads this for WebRTC)",
+                      self.device, self.resolution, self.fps, sink_name)
+            try:
+                self._sync_janus_audio_cfg()
+            except Exception:
+                pass  # audio is additive - never let it affect the video path's return value
+            return True
+        except FileNotFoundError:
+            log.error("ustreamer binary not found")
+            return False
+        except Exception as e:
+            log.error("ustreamer H.264 start error: %s", e)
+            self.mode = "mjpeg"
+            return self._start_ustreamer()
 
     def _start_ffmpeg(self) -> bool:
         """
@@ -462,6 +678,8 @@ class VideoManager:
             "port":       self.port,
             "streamer":   streamer,
             "devices":    self.detect_devices(),
+            "h264_sink":  self.h264_sink,
+            "audio_device": self.detect_audio_device() if self.h264_sink else None,
         }
 
     def start_watchdog(self):

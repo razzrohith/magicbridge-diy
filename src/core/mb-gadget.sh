@@ -91,6 +91,18 @@ echo "0x00"    > "$GADGET_DIR/bDeviceClass"
 echo "0x00"    > "$GADGET_DIR/bDeviceSubClass"
 echo "0x00"    > "$GADGET_DIR/bDeviceProtocol"
 
+# Cap negotiated speed to full-speed (12 Mbps). Left unset, dwc2/configfs
+# defaults this to its max ceiling (shows as "super-speed-plus" even though
+# the Pi 4's OTG controller physically tops out at high-speed) and the host
+# negotiates high-speed. Real wireless keyboard/mouse combo receivers -
+# including the Logitech Unifying Receiver this gadget impersonates -
+# enumerate at full-speed, not high-speed: confirmed via kernel log capture
+# ("new full-speed USB device") on real hardware. A HID gadget answering at
+# high-speed is a mismatch a curious target could notice even without any
+# active probing tool. Must be written before UDC bind - the kernel rejects
+# changing it on an already-bound gadget.
+echo "full-speed" > "$GADGET_DIR/max_speed" 2>/dev/null || echo "mb-gadget: WARNING could not set max_speed, continuing at controller default"
+
 # Strings (manufacturer / product / serial)
 mkdir -p "$GADGET_DIR/strings/0x409"
 printf '%s' "$MFR"  > "$GADGET_DIR/strings/0x409/manufacturer"

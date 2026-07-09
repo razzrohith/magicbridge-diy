@@ -11,6 +11,7 @@ Mouse report (4 bytes):    [buttons, dx, dy, wheel]
 import struct
 import threading
 import time
+import random
 import logging
 
 log = logging.getLogger("magicbridge.hid")
@@ -98,8 +99,28 @@ MODIFIER_MAP: dict = {
     "MetaRight":    0x80,   # bit 7 = Right GUI
 }
 
-# Character → (JS code, shift_required) for paste feature
-CHAR_MAP: dict = {
+# Character -> (JS code, shift_required) for the paste/AI-typed-text feature.
+# IMPORTANT: KEY_MAP above sends USB HID keyboard USAGE codes, which the HID
+# spec defines by PHYSICAL KEY POSITION (usage 0x04 is "the key where A sits
+# on a US layout"), not by printed character. The target OS's own keyboard
+# layout setting is what turns "physical position 0x04" into an actual
+# typed character. So CHAR_MAP is really "which physical key position do I
+# need to hold (and with Shift or not) to produce this character, assuming
+# the target is set to THIS layout" - it's inherently layout-specific, and
+# a single hardcoded US-only table will type the wrong characters (garbled
+# paste/AI output) on a target set to a non-US layout, even though nothing
+# is "broken" - both sides are behaving correctly per their own assumptions.
+#
+# CHAR_MAPS holds one table per target OS keyboard layout. Only "us" is
+# built out and verified right now; adding another (uk/de/fr/etc.) means
+# adding a new entry here with correct per-layout physical-position mappings
+# - not a design change, just data entry - once there's an actual UK/DE/FR
+# target to verify against. get_layout_names()/set_layout() below is the
+# intended integration point (magicbridge.py's keyboard-settings endpoint
+# calls set_layout() with a value read from config.json).
+CHAR_MAPS: dict = {}
+
+CHAR_MAPS["us"] = {
     # Lowercase letters
     "a":("KeyA",False),"b":("KeyB",False),"c":("KeyC",False),"d":("KeyD",False),
     "e":("KeyE",False),"f":("KeyF",False),"g":("KeyG",False),"h":("KeyH",False),
@@ -142,6 +163,33 @@ CHAR_MAP: dict = {
     ".":("Period",      False), ">":("Period",        True),
     "/":("Slash",       False), "?":("Slash",         True),
 }
+
+_active_layout = "us"
+# Back-compat alias - existing code (and this module's own send_text default)
+# referenced the bare CHAR_MAP name; keep it pointing at whichever layout is
+# active so nothing else needs to change if a caller reads CHAR_MAP directly.
+CHAR_MAP = CHAR_MAPS["us"]
+
+
+def get_layout_names() -> list:
+    return sorted(CHAR_MAPS.keys())
+
+
+def set_layout(name: str) -> bool:
+    """Switch the active target-keyboard-layout table. Returns False (and
+    leaves the previous layout in effect) for an unknown name rather than
+    raising, since a bad/old config value shouldn't take typing down."""
+    global _active_layout, CHAR_MAP
+    if name not in CHAR_MAPS:
+        log.warning("Unknown keyboard layout %r requested, keeping %r", name, _active_layout)
+        return False
+    _active_layout = name
+    CHAR_MAP = CHAR_MAPS[name]
+    return True
+
+
+def get_layout() -> str:
+    return _active_layout
 
 
 class HIDKeyboard:
@@ -225,6 +273,12 @@ class HIDKeyboard:
         Type a string character-by-character (paste feature).
         Safe to call from a thread pool executor.
         Skips characters not in CHAR_MAP (non-ASCII, etc.).
+
+        Timing is jittered rather than a fixed interval - a perfectly
+        uniform inter-keystroke delay is an obvious synthetic-input
+        signature. This only affects timing between reports, never what
+        gets typed. Occasional slightly longer pauses after spaces/
+        punctuation mimic natural word-boundary hesitation.
         """
         for ch in text:
             entry = CHAR_MAP.get(ch)
@@ -238,10 +292,13 @@ class HIDKeyboard:
                 saved_mods = self.modifiers
                 mods = saved_mods | (MODIFIER_MAP["ShiftLeft"] if need_shift else 0)
                 self._write(mods, {hid_code})
-            time.sleep(delay)
+            hold = delay * random.uniform(0.55, 1.85)
+            if ch in " .,!?\n" and random.random() < 0.15:
+                hold += random.uniform(0.04, 0.14)
+            time.sleep(hold)
             with self._lock:
                 self._write(saved_mods, self.pressed)
-            time.sleep(delay * 0.5)
+            time.sleep(hold * random.uniform(0.35, 0.85))
 
 
 class HIDMouse:
