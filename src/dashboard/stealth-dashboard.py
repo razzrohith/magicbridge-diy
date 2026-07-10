@@ -473,6 +473,69 @@ def _funnel_status() -> dict:
     except Exception:
         return {"active": False, "url": "", "hostname": ""}
 
+def _run_funnel_enable(deadline=20):
+    """`tailscale funnel --bg --yes 443` has a real quirk (confirmed by hand
+    on this unit, tailscale 1.98.8): when Funnel isn't turned on for the
+    tailnet yet, it prints "Funnel is not enabled on your tailnet... To
+    enable, visit: https://login.tailscale.com/f/funnel?node=..." within
+    about a second, then just hangs instead of exiting - even run as root,
+    even with --bg --yes. subprocess.run's capture_output only hands back
+    output once the process actually exits, so a plain blocking call sees
+    nothing until it's force-killed by a timeout, even though the real,
+    actionable answer was sitting in the pipe the whole time.
+    This polls stdout line-by-line instead of waiting for exit, so a fast
+    definitive answer (success, or this specific "go enable it" message)
+    doesn't have to wait for a hard kill to be reported."""
+    proc = subprocess.Popen(["tailscale","funnel","--bg","--yes","443"],
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, bufsize=1)
+    lines = []
+    start = time.time()
+    try:
+        while time.time() - start < deadline:
+            line = proc.stdout.readline()
+            if line:
+                lines.append(line)
+                out = "".join(lines)
+                if "not enabled on your tailnet" in out and "login.tailscale.com/f/funnel" not in out:
+                    # The enable-it-here URL is on a line just after the
+                    # message we just matched on, not the same line - give
+                    # it up to 1 more second to show up before we terminate,
+                    # otherwise we'd truncate the read right before the one
+                    # piece of information Raj actually needs to act on.
+                    grace_start = time.time()
+                    while time.time() - grace_start < 1.0 and "login.tailscale.com/f/funnel" not in out:
+                        extra = proc.stdout.readline()
+                        if extra:
+                            lines.append(extra)
+                            out = "".join(lines)
+                        else:
+                            time.sleep(0.05)
+                if "not enabled on your tailnet" in out:
+                    m = re.search(r"https://login\.tailscale\.com/f/funnel\S*", out)
+                    url = m.group(0) if m else "https://login.tailscale.com/admin/acls"
+                    proc.terminate()
+                    try: proc.wait(timeout=2)
+                    except Exception: proc.kill()
+                    return False, f"Funnel isn't enabled for your tailnet yet. Enable it once at {url}", "not_enabled"
+            elif proc.poll() is not None:
+                break
+            else:
+                time.sleep(0.1)
+        if proc.poll() is None:
+            proc.terminate()
+            try: proc.wait(timeout=2)
+            except Exception: proc.kill()
+            out = "".join(lines).strip()
+            return False, out or f"No response after {deadline}s - it may still be applying in the background, check status in a moment", "timeout"
+        out = "".join(lines).strip()
+        ok = proc.returncode == 0
+        return ok, (out if ok else (out or f"exited with code {proc.returncode}")), "done"
+    except Exception as e:
+        try: proc.kill()
+        except Exception: pass
+        return False, str(e), "error"
+
 def _local_ip() -> str:
     try:
         return subprocess.run(["hostname","-I"],
@@ -1987,37 +2050,38 @@ def api_apply():
         elif act == "ts_funnel_on":
             # Was subprocess.Popen (fire-and-forget) - returned ok:True the
             # instant the process launched, before tailscale even talked to
-            # the control server, so a real failure (Funnel not enabled on
-            # the tailnet's ACL, tailscale too old, not logged in, etc.) was
-            # silently swallowed and the UI had nothing but a hopeful toast
-            # to show. Blocking on subprocess.run so we can report what
-            # actually happened.
-            try:
-                r = subprocess.run(["tailscale","funnel","443"],
-                                    capture_output=True, text=True, timeout=20)
-                out = (r.stderr or r.stdout).strip()
-                if r.returncode == 0:
-                    _log_sess("Tailscale Funnel enabled :443")
-                    return jsonify({"ok": True, "out": out})
-                _log_sess(f"Tailscale Funnel enable FAILED: {out}")
-                return jsonify({"ok": False,
-                                 "error": out or "tailscale funnel 443 exited non-zero"})
-            except subprocess.TimeoutExpired:
-                _log_sess("Tailscale Funnel enable TIMED OUT")
-                return jsonify({"ok": False,
-                                 "error": "Timed out talking to Tailscale - it may still be applying in the background, check status in a moment"})
+            # the control server, so a real failure was silently swallowed.
+            # Then, once that was fixed to actually block on the command,
+            # a SECOND real bug surfaced: `tailscale funnel 443` hangs
+            # rather than exiting when Funnel isn't enabled for the tailnet
+            # yet (confirmed by hand on this unit) - it prints the real,
+            # actionable "go enable it at this URL" message almost
+            # instantly, then just sits there. _run_funnel_enable() polls
+            # for that message instead of blocking on process exit, so we
+            # can hand back the real enable-it-here link instead of a bare
+            # timeout.
+            ok, msg, kind = _run_funnel_enable(deadline=20)
+            if ok:
+                _log_sess("Tailscale Funnel enabled :443")
+                return jsonify({"ok": True, "out": msg})
+            _log_sess(f"Tailscale Funnel enable FAILED ({kind}): {msg}")
+            return jsonify({"ok": False, "error": msg})
 
         elif act == "ts_funnel_off":
+            # NOTE: `tailscale funnel --remove` is not a real flag on this
+            # tailscale version ("flag provided but not defined: -remove") -
+            # confirmed by hand. It always failed silently under the old
+            # fire-and-forget Popen. The correct subcommand is `reset`.
             try:
-                r = subprocess.run(["tailscale","funnel","--remove"],
-                                    capture_output=True, text=True, timeout=20)
+                r = subprocess.run(["tailscale","funnel","reset"],
+                                    capture_output=True, text=True, timeout=15)
                 out = (r.stderr or r.stdout).strip()
                 if r.returncode == 0:
                     _log_sess("Tailscale Funnel disabled")
                     return jsonify({"ok": True, "out": out})
                 _log_sess(f"Tailscale Funnel disable FAILED: {out}")
                 return jsonify({"ok": False,
-                                 "error": out or "tailscale funnel --remove exited non-zero"})
+                                 "error": out or "tailscale funnel reset exited non-zero"})
             except subprocess.TimeoutExpired:
                 _log_sess("Tailscale Funnel disable TIMED OUT")
                 return jsonify({"ok": False,
