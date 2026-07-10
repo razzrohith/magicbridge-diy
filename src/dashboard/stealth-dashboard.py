@@ -934,6 +934,14 @@ header{
   position:relative;z-index:15;display:flex;gap:16px;flex-wrap:wrap;padding:6px 16px;
   background:var(--sf2);border-bottom:1px solid var(--br);
   font:11px/1.6 var(--mono);color:var(--t3);letter-spacing:.3px}
+.spark{vertical-align:middle;margin-left:5px}
+.statusstrip{
+  position:relative;z-index:14;display:flex;gap:7px;flex-wrap:wrap;padding:8px 16px;
+  background:var(--sf);border-bottom:1px solid var(--br)}
+.tile{
+  display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;
+  font:10.5px/1.4 var(--mono);letter-spacing:.5px;text-transform:uppercase;
+  border:1px solid var(--br2);background:rgba(6,13,22,.55);color:var(--t2)}
 main{position:relative;z-index:1;padding:14px 16px;display:grid;gap:14px}
 @media(min-width:680px){main{grid-template-columns:1fr 1fr}}
 .full{grid-column:1/-1}
@@ -1027,11 +1035,14 @@ hr{border:none;border-top:1px solid var(--br);margin:10px 0}
 
 <div class="sbar" role="status" aria-live="polite">
   <span id="s-temp">— °C</span>
+  <svg id="temp-spark" class="spark" width="52" height="16" viewBox="0 0 52 16" aria-hidden="true"></svg>
   <span>Up: <span id="s-up">—</span></span>
   <span>IP: <span id="s-ip">—</span></span>
   <span id="s-ts">Tailscale: —</span>
   <span id="s-build">Build: —</span>
 </div>
+
+<div class="statusstrip" id="status-strip" role="status" aria-label="System health overview" aria-live="polite"></div>
 
 <main id="mc" aria-label="Configuration">
 
@@ -1317,6 +1328,51 @@ let selP = 0;
 let selE = 0;
 let selM = -1;  // -1 = plain random, no vendor OUI
 
+/* Status strip + temp sparkline. Hand-rolled (no chart library) to keep
+   the panel fully self-contained - no CDN dependency for a self-hosted
+   tool that should still work with the Pi offline from the internet.
+   sysState is populated incrementally by whichever poller resolves first
+   (loadStatus/loadTs/loadFunnel/loadWifiStatus/loadStats all run in
+   parallel at init), so the strip just re-renders from current known
+   state every time any one of them updates - 'wa' (amber) is the
+   not-yet-known/pending default, not an error. */
+const sysState = {usb:'wa', edid:'wa', mac:'wa', ts:'wa', funnel:'wa', wifi:'wa', svc:'wa'};
+
+function renderStrip() {
+  const el = document.getElementById('status-strip');
+  if (!el) return;
+  const tiles = [
+    ['USB', sysState.usb], ['EDID', sysState.edid], ['MAC', sysState.mac],
+    ['Tailscale', sysState.ts], ['Funnel', sysState.funnel],
+    ['WiFi', sysState.wifi], ['Services', sysState.svc],
+  ];
+  const dotClass = s => s === 'ok' ? 'd-ok' : s === 'er' ? 'd-er' : 'd-wa';
+  el.innerHTML = tiles.map(([label, s]) =>
+    '<span class="tile"><span class="dot ' + dotClass(s) + '"></span>' + label + '</span>'
+  ).join('');
+}
+
+const TEMP_HIST_MAX = 30;   // 30 samples * 30s poll = last ~15 minutes
+let tempHistory = [];
+
+function renderTempSpark() {
+  const svg = document.getElementById('temp-spark');
+  if (!svg || tempHistory.length < 2) return;
+  const w = 52, h = 16, pad = 2;
+  const min = Math.min(...tempHistory), max = Math.max(...tempHistory);
+  const range = (max - min) || 1;
+  const step = (w - pad * 2) / (tempHistory.length - 1);
+  const pts = tempHistory.map((t, i) => {
+    const x = pad + i * step;
+    const y = h - pad - ((t - min) / range) * (h - pad * 2);
+    return x.toFixed(1) + ',' + y.toFixed(1);
+  }).join(' ');
+  const last = tempHistory[tempHistory.length - 1];
+  const color = last >= 70 ? 'var(--er)' : last >= 55 ? 'var(--wa)' : 'var(--ok)';
+  svg.innerHTML = '<polyline points="' + pts + '" fill="none" '
+    + 'style="stroke:' + color + ';stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round"/>';
+}
+
 async function api(url, body) {
   const o = {headers: {'X-CSRF-Token': CSRF}};
   if (body !== undefined) {
@@ -1509,6 +1565,8 @@ async function loadTs() {
     el.innerHTML = '<span class="dot d-er"></span>' + (r.state||'disconnected');
     if (sb) sb.textContent = 'Tailscale: off';
   }
+  sysState.ts = r.connected ? 'ok' : 'er';
+  renderStrip();
 }
 
 async function tsUp() {
@@ -1531,6 +1589,8 @@ async function loadFunnel() {
       + '<a href="'+r.enable_url+'" target="_blank" style="color:var(--ac)">Enable it here</a>';
   else
     el.innerHTML = '<span class="dot d-er"></span>Off';
+  sysState.funnel = r.active ? 'ok' : 'wa';  // off is a normal default, not an error
+  renderStrip();
 }
 
 async function funnelOn() {
@@ -1602,12 +1662,14 @@ async function loadStatus() {
   }
   const mp = r.mac_persist || {};
   const mps = document.getElementById('mac-persist-st');
+  const macEntries = Object.entries(mp).filter(([,v]) => v);
   if (mps) {
-    const entries = Object.entries(mp).filter(([,v]) => v);
-    mps.innerHTML = entries.length
-      ? '<span class="dot d-ok"></span>Boot persist: '+entries.map(([i,m])=>i+'→'+m).join(', ')
+    mps.innerHTML = macEntries.length
+      ? '<span class="dot d-ok"></span>Boot persist: '+macEntries.map(([i,m])=>i+'→'+m).join(', ')
       : '';
   }
+  sysState.usb = r.usb_bound ? 'ok' : 'er';
+  sysState.mac = macEntries.length ? 'ok' : 'wa';
   const ed = r.edid || {};
   document.getElementById('e-mfr').value  = ed.mfr || '';
   document.getElementById('e-name').value = ed.product_name || '';
@@ -1620,8 +1682,10 @@ async function loadStatus() {
       ? '<span class="dot d-ok"></span>C790/TC358743 detected - identity applies live.'
       : '<span class="dot d-er"></span>'+(hw.reason || 'Hardware pending')+' Settings save now and apply automatically once ready.';
   }
+  sysState.edid = (ed.enabled && hw.ready) ? 'ok' : 'wa';
   const ledChk = document.getElementById('led-enabled');
   if (ledChk) ledChk.checked = r.leds_enabled !== false;
+  renderStrip();
 }
 
 async function toggleLeds() {
@@ -1641,19 +1705,27 @@ async function loadStats() {
   if (be) be.textContent = 'Build: ' + (r.build || '—');
   document.getElementById('sys-inf').innerHTML  =
     'CPU: '+t+' &nbsp;·&nbsp; Up: '+(r.uptime||'—')+' &nbsp;·&nbsp; IP: '+(r.ip||'—');
+  if (typeof r.temp === 'number') {
+    tempHistory.push(r.temp);
+    if (tempHistory.length > TEMP_HIST_MAX) tempHistory.shift();
+    renderTempSpark();
+  }
   const svcEl = document.getElementById('sys-svc');
+  const svc = r.services || {};
+  const svcVals = Object.values(svc);
   if (svcEl) {
-    const svc = r.services || {};
     svcEl.innerHTML = Object.entries(svc).map(([name, state]) =>
       '<span class="dot '+(state==='active'?'d-ok':'d-er')+'"></span>'+name
     ).join(' &nbsp; ') || 'Service status unavailable';
   }
+  sysState.svc = (svcVals.length && svcVals.every(s => s === 'active')) ? 'ok' : 'er';
   const kl = document.getElementById('kvm-last');
   kl.innerHTML = r.kvm
     ? '<span class="dot d-ok"></span>Last KVM: '+r.kvm.time+' from '+r.kvm.ip
     : 'No KVM connections logged yet.';
   const sl = document.getElementById('sess-log');
   if (sl) sl.textContent = (r.sess_log||[]).join('\n');
+  renderStrip();
 }
 
 /* WiFi */
@@ -1664,6 +1736,8 @@ async function loadWifiStatus() {
     el.innerHTML = '<span class="dot d-ok"></span>'+r.ssid+' · '+r.ip+(r.signal?' · '+r.signal+'%':'');
   else
     el.innerHTML = '<span class="dot d-er"></span>Not connected';
+  sysState.wifi = r.connected ? 'ok' : 'er';
+  renderStrip();
 }
 
 async function loadSavedWifi() {
@@ -1762,6 +1836,7 @@ async function savePw() {
 }
 
 /* Init */
+renderStrip();
 buildPills();
 buildEdidPills();
 buildMacPills();
@@ -1834,6 +1909,13 @@ def api_status():
         "vid":         _usb_r("idVendor"),
         "pid":         _usb_r("idProduct"),
         "bcdUSB":      _usb_r("bcdUSB"),
+        # Whether the gadget is actually bound to a UDC right now - i.e.
+        # whether the target PC can currently see this as a USB device at
+        # all. Empty during the brief window _rebind() unbinds/rebinds for
+        # (a few hundred ms), which is normal; empty otherwise means the
+        # gadget genuinely isn't presenting - a real, previously-invisible
+        # failure mode now surfaced in the status strip.
+        "usb_bound":   bool(_usb_r("UDC")),
         "mac":         _cur_mac("eth0"),
         "ddns_host":   cfg.get("duckdns", {}).get("host", ""),
         "ddns":        {"host": cfg.get("duckdns", {}).get("host", ""),
