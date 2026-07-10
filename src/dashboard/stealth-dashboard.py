@@ -469,9 +469,22 @@ def _funnel_status() -> dict:
         d  = json.loads(sr.stdout or "{}")
         dns = d.get("Self", {}).get("DNSName", "").rstrip(".")
         url = f"https://{dns}/" if (dns and active) else ""
-        return {"active": active, "url": url, "hostname": dns}
+        # Surface the cached "go enable it on your tailnet" URL (saved by
+        # _run_funnel_enable via the ts_funnel_on handler below) so it
+        # persists in the status area across page loads instead of only
+        # flashing in a toast for 3.5s right after the failed click. Once
+        # Funnel is actually active the hint is stale, so clear it here too
+        # (covers the case where it got enabled from another device/the
+        # Tailscale admin console directly, not just via this panel).
+        cfg = _load()
+        ts_cfg = cfg.get("tailscale", {})
+        enable_url = "" if active else ts_cfg.get("funnel_enable_url", "")
+        if active and ts_cfg.get("funnel_enable_url"):
+            cfg.setdefault("tailscale", {})["funnel_enable_url"] = ""
+            _save(cfg)
+        return {"active": active, "url": url, "hostname": dns, "enable_url": enable_url}
     except Exception:
-        return {"active": False, "url": "", "hostname": ""}
+        return {"active": False, "url": "", "hostname": "", "enable_url": ""}
 
 def _run_funnel_enable(deadline=20):
     """`tailscale funnel --bg --yes 443` has a real quirk (confirmed by hand
@@ -485,7 +498,9 @@ def _run_funnel_enable(deadline=20):
     actionable answer was sitting in the pipe the whole time.
     This polls stdout line-by-line instead of waiting for exit, so a fast
     definitive answer (success, or this specific "go enable it" message)
-    doesn't have to wait for a hard kill to be reported."""
+    doesn't have to wait for a hard kill to be reported.
+    Returns (ok, message, kind, enable_url) - enable_url is the parsed
+    tailnet-enable link when kind == "not_enabled", else None."""
     proc = subprocess.Popen(["tailscale","funnel","--bg","--yes","443"],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, bufsize=1)
@@ -517,7 +532,7 @@ def _run_funnel_enable(deadline=20):
                     proc.terminate()
                     try: proc.wait(timeout=2)
                     except Exception: proc.kill()
-                    return False, f"Funnel isn't enabled for your tailnet yet. Enable it once at {url}", "not_enabled"
+                    return False, f"Funnel isn't enabled for your tailnet yet. Enable it once at {url}", "not_enabled", url
             elif proc.poll() is not None:
                 break
             else:
@@ -527,14 +542,14 @@ def _run_funnel_enable(deadline=20):
             try: proc.wait(timeout=2)
             except Exception: proc.kill()
             out = "".join(lines).strip()
-            return False, out or f"No response after {deadline}s - it may still be applying in the background, check status in a moment", "timeout"
+            return False, out or f"No response after {deadline}s - it may still be applying in the background, check status in a moment", "timeout", None
         out = "".join(lines).strip()
         ok = proc.returncode == 0
-        return ok, (out if ok else (out or f"exited with code {proc.returncode}")), "done"
+        return ok, (out if ok else (out or f"exited with code {proc.returncode}")), "done", None
     except Exception as e:
         try: proc.kill()
         except Exception: pass
-        return False, str(e), "error"
+        return False, str(e), "error", None
 
 def _local_ip() -> str:
     try:
@@ -556,6 +571,34 @@ def _uptime() -> str:
         return "".join([f"{d}d " if d else "", f"{h}h " if h else "", f"{m}m"])
     except Exception:
         return ""
+
+# Service health + build indicator. Confirming "did my deploy actually land"
+# used to always require SSH-ing in and running these two commands by hand -
+# surfacing them in the panel closes that loop.
+_MONITORED_SERVICES = ("magicbridge", "stealth-dashboard", "mb-gadget")
+
+def _service_status() -> dict:
+    try:
+        r = subprocess.run(["systemctl", "is-active", *_MONITORED_SERVICES],
+                           capture_output=True, text=True, timeout=5)
+        states = r.stdout.strip().splitlines()
+        states += ["unknown"] * (len(_MONITORED_SERVICES) - len(states))
+        return dict(zip(_MONITORED_SERVICES, states))
+    except Exception:
+        return {n: "unknown" for n in _MONITORED_SERVICES}
+
+def _build_version() -> str:
+    """Short git hash of the repo clone the Pi's live files were last
+    reconciled against (/opt/magicbridge-repo). The dashboard process
+    already runs as root (see stealth-dashboard.service), so this needs
+    no sudo wrapper - reads git's own objects directly."""
+    try:
+        r = subprocess.run(["git", "-C", "/opt/magicbridge-repo", "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=4)
+        h = r.stdout.strip()
+        return h if r.returncode == 0 and h else "unknown"
+    except Exception:
+        return "unknown"
 
 # Onboard LEDs. ACT (green, SD-card activity) and PWR (red, always-on) are
 # the two physical LEDs on a Pi 4. Toggling is done two ways: live via sysfs
@@ -987,6 +1030,7 @@ hr{border:none;border-top:1px solid var(--br);margin:10px 0}
   <span>Up: <span id="s-up">—</span></span>
   <span>IP: <span id="s-ip">—</span></span>
   <span id="s-ts">Tailscale: —</span>
+  <span id="s-build">Build: —</span>
 </div>
 
 <main id="mc" aria-label="Configuration">
@@ -1191,7 +1235,8 @@ hr{border:none;border-top:1px solid var(--br);margin:10px 0}
     <span class="cd">Device health &amp; controls</span>
   </div>
   <div class="cb">
-    <div id="sys-inf" style="font-size:12px;color:var(--t3);margin-bottom:10px" role="status" aria-live="polite">Loading…</div>
+    <div id="sys-inf" style="font-size:12px;color:var(--t3);margin-bottom:6px" role="status" aria-live="polite">Loading…</div>
+    <div id="sys-svc" style="font-size:11px;color:var(--t3);margin-bottom:10px" role="status" aria-live="polite"></div>
     <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--t2);cursor:pointer;margin-bottom:10px">
       <input type="checkbox" id="led-enabled" checked onchange="toggleLeds()">
       Onboard LEDs (activity/power lights) on
@@ -1405,6 +1450,7 @@ async function randEdidSerial() {
 }
 
 async function resetEdid() {
+  if (!confirm('Reset display identity to default? The connected PC will see a brief HDMI/EDID reload.')) return;
   const r = await api('/stealth/api/apply', {action:'edid_reset'});
   toast(r.ok ? 'Display identity reset' : (r.error||'Error'), r.ok?'ok':'er');
   if (r.ok) loadStatus();
@@ -1480,6 +1526,9 @@ async function loadFunnel() {
     el.innerHTML = '<span class="dot d-ok"></span>Active: <a href="'+r.url+'" target="_blank" style="color:var(--ac)">'+r.url+'</a>';
   else if (r.active)
     el.innerHTML = '<span class="dot d-ok"></span>Active (fetching URL…)';
+  else if (r.enable_url)
+    el.innerHTML = '<span class="dot d-er"></span>Off — not enabled for your tailnet yet. '
+      + '<a href="'+r.enable_url+'" target="_blank" style="color:var(--ac)">Enable it here</a>';
   else
     el.innerHTML = '<span class="dot d-er"></span>Off';
 }
@@ -1504,6 +1553,7 @@ async function funnelOn() {
 }
 
 async function funnelOff() {
+  if (!confirm('Disable Tailscale Funnel? This immediately takes MagicBridge offline from the public internet.')) return;
   const btns = document.querySelectorAll('[onclick="funnelOn()"],[onclick="funnelOff()"]');
   btns.forEach(b => b.disabled = true);
   toast('Disabling funnel…', 'ok');
@@ -1542,6 +1592,14 @@ async function loadStatus() {
   document.getElementById('u-bcdusb').value = r.bcdUSB    || '0x0200';
   document.getElementById('net-mac').value  = r.mac       || '';
   document.getElementById('ddns-h').value   = r.ddns_host || '';
+  const dd = r.ddns || {};
+  const ddSt = document.getElementById('ddns-st');
+  if (ddSt) {
+    ddSt.textContent = dd.last_update
+      ? 'Last updated ' + new Date(dd.last_update).toLocaleString() + ' → ' + dd.last_ip
+      : (dd.host ? 'Configured — not yet confirmed since restart' : '');
+    ddSt.style.color = 'var(--t3)';
+  }
   const mp = r.mac_persist || {};
   const mps = document.getElementById('mac-persist-st');
   if (mps) {
@@ -1579,8 +1637,17 @@ async function loadStats() {
   document.getElementById('s-temp').textContent = t;
   document.getElementById('s-up').textContent   = r.uptime || '—';
   document.getElementById('s-ip').textContent   = r.ip     || '—';
+  const be = document.getElementById('s-build');
+  if (be) be.textContent = 'Build: ' + (r.build || '—');
   document.getElementById('sys-inf').innerHTML  =
     'CPU: '+t+' &nbsp;·&nbsp; Up: '+(r.uptime||'—')+' &nbsp;·&nbsp; IP: '+(r.ip||'—');
+  const svcEl = document.getElementById('sys-svc');
+  if (svcEl) {
+    const svc = r.services || {};
+    svcEl.innerHTML = Object.entries(svc).map(([name, state]) =>
+      '<span class="dot '+(state==='active'?'d-ok':'d-er')+'"></span>'+name
+    ).join(' &nbsp; ') || 'Service status unavailable';
+  }
   const kl = document.getElementById('kvm-last');
   kl.innerHTML = r.kvm
     ? '<span class="dot d-ok"></span>Last KVM: '+r.kvm.time+' from '+r.kvm.ip
@@ -1769,6 +1836,9 @@ def api_status():
         "bcdUSB":      _usb_r("bcdUSB"),
         "mac":         _cur_mac("eth0"),
         "ddns_host":   cfg.get("duckdns", {}).get("host", ""),
+        "ddns":        {"host": cfg.get("duckdns", {}).get("host", ""),
+                         "last_ip": cfg.get("duckdns", {}).get("last_ip", ""),
+                         "last_update": cfg.get("duckdns", {}).get("last_update", "")},
         "mac_persist": cfg.get("mac_persist", {}),
         "edid":        {**dict(EDID_DEFAULTS), **cfg.get("edid", {})},
         "edid_hw":     (lambda r: {"ready": r[0], "reason": r[1]})(_edid_hw_ready(cfg)),
@@ -1789,6 +1859,8 @@ def api_stats():
         "ip":       _local_ip(),
         "kvm":      _kvm_last(),
         "sess_log": sl,
+        "services": _service_status(),
+        "build":    _build_version(),
     })
 
 
@@ -2033,10 +2105,11 @@ def api_apply():
             if not host or not token:
                 return jsonify({"error": "Hostname and token required"}), 400
             if _ddns_update(host, token):
-                cfg["duckdns"] = {"host": host, "token": token}
+                ip = _ext_ip()
+                cfg["duckdns"] = {"host": host, "token": token, "last_ip": ip,
+                                   "last_update": datetime.datetime.now().isoformat()}
                 _save(cfg)
                 _ddns_cron(host, token)
-                ip = _ext_ip()
                 _log_sess(f"DuckDNS: {host}.duckdns.org → {ip}")
                 return jsonify({"ok": True, "ip": ip})
             return jsonify({"ok": False, "error": "DuckDNS update failed, check hostname and token"})
@@ -2060,12 +2133,19 @@ def api_apply():
             # for that message instead of blocking on process exit, so we
             # can hand back the real enable-it-here link instead of a bare
             # timeout.
-            ok, msg, kind = _run_funnel_enable(deadline=20)
+            ok, msg, kind, enable_url = _run_funnel_enable(deadline=20)
+            # Cache the tailnet-enable URL so it survives a page reload
+            # (see _funnel_status()) instead of only existing for the
+            # lifetime of this one toast. Cleared once Funnel actually
+            # goes active, here and again defensively in _funnel_status().
+            cfg2 = _load()
+            cfg2.setdefault("tailscale", {})["funnel_enable_url"] = (enable_url or "") if not ok else ""
+            _save(cfg2)
             if ok:
                 _log_sess("Tailscale Funnel enabled :443")
                 return jsonify({"ok": True, "out": msg})
             _log_sess(f"Tailscale Funnel enable FAILED ({kind}): {msg}")
-            return jsonify({"ok": False, "error": msg})
+            return jsonify({"ok": False, "error": msg, "enable_url": enable_url})
 
         elif act == "ts_funnel_off":
             # NOTE: `tailscale funnel --remove` is not a real flag on this
