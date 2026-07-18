@@ -135,6 +135,17 @@ repo's `CLAUDE.md`, and Claude Code's own permission prompts (it asks before
 running commands / editing files). The Cowork Desktop-Commander allowlist and
 blocked-command list do NOT apply here and are not needed.
 
+**⚠️ mDNS hostname clash (both devices).** Both Pis currently advertise
+`magicbridge.local`. On the same network that is a **name collision** — mDNS
+can't assign one name to two hosts, so it's ambiguous/unreliable which one
+answers. **Fix (one-time, per device):** give each a distinct hostname so both
+resolve cleanly — DIY → `magicbridge-diy.local`, PiKVM → `magicbridge-pikvm.local`
+(set hostname + mDNS alias + `/etc/hosts`, keeping it stealth-safe: no "pi"/"kvm"
+/"raspberry" tell beyond the MagicBridge brand). Until then, **address each by IP**
+(DIY `172.16.20.116`, PiKVM `172.16.20.209`) — always unambiguous. Note the DIY
+project already had an mDNS self-heal fix (bogus hostname / masked avahi); reuse
+that pattern.
+
 **Dev locations (Windows host):**
 - `E:\Startup\magicbridge-diy` — DIY git repo
 - `E:\Startup\magicbridge-pikvm` — PiKVM git repo
