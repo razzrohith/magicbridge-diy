@@ -1,0 +1,17 @@
+[Unit]
+Description=MagicBridge C790/TC358743 HDMI init (EDID + DV timings)
+Documentation=EDID is volatile on the TC358743; without this there is no video after reboot
+# NOTE: do NOT use After=multi-user.target here. magicbridge.service is pulled in
+# BY multi-user.target, so combining that with Before=magicbridge.service creates
+# an ordering cycle and systemd silently drops magicbridge.
+After=local-fs.target
+Before=magicbridge.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mb-hdmi-init.sh
+RemainAfterExit=yes
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target
