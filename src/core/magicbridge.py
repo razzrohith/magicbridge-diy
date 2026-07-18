@@ -711,14 +711,22 @@ hid_autodc = HidAutoDisconnect()
 
 
 # -- Session / access logging -----------------------------------------------
+# ANONYMITY (MAGICBRIDGE_SYSTEM.md §2 "Data at rest"): auth/session logs are
+# RAM-only (tmpfs), so connection IPs / User-Agents / timestamps never touch the
+# SD card and vanish on power-loss. This log lives in the same tmpfs mount nginx
+# and stealth-dashboard.py already use (/var/log/magicbridge-ram), NOT under
+# /opt/magicbridge (which is ext4 on the SD card). Writing it to /opt persisted
+# weeks of connection history to disk — a real violation pulling the card would
+# expose. Wiped on reboot by design; that's the intended privacy behaviour.
 import json as _jlog, datetime as _dt_log
-_SESS_LOG = "/opt/magicbridge/data/sessions.json"
+_SESS_LOG_DIR = "/var/log/magicbridge-ram"
+_SESS_LOG = f"{_SESS_LOG_DIR}/magicbridge-main-sessions.json"
 _SESS_LOG_RETENTION_DAYS = 30  # entries older than this are dropped automatically
 
 def _sess_log(sid, ip, ua, event, duration=None):
     try:
         import os as _oss
-        _oss.makedirs("/opt/magicbridge/data", exist_ok=True)
+        _oss.makedirs(_SESS_LOG_DIR, exist_ok=True)
         try:
             data = _jlog.loads(open(_SESS_LOG).read())
         except Exception:
@@ -1748,7 +1756,11 @@ async def api_update(request):
     import shutil as _shutil
 
     REPO_DIR = "/opt/magicbridge-repo"
-    REPO_URL = "https://github.com/razzrohith/MagicBridge.git"
+    # Canonical repo URL. Was "razzrohith/MagicBridge.git" (the pre-2026-07-17
+    # name) which only still works via GitHub's rename-redirect — a real risk:
+    # the moment anyone claims the freed-up old name, this updater would clone
+    # THEIR code and copy+restart it (supply-chain RCE). Pin the current name.
+    REPO_URL = "https://github.com/razzrohith/magicbridge-diy.git"
     BRANCH = "main"
     INSTALL_DIR = "/opt/magicbridge"
 
@@ -1762,6 +1774,10 @@ async def api_update(request):
             r = _sp.run(["git", "clone", "--branch", BRANCH, REPO_URL, REPO_DIR],
                         capture_output=True, text=True, timeout=60)
             return r.returncode == 0, (r.stdout + r.stderr).strip()
+        # Existing clone: self-heal its origin to the canonical URL, in case it
+        # was first cloned from the old (redirected) repo name. Idempotent.
+        _sp.run(["git", "-C", REPO_DIR, "remote", "set-url", "origin", REPO_URL],
+                capture_output=True, text=True, timeout=10)
         return True, ""
 
     cloned_ok, clone_out = _ensure_clone()
