@@ -2413,9 +2413,14 @@ def api_wifi_psk_auth():
     name = (request.args.get("name") or "").strip()
     if not name:
         return jsonify({"ok": False, "psk": ""})
-    r = _nm("-s", "-t", "-f", "802-11-wireless-security.psk",
+    # "-e no -g" returns just the raw field value with NO field-name prefix and
+    # NO escaping. The old "-t -f ... | split(':')[-1]" broke on any PSK with a
+    # colon: nmcli escapes those as "\:", so splitting on ":" truncated the
+    # password. Even "-g" alone still escapes ("aa\:bb"); "-e no" is what turns
+    # escaping off, so the value is correct for any characters it contains.
+    r = _nm("-s", "-e", "no", "-g", "802-11-wireless-security.psk",
             "connection", "show", name, timeout=8)
-    psk = r.stdout.strip().split(":")[-1] if r.returncode == 0 else ""
+    psk = r.stdout.strip() if r.returncode == 0 else ""
     return jsonify({"ok": True, "psk": psk})
 
 
