@@ -122,9 +122,18 @@ Old "V2/V3" version labels are **RETIRED** — use the platform names above.
 | Real backend | `/opt/magicbridge/core/magicbridge.py` | kvmd + `/opt/magicbridge/services/*` |
 | Sudo on Pi | `echo 'lol' \| sudo -S bash -c '…'` | root (no sudo needed) |
 
-**How I reach the Pis:** the Windows host runs Desktop Commander (MCP) → SSH via
-paramiko. The isolated Linux sandbox CANNOT reach the LAN Pis. In Claude Code,
-use the native shell + SSH.
+**How to reach the Pis (Claude Code):** use your **built-in shell/terminal
+directly** — run `ssh` / `scp` / `git` / paramiko yourself. You do **NOT** need
+Desktop Commander or any MCP shell bridge. (Desktop Commander was only used while
+this project was built in *Cowork*, which has no native shell and needed a
+bridge. Ignore any "Desktop Commander" references in older notes — they don't
+apply to Claude Code.) Just use the real host shell; the Pis are on the LAN at
+the IPs above.
+
+**Safety in Claude Code** comes from two places: the SAFE/RISKY rules in each
+repo's `CLAUDE.md`, and Claude Code's own permission prompts (it asks before
+running commands / editing files). The Cowork Desktop-Commander allowlist and
+blocked-command list do NOT apply here and are not needed.
 
 **Dev locations (Windows host):**
 - `E:\Startup\magicbridge-diy` — DIY git repo
