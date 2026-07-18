@@ -260,3 +260,52 @@ hard-to-undo change to a live Pi) → **stop and explain what/why/impact, wait f
 an explicit yes.** Never break the anonymity model. Live-device deploys: state
 exactly what will deploy; routine UI/file redeploys are SAFE, anything that could
 brick the Pi or change its network/boot is RISKY.
+
+---
+
+## 10. Working style & product direction (Raj's preferences)
+
+- **Feature taste:** prefer creative, codebase-grounded ideas over generic
+  "security checklist" items. Ground every suggestion in how MagicBridge actually
+  works, not boilerplate.
+- **Dependency-free:** keep implementations self-contained — **no CDN**, no
+  runtime downloads, minimal third-party deps. The device runs offline / on
+  hostile networks; everything must work without reaching out.
+- **Scope exclusion — NO virtual media.** Do **not** add ISO/virtual-media
+  mounting (mounting disk images to the target). It's deliberately out of scope.
+- **AI Agent tab** stays hidden behind a single feature flag until explicitly
+  ready — do not surface it by default.
+- **Verify, don't assume.** Prove changes on the live Pi (read the value back,
+  capture a frame, check service state) rather than trusting "no error." A
+  command that returns cleanly can still have done nothing (e.g. a `pkill -f X`
+  whose own command line contains `X` kills its own shell — this actually bit us).
+- **Communication:** concise and direct; own mistakes plainly.
+
+## 11. Working with the Pi from a Claude Code session
+
+- Use the **native shell + SSH** (an isolated sandbox can't reach the LAN Pis).
+- **Sudo (DIY):** `echo 'lol' | sudo -S bash -c '…'`. PiKVM is root already.
+- **Large files → SFTP** (`sftp.putfo` / `scp`), never base64-echo (truncates).
+- **paramiko gotcha:** `exec_command(timeout=)` does NOT bound `stdout.read()`;
+  set `channel.settimeout()` on the channel or a long read can hang forever.
+- **Deploy paths differ:** DIY `/opt/magicbridge` is NOT a git repo → SFTP the
+  changed files. PiKVM `/opt/magicbridge` IS a git tree → `align_pi.py`.
+- **Never shell-redirect a Python script's own log** (`> log.txt`) when the
+  script also writes that file — you get an empty log. Let scripts own their logs.
+- After a working change: commit + `git push` in that repo (remotes are set).
+
+## 12. This document IS the memory now
+
+This project was built across a long Cowork chat with a rich private memory
+(every gotcha, the systemd trap, the audio dead-end, the naming history). **That
+chat and its memory are NOT available to these Claude Code sessions.** Everything
+load-bearing has been distilled into: this file, each repo's `CLAUDE.md`, DIY's
+`docs/DIY_PROGRESS.md` + `docs/DIY_ROADMAP.md`, and PiKVM's existing `brain/01–07`
++ trackers. **Treat these as the source of truth**, and whenever you learn
+something new or non-obvious, write it back here (and port to the sibling repo) so
+it survives the next session.
+
+**Two-session hygiene:** run one session per repo — they don't collide (different
+folders, different Pis). The ONE shared file is `docs/MAGICBRIDGE_SYSTEM.md`: edit
+it in only one session at a time, then have the other read/pull it, or the two
+copies diverge and need a manual merge.
