@@ -451,11 +451,19 @@ video    = VideoManager()
 try:
     _boot_cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
     hid.set_layout(_boot_cfg.get("keyboard", {}).get("layout", "us"))
+    # Match the live HIDMouse report format to whatever mouse mode the gadget
+    # was built with at boot (mb-gadget.sh reads the same usb.mouse_mode).
+    mouse.set_absolute(_boot_cfg.get("usb", {}).get("mouse_mode", "relative") == "absolute")
 except Exception:
     pass
 
 # Connected WebSocket clients (for count tracking)
 _ws_clients: set = set()
+# Per-connection metadata (ip + connect time), keyed by the ws object, so the
+# top bar can show WHO is connected / controlling right now and for how long.
+# Populated/cleared alongside _ws_clients in ws_handler. Read from the async
+# handler only (single event loop) - no lock needed.
+_ws_info: dict = {}
 
 # Last time a real (human-driven, via the WS connection) keyboard/mouse
 # event was seen. The jiggler checks this so it never fights an active
@@ -763,6 +771,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     sid = _sec.token_hex(8)
     t0 = time.time()
     _ws_clients.add(ws)
+    _ws_info[ws] = {"ip": ip, "since": t0, "ua": ua}
     log.info("WS connect  from %s  (total: %d)", ip, len(_ws_clients))
     _sess_log(sid, ip, ua, "connect")
 
@@ -779,8 +788,9 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                     d = json.loads(msg.data)
                     t = d.get("type", "")
 
-                    if t in ("keydown", "keyup", "mousemove", "mousedown",
-                             "mouseup", "wheel", "combo", "paste"):
+                    if t in ("keydown", "keyup", "mousemove", "mousemove_abs",
+                             "mousedown", "mouseup", "wheel", "scroll",
+                             "combo", "paste"):
                         _last_real_input[0] = time.time()
 
                     if t == "keydown":
@@ -804,13 +814,21 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                         if dx or dy:
                             mouse.move(dx, dy)
 
+                    elif t == "mousemove_abs":
+                        # Absolute pointer: x,y are 0..32767 across the screen.
+                        # No-op unless the gadget is in absolute mode (mouse
+                        # ignores it), so a stale client can't send garbage.
+                        mouse.move_abs(int(d.get("x", 0)), int(d.get("y", 0)))
+
                     elif t == "mousedown":
                         mouse.button_down(int(d.get("button", 0)))
 
                     elif t == "mouseup":
                         mouse.button_up(int(d.get("button", 0)))
 
-                    elif t == "wheel":
+                    elif t in ("wheel", "scroll"):
+                        # Frontend sends "scroll"; "wheel" kept for compatibility.
+                        # (These were mismatched before, so scrolling did nothing.)
                         mouse.scroll(int(d.get("dy", 0)))
 
                     elif t == "ping":
@@ -833,6 +851,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
 
     finally:
         _ws_clients.discard(ws)
+        _ws_info.pop(ws, None)
         keyboard.release_all()
         mouse.release_all()
         dur = int(time.time() - t0)
@@ -1043,9 +1062,20 @@ async def api_status(request: web.Request) -> web.Response:
     stream_status = await loop.run_in_executor(None, video.status)
     tailscale_ip, tailscale_up = await loop.run_in_executor(None, _gather_tailscale)
 
+    # Who is connected right now (top-bar "viewers" chip). Duration is derived
+    # live from the stored connect time. IPs are the controlling user's own
+    # devices - this is the admin looking at their own device, not a leak.
+    _now = time.time()
+    viewers = sorted(
+        ({"ip": v.get("ip", "?"), "secs": int(_now - v.get("since", _now))}
+         for v in list(_ws_info.values())),
+        key=lambda x: x["secs"], reverse=True,
+    )
+
     return web.json_response({
         "version":    VERSION,
         "clients":    len(_ws_clients),
+        "viewers":    viewers,
         "hid_kb":     os.path.exists("/dev/hidg0"),
         "hid_ms":     os.path.exists("/dev/hidg1"),
         "stream":     stream_status,
@@ -1676,6 +1706,57 @@ async def api_hid_autodisconnect(request):
     return web.json_response({"ok": True, **hid_autodc.status()})
 
 
+_GADGET_SH = "/usr/local/bin/mb-gadget.sh"
+
+async def api_mouse_mode(request):
+    """GET: current USB mouse mode. POST {"mode": "relative"|"absolute"}:
+    persist it, rebuild the USB gadget so the mouse HID descriptor matches, and
+    switch the live HIDMouse report format. Relative is the default and the
+    stealthiest (a real receiver mouse is relative); absolute is opt-in (see the
+    anonymity note in mb-gadget.sh)."""
+    import subprocess as _sp
+    if request.method == "GET":
+        cfg = _load_cfg()
+        mode = cfg.get("usb", {}).get("mouse_mode", "relative")
+        return web.json_response({"ok": True, "mode": mode})
+
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    mode = str(d.get("mode", "")).strip().lower()
+    if mode not in ("relative", "absolute"):
+        return web.json_response({"ok": False, "error": "mode must be 'relative' or 'absolute'"}, status=400)
+
+    cfg = _load_cfg()
+    cfg.setdefault("usb", {})["mouse_mode"] = mode
+    _save_cfg(cfg)
+
+    # Rebuild the gadget with the matching mouse descriptor. --rebuild forces a
+    # teardown even though the gadget is currently bound. Runs off the event
+    # loop (it unbinds/rebinds the UDC and sleeps briefly).
+    loop = asyncio.get_running_loop()
+    def _rebuild():
+        return _sp.run([_GADGET_SH, "--rebuild"], capture_output=True, text=True, timeout=25)
+    rebuilt = False
+    try:
+        r = await loop.run_in_executor(None, _rebuild)
+        rebuilt = (r.returncode == 0)
+        if not rebuilt:
+            log.warning("mouse-mode gadget rebuild failed: %s", (r.stdout + r.stderr)[-300:])
+    except Exception as e:
+        log.warning("mouse-mode gadget rebuild error: %s", e)
+
+    # Align the live report format with the (now rebuilt) descriptor.
+    mouse.set_absolute(mode == "absolute")
+    log.info("Mouse mode set to %s (gadget rebuilt=%s)", mode, rebuilt)
+
+    return web.json_response({
+        "ok": rebuilt, "mode": mode, "rebuilt": rebuilt,
+        "error": None if rebuilt else "Gadget rebuild failed — mode saved, will apply on next boot",
+    })
+
+
 async def api_wifi(request):
     import subprocess as _sp, json as _j
     if request.method == "GET":
@@ -2144,6 +2225,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/jiggler", api_jiggler)
     app.router.add_get("/api/hid-autodisconnect",  api_hid_autodisconnect)
     app.router.add_post("/api/hid-autodisconnect", api_hid_autodisconnect)
+    app.router.add_get("/api/mouse-mode",  api_mouse_mode)
+    app.router.add_post("/api/mouse-mode", api_mouse_mode)
     app.router.add_get("/api/networks",   api_wifi)
     app.router.add_post("/api/networks",  api_wifi)
     app.router.add_get("/api/tailscale",  api_tailscale_get)

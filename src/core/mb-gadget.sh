@@ -12,6 +12,12 @@ set -e
 GADGET_DIR="/sys/kernel/config/usb_gadget/g1"
 CONFIG_FILE="/etc/magicbridge/config.json"
 
+# --rebuild forces a full teardown + recreate even if the gadget is already
+# bound (used when the USB mouse mode changes: the mouse HID descriptor differs
+# between relative and absolute, so the functions must be rebuilt, not skipped).
+FORCE_REBUILD=0
+[[ "${1:-}" == "--rebuild" ]] && FORCE_REBUILD=1
+
 # Load identity from config.json. Defaults below are only used if
 # config.json is missing or unreadable; a real combo-receiver identity
 # (Logitech Unifying Receiver) rather than a keyboard-only model, since
@@ -25,6 +31,7 @@ MFR="Logitech"
 PROD="USB Receiver"
 SER=""
 EXTRA_IFACE="true"
+MOUSE_MODE="relative"   # relative (boot mouse, stealthiest) | absolute (pointer)
 BCD_USB="0x0200"
 BCD_DEV="0x0100"
 
@@ -43,7 +50,9 @@ except: print('$2')
     PROD=$(_py product "USB Receiver")
     SER=$(_py serial "")
     EXTRA_IFACE=$(_py extra_iface "true")
+    MOUSE_MODE=$(_py mouse_mode "relative")
 fi
+MOUSE_MODE=$(echo "$MOUSE_MODE" | tr '[:upper:]' '[:lower:]')
 # Normalize case (Python may print True/False) so the comparison below
 # works regardless of how the value ended up stored in config.json.
 EXTRA_IFACE=$(echo "$EXTRA_IFACE" | tr '[:upper:]' '[:lower:]')
@@ -58,14 +67,14 @@ if ! mountpoint -q /sys/kernel/config; then
     mount -t configfs none /sys/kernel/config 2>/dev/null || true
 fi
 
-# Skip if already bound
+# Skip if already bound (unless --rebuild forces a fresh build for a mode change)
 if [[ -d "$GADGET_DIR" ]]; then
     UDC_NOW=$(cat "$GADGET_DIR/UDC" 2>/dev/null | tr -d '[:space:]')
-    if [[ -n "$UDC_NOW" ]]; then
+    if [[ -n "$UDC_NOW" && "$FORCE_REBUILD" == "0" ]]; then
         echo "mb-gadget: already bound to '$UDC_NOW', skipping"
         exit 0
     fi
-    # Gadget dir exists but unbound. Remove and recreate cleanly
+    # Unbind first if bound (--rebuild path), then remove and recreate cleanly.
     echo "" > "$GADGET_DIR/UDC" 2>/dev/null || true
     rm -f "$GADGET_DIR/configs/c.1/hid.keyboard" \
           "$GADGET_DIR/configs/c.1/hid.mouse"    \
@@ -129,16 +138,32 @@ printf '\x05\x01\x09\x06\xa1\x01\x05\x07\x19\xe0\x29\xe7\x15\x00\x25\x01\x75\x01
 ln -sf "$GADGET_DIR/functions/hid.keyboard" \
        "$GADGET_DIR/configs/c.1/hid.keyboard"
 
-# Mouse HID function
+# Mouse HID function - relative (boot mouse, default/stealthiest) or absolute
+# (pointer) per MOUSE_MODE. The two use DIFFERENT report descriptors and report
+# lengths, so hid.py must be told which one is live (set_absolute) or the target
+# will ignore the reports.
 mkdir -p "$GADGET_DIR/functions/hid.mouse"
-echo "2" > "$GADGET_DIR/functions/hid.mouse/protocol"     # 2 = mouse
-echo "1" > "$GADGET_DIR/functions/hid.mouse/subclass"     # 1 = boot interface
-echo "4" > "$GADGET_DIR/functions/hid.mouse/report_length"
-
-# Mouse HID descriptor (52 bytes):
-#   3 button bits + 5 padding bits + X (signed) + Y (signed) + Wheel (signed)
-printf '\x05\x01\x09\x02\xa1\x01\x09\x01\xa1\x00\x05\x09\x19\x01\x29\x03\x15\x00\x25\x01\x75\x01\x95\x03\x81\x02\x75\x05\x95\x01\x81\x03\x05\x01\x09\x30\x09\x31\x09\x38\x15\x81\x25\x7f\x75\x08\x95\x03\x81\x06\xc0\xc0' \
-    > "$GADGET_DIR/functions/hid.mouse/report_desc"
+if [[ "$MOUSE_MODE" == "absolute" ]]; then
+    # Absolute pointer: 3 buttons + 5 pad + 16-bit X + 16-bit Y (0..32767) +
+    # signed wheel = 6-byte report. NOT a boot mouse (protocol/subclass 0): a
+    # real Logitech receiver mouse is relative, so absolute is an opt-in,
+    # slightly-less-stealthy identity (see CLAUDE.md anonymity note).
+    echo "0" > "$GADGET_DIR/functions/hid.mouse/protocol"
+    echo "0" > "$GADGET_DIR/functions/hid.mouse/subclass"
+    echo "6" > "$GADGET_DIR/functions/hid.mouse/report_length"
+    printf '\x05\x01\x09\x02\xa1\x01\x09\x01\xa1\x00\x05\x09\x19\x01\x29\x03\x15\x00\x25\x01\x95\x03\x75\x01\x81\x02\x95\x01\x75\x05\x81\x03\x05\x01\x09\x30\x09\x31\x16\x00\x00\x26\xff\x7f\x75\x10\x95\x02\x81\x02\x09\x38\x15\x81\x25\x7f\x75\x08\x95\x01\x81\x06\xc0\xc0' \
+        > "$GADGET_DIR/functions/hid.mouse/report_desc"
+    echo "mb-gadget: mouse mode = ABSOLUTE (6-byte pointer report)"
+else
+    # Relative boot mouse: 3 buttons + 5 pad + signed X + signed Y + signed
+    # wheel = 4-byte report. Matches a real receiver mouse.
+    echo "2" > "$GADGET_DIR/functions/hid.mouse/protocol"     # 2 = mouse
+    echo "1" > "$GADGET_DIR/functions/hid.mouse/subclass"     # 1 = boot interface
+    echo "4" > "$GADGET_DIR/functions/hid.mouse/report_length"
+    printf '\x05\x01\x09\x02\xa1\x01\x09\x01\xa1\x00\x05\x09\x19\x01\x29\x03\x15\x00\x25\x01\x75\x01\x95\x03\x81\x02\x75\x05\x95\x01\x81\x03\x05\x01\x09\x30\x09\x31\x09\x38\x15\x81\x25\x7f\x75\x08\x95\x03\x81\x06\xc0\xc0' \
+        > "$GADGET_DIR/functions/hid.mouse/report_desc"
+    echo "mb-gadget: mouse mode = RELATIVE (4-byte boot-mouse report)"
+fi
 
 ln -sf "$GADGET_DIR/functions/hid.mouse" \
        "$GADGET_DIR/configs/c.1/hid.mouse"

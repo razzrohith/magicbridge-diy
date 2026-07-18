@@ -310,10 +310,24 @@ class HIDMouse:
         buttons: bit 0=left, bit 1=right, bit 2=middle (unsigned)
         dx/dy/wheel: signed bytes, -127 to +127 (relative movement)
     """
+    ABS_MAX = 32767   # absolute-mode logical maximum for X and Y (0..32767)
+
     def __init__(self, device: str = "/dev/hidg1"):
-        self.device  = device
-        self.buttons = 0       # current button bitmask
-        self._lock   = threading.Lock()
+        self.device   = device
+        self.buttons  = 0       # current button bitmask
+        self.absolute = False   # False = relative report, True = absolute report
+        self._ax = 0            # last absolute X (0..ABS_MAX), for button/scroll reports
+        self._ay = 0            # last absolute Y
+        self._lock    = threading.Lock()
+
+    def set_absolute(self, on: bool):
+        """Switch report format to match the gadget's current mouse HID
+        descriptor. MUST be kept in sync with mb-gadget.sh's MOUSE_MODE - an
+        absolute descriptor expects 6-byte reports, a relative one expects
+        4-byte reports; sending the wrong length makes the target ignore the
+        device or move erratically."""
+        with self._lock:
+            self.absolute = bool(on)
 
     def _sb(self, v: int) -> int:
         """Clamp to [-127,127] and convert to unsigned byte (two's complement)."""
@@ -331,6 +345,31 @@ class HIDMouse:
         except OSError as e:
             log.debug("HID mouse write: %s", e)
 
+    def _write_abs(self, buttons: int, x: int, y: int, wheel: int = 0):
+        """6-byte absolute report: [buttons, X_lo, X_hi, Y_lo, Y_hi, wheel].
+        X/Y are 16-bit little-endian in [0, ABS_MAX]. Matches the absolute
+        pointer descriptor mb-gadget.sh builds when MOUSE_MODE=absolute."""
+        x = max(0, min(self.ABS_MAX, int(x)))
+        y = max(0, min(self.ABS_MAX, int(y)))
+        report = bytes([buttons & 0x07,
+                        x & 0xFF, (x >> 8) & 0xFF,
+                        y & 0xFF, (y >> 8) & 0xFF,
+                        self._sb(wheel)])
+        try:
+            with open(self.device, "wb") as f:
+                f.write(report)
+        except OSError as e:
+            log.debug("HID mouse abs write: %s", e)
+
+    def move_abs(self, x: int, y: int):
+        """Move to an absolute screen position (0..ABS_MAX on each axis).
+        No-op unless the gadget is in absolute mode."""
+        with self._lock:
+            if not self.absolute:
+                return
+            self._ax, self._ay = int(x), int(y)
+            self._write_abs(self.buttons, self._ax, self._ay)
+
     def move(self, dx: int, dy: int):
         """Send relative movement, chunking large deltas into ±127 steps."""
         with self._lock:
@@ -341,24 +380,34 @@ class HIDMouse:
                 dx -= sx
                 dy -= sy
 
+    def _emit_buttons(self, wheel: int = 0):
+        """Write the current button state (and optional wheel) in whichever
+        report format the gadget is currently using. In absolute mode the
+        report must carry the last known X/Y or the pointer would jump to 0,0
+        on every click."""
+        if self.absolute:
+            self._write_abs(self.buttons, self._ax, self._ay, wheel)
+        else:
+            self._write(self.buttons, 0, 0, wheel)
+
     def button_down(self, button: int):
         """button: 0=left, 1=right, 2=middle"""
         with self._lock:
             self.buttons |= (1 << min(max(int(button),0),2))
-            self._write(self.buttons, 0, 0)
+            self._emit_buttons()
 
     def button_up(self, button: int):
         with self._lock:
             self.buttons &= ~(1 << min(max(int(button),0),2))
-            self._write(self.buttons, 0, 0)
+            self._emit_buttons()
 
     def scroll(self, dy: int):
         """Positive = scroll down, negative = scroll up."""
         with self._lock:
-            self._write(self.buttons, 0, 0, dy)
+            self._emit_buttons(wheel=dy)
 
     def release_all(self):
         """Release all buttons. Call on disconnect."""
         with self._lock:
             self.buttons = 0
-            self._write(0, 0, 0)
+            self._emit_buttons()

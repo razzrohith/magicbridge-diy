@@ -95,8 +95,10 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar{display:none!important}
 #cdot.info{background:var(--accent);animation:pulse 1.4s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 #sp{flex:1}
-.stat-chip{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);flex-shrink:0}
+.stat-chip{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);flex-shrink:0;cursor:default}
 .stat-chip span{color:var(--sub);font-variant-numeric:tabular-nums}
+.stat-chip.multi span{color:var(--yellow)}
+.stat-chip.multi{color:var(--yellow)}
 .tbtn{height:28px;padding:0 10px;background:var(--card);border:1px solid var(--border);
   border-radius:var(--r);color:var(--sub);font-size:11px;font-weight:500;
   display:flex;align-items:center;gap:5px;flex-shrink:0;cursor:pointer;
@@ -517,6 +519,8 @@ body:not(.fs) .fs-hud{display:none!important}
   <button class="tbtn icon" id="kb-btn" onclick="toggleVKBD()" title="Virtual keyboard">⌨</button>
   <button class="tbtn icon" id="audio-btn" onclick="toggleAudioMute()" title="Unmute target audio" style="display:none">🔇</button>
   <div id="sp"></div>
+  <div class="stat-chip" id="chip-viewers" title="Devices connected / controlling right now">👁 <span id="sv-viewers">—</span></div>
+  <div class="stat-chip" id="chip-uptime" title="Device uptime">⏱ <span id="sv-uptime">—</span></div>
   <div class="stat-chip">🌡 <span id="sv-temp">—</span></div>
   <div class="stat-chip">⚡ <span id="sv-lat">—</span></div>
   <button class="tbtn icon" onclick="toggleFS()" title="Fullscreen">⛶</button>
@@ -625,6 +629,22 @@ body:not(.fs) .fs-hud{display:none!important}
           <div style="font-size:11px;opacity:.6;margin-top:6px">WebRTC is used by default. Falls back to MJPEG automatically if the C790 board / Janus isn't detected.</div>
         </div>
         <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>Mouse Mode</div>
+          <div class="cur-opts">
+            <button class="cur-opt active" id="mm-rel" onclick="setMouseMode('relative')">Relative</button>
+            <button class="cur-opt" id="mm-abs" onclick="setMouseMode('absolute')">Absolute</button>
+          </div>
+          <div class="snote" id="mm-note" style="margin-top:6px">
+            <b>Relative</b> — pointer-lock + movement deltas. Stealthiest: the USB
+            device stays an ordinary relative receiver mouse. A predictive dot
+            (below) shows your movement while the remote cursor catches up.<br>
+            <b>Absolute</b> — your cursor maps 1:1 to the screen, so you always
+            see exactly where it is with no drift. Switching rebuilds the USB
+            gadget as an absolute pointer, which is a subtle deep tell — off by
+            default, use when you want precise visible pointing.
+          </div>
+        </div>
+        <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Mouse Cursor</div>
           <div class="cur-opts" id="cursor-opts">
             <button class="cur-opt active" data-c="default" onclick="setCursor('default')">Arrow</button>
@@ -633,8 +653,8 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="cur-opt" data-c="dot" onclick="setCursor('dot')">Dot</button>
           </div>
           <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:pointer">
-            <input type="checkbox" id="overlay-chk" onchange="toggleOverlay(this.checked)" style="accent-color:var(--accent)">
-            Show cursor overlay when locked
+            <input type="checkbox" id="overlay-chk" onchange="toggleOverlay(this.checked)" checked style="accent-color:var(--accent)">
+            Show predictive cursor when locked (relative mode)
           </label>
         </div>
         <div class="scard">
@@ -1305,6 +1325,13 @@ setInterval(()=>{
 const $view=document.getElementById('view');
 const $relbar=document.getElementById('relbar');
 let _intentional=false, _escTime=0, _rCtrlDown=0, _rcTimer=null;
+// Escape = hold-to-exit. A single tap is forwarded to the remote as a normal
+// Escape key; only holding it for ESC_HOLD_MS releases control. Fully
+// JS-controlled in absolute mode (no pointer lock) and in relative mode with
+// Keyboard Lock; in plain relative mode the browser still force-exits pointer
+// lock on Escape, so the timer is cancelled there (see pointerlockchange).
+const ESC_HOLD_MS=2500;
+let _escDown=0, _escHoldTimer=null;
 // Keyboard Lock: the browser ALWAYS exits pointer lock the instant Escape is
 // pressed - that's a hard, unblockable browser safety rule, not something
 // preventDefault() can stop. The only sanctioned way around it is the
@@ -1325,13 +1352,23 @@ $view.addEventListener('click', e=>{
   if(!captured) capture();
 });
 
-function capture(){
+function _enterFsAndKbLock(){
   if(!document.fullscreenElement && document.documentElement.requestFullscreen){
     _autoFsFromCapture=true;
     document.documentElement.requestFullscreen().catch(()=>{_autoFsFromCapture=false;});
   }
   if(navigator.keyboard && navigator.keyboard.lock){
     navigator.keyboard.lock(['Escape']).then(()=>{_kbLockActive=true;}).catch(()=>{_kbLockActive=false;});
+  }
+}
+function capture(){
+  _enterFsAndKbLock();
+  if(_mouseMode==='absolute'){
+    // Absolute mode takes NO pointer lock: the real cursor stays visible and
+    // maps 1:1 to the screen. "Captured" here just means input is being
+    // forwarded. Keyboard Lock (above) still gives the Esc-hold-to-exit.
+    _setCaptured(true);
+    return;
   }
   const req=$view.requestPointerLock||$view.mozRequestPointerLock||$view.webkitRequestPointerLock;
   if(!req) return;
@@ -1346,30 +1383,37 @@ function _kbUnlockAndMaybeExitFs(){
   _autoFsFromCapture=false;
 }
 
+// Shared capture-state transition for BOTH modes. Relative mode drives it from
+// pointerlockchange; absolute mode calls it directly from capture()/releaseAll().
+function _setCaptured(on){
+  const prev=captured;
+  if(on===prev) return;
+  captured=on;
+  $relbar.classList.toggle('on',captured);
+  document.getElementById('topbar').style.display=captured?'none':'';
+  $view.classList.toggle('idle',!captured);
+  if(captured){
+    const r=$view.getBoundingClientRect(); _cx=r.width/2; _cy=r.height/2;
+    hideRecapture();
+    setSidebarForControl(false);
+  } else {
+    // Lost capture. Was it a (browser-forced) Esc exit within the last 3s?
+    if(!_intentional && (Date.now()-_escTime)<3000){
+      showRecapture();
+    }
+    clearTimeout(_escHoldTimer); _escDown=0;
+    _intentional=false;
+    _kbUnlockAndMaybeExitFs();
+    document.getElementById('cur-dot').style.display='none';
+    setSidebarForControl(true);
+  }
+}
 ['pointerlockchange','mozpointerlockchange','webkitpointerlockchange'].forEach(ev=>{
   document.addEventListener(ev,()=>{
-    const prev=captured;
-    captured=!!(document.pointerLockElement||document.mozPointerLockElement||document.webkitPointerLockElement);
-    $relbar.classList.toggle('on',captured);
-    document.getElementById('topbar').style.display=captured?'none':'';
-    $view.classList.toggle('idle',!captured);
-    if(captured){
-      const r=$view.getBoundingClientRect(); _cx=r.width/2; _cy=r.height/2;
-      hideRecapture();
-      setSidebarForControl(false);
-    } else if(prev){
-      // Lost capture. Was it Esc? (Widened to 3s: with Keyboard Lock active,
-      // a lost-capture event caused by Escape only happens after the
-      // browser's own ~2s hold-to-exit fires, not on a quick tap - a quick
-      // tap is now forwarded to the remote instead of exiting at all.)
-      if(!_intentional && (Date.now()-_escTime)<3000){
-        showRecapture();
-      }
-      _intentional=false;
-      _kbUnlockAndMaybeExitFs();
-      document.getElementById('cur-dot').style.display='none';
-      setSidebarForControl(true);
-    }
+    // Relative mode only - absolute mode never takes pointer lock, so ignore
+    // spurious events there (its capture state is set explicitly).
+    if(_mouseMode==='absolute') return;
+    _setCaptured(!!(document.pointerLockElement||document.mozPointerLockElement||document.webkitPointerLockElement));
   });
 });
 
@@ -1396,19 +1440,34 @@ function releaseAll(){
   _intentional=true;
   hideRecapture();
   _kbUnlockAndMaybeExitFs();
-  const ex=document.exitPointerLock||document.mozExitPointerLock||document.webkitExitPointerLock;
-  if(ex) ex.call(document);
+  if(_mouseMode==='absolute'){
+    _setCaptured(false);                 // no pointer lock to exit in this mode
+  } else {
+    const ex=document.exitPointerLock||document.mozExitPointerLock||document.webkitExitPointerLock;
+    if(ex) ex.call(document);            // → pointerlockchange → _setCaptured(false)
+  }
   ['ShiftLeft','ControlLeft','AltLeft','MetaLeft'].forEach(c=>send({type:'keyup',code:c}));
 }
 
 // Keyboard
 document.addEventListener('keydown',e=>{
   if(!captured) return;
-  // Esc: send to remote, browser will exit pointer lock → recapture overlay appears
+  // Esc: single tap is forwarded to the remote; hold ESC_HOLD_MS to exit control.
   if(e.code==='Escape'){
-    _escTime=Date.now();
-    send({type:'keydown',code:'Escape'});
     e.preventDefault();
+    _escTime=Date.now();
+    if(!_escDown){                         // ignore OS key-repeat while held
+      _escDown=Date.now();
+      send({type:'keydown',code:'Escape'});   // the tap reaches the remote
+      clearTimeout(_escHoldTimer);
+      _escHoldTimer=setTimeout(()=>{           // held long enough → release
+        send({type:'keyup',code:'Escape'});
+        _intentional=true;
+        toast('Control released — click the screen to recapture');
+        releaseAll();
+        _escDown=0;
+      }, ESC_HOLD_MS);
+    }
     return;
   }
   // Right Ctrl: track for long-press intentional release
@@ -1431,7 +1490,9 @@ document.addEventListener('keydown',e=>{
 document.addEventListener('keyup',e=>{
   if(!captured) return;
   if(e.code==='Escape'){
-    send({type:'keyup',code:'Escape'});
+    clearTimeout(_escHoldTimer);          // released before the hold fired = a tap
+    _escDown=0;
+    send({type:'keyup',code:'Escape'});   // completes the tap on the remote
     return;
   }
   if(e.code==='ControlRight'){
@@ -1453,16 +1514,39 @@ document.addEventListener('keyup',e=>{
 });
 
 // Mouse
-let _cx=0,_cy=0,_showOverlay=false;
+// Mouse mode: 'relative' (default, pointer-lock + deltas, stealthiest USB
+// profile) or 'absolute' (cursor maps 1:1 to the screen, no pointer lock, you
+// see your real cursor). Set from /api/mouse-mode on load. The predictive
+// overlay dot is only useful/needed in relative mode (pointer lock hides the
+// real cursor); in absolute mode the real cursor is visible so it's off.
+let _mouseMode='relative';
+let _cx=0,_cy=0,_showOverlay=true;
 document.addEventListener('mousemove',e=>{
   if(captured){
-    send({type:'mousemove',dx:e.movementX,dy:e.movementY});
-    if(_showOverlay){
+    if(_mouseMode==='absolute'){
+      // Map the real cursor position over the video to an absolute 0-32767
+      // coordinate. The remote cursor jumps straight to the matching spot -
+      // no drift, and you see your own cursor the whole time (fixes the
+      // "can't see the mouse moving" problem directly).
       const r=$view.getBoundingClientRect();
-      _cx=Math.max(0,Math.min(r.width,_cx+e.movementX));
-      _cy=Math.max(0,Math.min(r.height,_cy+e.movementY));
-      const dot=document.getElementById('cur-dot');
-      dot.style.display='block';dot.style.left=_cx+'px';dot.style.top=_cy+'px';
+      if(r.width>0 && r.height>0){
+        const nx=(e.clientX-r.left)/r.width, ny=(e.clientY-r.top)/r.height;
+        if(nx>=0 && nx<=1 && ny>=0 && ny<=1){
+          send({type:'mousemove_abs',x:Math.round(nx*32767),y:Math.round(ny*32767)});
+        }
+      }
+    } else {
+      send({type:'mousemove',dx:e.movementX,dy:e.movementY});
+      if(_showOverlay){
+        // Predictive local cursor: pointer lock hides the real one, so show a
+        // dot that moves instantly with your hand while the (laggy) remote
+        // cursor catches up. Re-centres on each capture.
+        const r=$view.getBoundingClientRect();
+        _cx=Math.max(0,Math.min(r.width,_cx+e.movementX));
+        _cy=Math.max(0,Math.min(r.height,_cy+e.movementY));
+        const dot=document.getElementById('cur-dot');
+        dot.style.display='block';dot.style.left=_cx+'px';dot.style.top=_cy+'px';
+      }
     }
   }
   if(document.fullscreenElement){
@@ -1488,6 +1572,34 @@ function setCursor(c){
   $view.style.cursor=c==='dot'?'none':c==='default'?'default':c;
 }
 function toggleOverlay(on){ _showOverlay=on; if(!on) document.getElementById('cur-dot').style.display='none'; }
+
+// Mouse mode (relative | absolute). Switching posts to the backend, which
+// rebuilds the USB gadget with the matching HID descriptor, then updates the UI.
+function _applyMouseModeUI(m){
+  _mouseMode = (m==='absolute')?'absolute':'relative';
+  const rel=document.getElementById('mm-rel'), abs=document.getElementById('mm-abs');
+  if(rel) rel.classList.toggle('active',_mouseMode==='relative');
+  if(abs) abs.classList.toggle('active',_mouseMode==='absolute');
+  if(_mouseMode==='absolute'){ document.getElementById('cur-dot').style.display='none'; }
+  // In absolute mode the real cursor should be visible over the view.
+  if(_mouseMode==='absolute' && _cursorStyle==='none') setCursor('default');
+}
+async function setMouseMode(m){
+  if(m!=='relative' && m!=='absolute') return;
+  if(m===_mouseMode) return;
+  if(captured){ _intentional=true; releaseAll(); }   // drop control before changing model
+  toast('Switching mouse mode… (USB gadget rebuilds, ~1s)',4000);
+  try{
+    const r=await fetch('/api/mouse-mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({mode:m})});
+    const d=await r.json();
+    if(!d || !d.ok){ toast((d&&d.error)||'Could not switch mouse mode'); return; }
+    _applyMouseModeUI(d.mode||m);
+    toast('Mouse mode: '+(d.mode||m)+(d.rebuilt?' · USB gadget rebuilt':''));
+  }catch(e){ toast('Mouse mode switch failed'); }
+}
+async function loadMouseMode(){
+  try{ const r=await fetch('/api/mouse-mode'); const d=await r.json(); if(d && d.mode) _applyMouseModeUI(d.mode); }catch(e){}
+}
 
 // Touch
 let _tp=null,_moved=false,_longT=null,_lastTap=0;
@@ -1805,7 +1917,24 @@ function dispWinP(){send({type:'combo',codes:['MetaLeft','KeyP']});toast('Win+P 
 // Status
 function applyStatus(d){
   if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;}
-  if(d.uptime){document.getElementById('s-uptime').textContent=d.uptime;}
+  if(d.uptime){
+    document.getElementById('s-uptime').textContent=d.uptime;
+    const uc=document.getElementById('sv-uptime'); if(uc) uc.textContent=d.uptime.trim();
+  }
+  // Who's connected / controlling (top-bar 👁 chip). Show the count, and on
+  // hover list each device's IP + how long it's been connected.
+  if(Array.isArray(d.viewers)){
+    const vc=document.getElementById('sv-viewers'), chip=document.getElementById('chip-viewers');
+    if(vc) vc.textContent=String(d.viewers.length);
+    if(chip){
+      const fmt=s=>s>=3600?Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m':s>=60?Math.floor(s/60)+'m':s+'s';
+      chip.title = d.viewers.length
+        ? 'Connected now:\n'+d.viewers.map(v=>'• '+v.ip+' — '+fmt(v.secs)).join('\n')
+        : 'No active viewers';
+      // Subtle emphasis when more than just you are connected.
+      chip.classList.toggle('multi', d.viewers.length>1);
+    }
+  }
   if(d.local_ip) document.getElementById('ss-ip').textContent=d.local_ip;
   if(d.hid_kb!=null) document.getElementById('ss-hkb').textContent=d.hid_kb?'✓ /dev/hidg0':'✗';
   if(d.hid_ms!=null) document.getElementById('ss-hms').textContent=d.hid_ms?'✓ /dev/hidg1':'✗';
@@ -2763,6 +2892,7 @@ sysCheckVer();
 oledUpdatePreview();
 refreshOledSettings();
 refreshWolSettings();
+loadMouseMode();
 </script>
 </body>
 </html>
