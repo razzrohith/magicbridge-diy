@@ -1,0 +1,15 @@
+[Unit]
+Description=MagicBridge HDMI hot-plug watchdog (re-arms EDID/timings on source change)
+# NOTE: only After= here, never Before=magicbridge.service - see mb-hdmi-init.service
+# for why that combination creates an ordering cycle.
+After=magicbridge.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mb-hdmi-init.sh --watch
+Restart=always
+RestartSec=10
+Nice=10
+
+[Install]
+WantedBy=multi-user.target
