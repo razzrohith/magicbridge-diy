@@ -3,10 +3,11 @@
 Status legend: ✅ done · 🔵 next · ⏳ blocked/pending hardware · 💡 idea · 🅿️ parked
 
 ## Now / next
-- 🔵 **Janus/WebRTC + H.264 stream** — the real low-latency win (<100 ms vs
-  MJPEG 100–300 ms). `video.py` already has `mode="h264"` default + Janus audio
-  config sync; wire the h264 sink → Janus → browser end to end. This is where
-  "fast + clear video" is actually delivered. **Highest value.**
+- ✅ **Janus/WebRTC + H.264 stream** — DONE & server-verified (2026-07-18). Built
+  the missing `libjanus_ustreamer.so`, wired memsink→Janus→WebRTC; a headless WS
+  probe got a JSEP H.264 offer and the plugin opened the memsink. See
+  `DIY_PROGRESS.md`. **Remaining:** a real browser decode test (sandbox can't
+  reach the LAN) + confirm after a natural reboot.
 - ⏳ **Retest 1080p50 partial frames on wall power** — splitter/power-blocker
   arriving; under-voltage is the leading suspect for the green band.
 - 🔵 **Wire the C790 device into the live UI** — confirm `video.py` auto-selects

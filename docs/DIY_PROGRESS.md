@@ -4,6 +4,53 @@ Detailed, DIY-specific technical record. For the big picture see
 `MAGICBRIDGE_SYSTEM.md`. This file is the deep hardware/driver journal so nobody
 re-derives it. Newest first.
 
+## 2026-07-18 — Janus WebRTC + H.264: the missing plugin, built & wired (server-verified)
+
+The C790→ustreamer→`/dev/shm/magicbridge::h264` memsink was already live; the one
+gap was the **Janus `libjanus_ustreamer.so` plugin** (Janus had only voicemail).
+Built it and wired the whole path end-to-end. Four real problems, each solved:
+
+1. **`janus-gateway.pc` missing.** ustreamer's `janus/Makefile` gets its cflags via
+   `pkg-config janus-gateway`, which is what pulls in glib's include path (the
+   janus headers `#include <glib.h>`). Janus's install left no `.pc` →
+   `glib.h: No such file`. **Fix:** wrote `/opt/janus/lib/pkgconfig/janus-gateway.pc`
+   (`Requires: glib-2.0 jansson`) + built with `PKG_CONFIG_PATH` set.
+2. **`abs_capture_ts` API skew** (the deep failure the installer warned about).
+   ustreamer (even v6.61) sets `packet.extensions.abs_capture_ts`, a field absent
+   from the installed **Janus v1.0.0** `janus_plugin_rtp_extensions` struct. Root
+   cause: the installer pins Janus but cloned ustreamer at HEAD. **Fix:** pin
+   ustreamer to **v6.61** (== running binary → same memsink protocol) and neuter
+   that one assignment (non-essential capture-time RTP ext; video unaffected).
+3. **Config-dir bug.** Installer wrote the jcfg + pointed `janus-webrtc.service`
+   `--configs-folder` at `/opt/janus/lib/janus/configs`, which **never existed**;
+   the gateway reads `/opt/janus/etc/janus` (its compiled-in default). The unit
+   was flapping (`activating`) as a result. **Fix:** correct dir; retired the
+   stray apt `janus.service`, made `janus-webrtc.service` canonical.
+4. **Wrong jcfg key.** v6.61's plugin wants **`video.sink`** (per its
+   `janus/src/config.c`), not the docs' `memsink.object` → "Missing config value:
+   video.sink". **Fix:** `video: { sink = "magicbridge::h264" }`, video-only (no
+   `acap` block — I2S audio is the parked upstream dead-end; a bad ALSA device
+   would just stop the plugin loading).
+
+**Verified (headless, since the sandbox/browser can't reach the LAN):** a raw-WS
+probe drove Janus `create→attach(janus.plugin.ustreamer)→watch` and got back a
+**JSEP offer with `m=video … 96`, H264=true**; the plugin log flipped
+`Using vcap-sink: magicbridge::h264` → `Memsink opened; reading frames` →
+`Memsink closed` on stop. So capture→H.264→memsink→plugin→WebRTC SDP offer all
+work. **Boot-persistent:** `janus-webrtc` enabled, old `janus` disabled,
+`magicbridge` enabled, nginx proxies `/janus-ws`→8188. **Left for on-site:** a
+real browser decoding the stream (ICE/DTLS/decode via the vendored `janus.js`);
+and confirm after a natural reboot.
+
+Anonymity: STUN stays commented out in `janus.jcfg` (host/LAN candidates only, no
+external phone-home); Janus is 127.0.0.1-only behind nginx; no new USB/UI/network
+tell. `install_janus_webrtc.sh` updated to reproduce all of the above.
+
+Live changes (all persistent): `/opt/janus/lib/pkgconfig/janus-gateway.pc`,
+`/opt/janus/lib/janus/plugins/libjanus_ustreamer.so`,
+`/opt/janus/etc/janus/janus.plugin.ustreamer.jcfg`,
+`/etc/systemd/system/janus-webrtc.service` (backup `.bak`).
+
 ## 2026-07-18 — WiFi provisioning hotspot fix (dnsmasq :53 conflict)
 
 Ported the root-cause class from the PiKVM captive-portal saga (its bug #3) after

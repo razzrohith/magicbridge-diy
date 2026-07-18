@@ -86,6 +86,10 @@ MEMSINK_NAME="magicbridge::h264"
 BUILD_DIR="/tmp/mb_janus_build"
 JANUS_PREFIX="/opt/janus"
 JANUS_TAG="v1.0.0"   # pinned to match the ustreamer docs/h264.md compat example
+# ustreamer is pinned to the SAME version as the running binary so the janus
+# plugin (memsink consumer) and the /usr/local/bin/ustreamer producer speak the
+# same memsink protocol. HEAD drifts ahead of Janus v1.0.0's plugin API.
+USTREAMER_TAG="v6.61"
 
 # Always start from a clean build tree. This script has already been run
 # once on this Pi with a build-order bug (ustreamer built before Janus
@@ -165,7 +169,14 @@ else
 fi
 
 JANUS_PLUGIN_DIR="$JANUS_PREFIX/lib/janus/plugins"
-JANUS_CONF_DIR="$JANUS_PREFIX/lib/janus/configs"
+# Janus's compiled-in default config dir is etc/janus (what `make configs`
+# populates and what the running gateway reads — see janus.jcfg
+# configs_folder). The plugin config MUST live here. An earlier version of this
+# script used "$JANUS_PREFIX/lib/janus/configs", which never existed, so the
+# plugin loaded with no config ("Missing config value: video.sink") and the
+# janus-webrtc unit flapped.
+JANUS_CONF_DIR="$JANUS_PREFIX/etc/janus"
+JANUS_PC="$JANUS_PREFIX/lib/pkgconfig/janus-gateway.pc"
 JANUS_BIN="$JANUS_PREFIX/bin/janus"
 
 # ══════════════════════════════════════════════════════════════════
@@ -187,7 +198,33 @@ if [[ "$JANUS_OK" == true ]]; then
             /usr/include/janus/plugins/plugin.h
         ok "Patched plugin.h include path (refcount.h -> ../refcount.h)"
     fi
+
+    # ustreamer's janus/Makefile gets its cflags via `pkg-config janus-gateway`,
+    # which is what pulls in glib-2.0's include path (the janus headers do
+    # `#include <glib.h>`). Janus's own build does NOT reliably drop a
+    # janus-gateway.pc into $JANUS_PREFIX/lib/pkgconfig on this Pi, so without
+    # this the plugin build dies with "glib.h: No such file or directory".
+    # Create it so `PKG_CONFIG_PATH=$JANUS_PREFIX/lib/pkgconfig pkg-config
+    # --cflags janus-gateway` resolves glib + jansson.
+    if [[ ! -f "$JANUS_PC" ]]; then
+        mkdir -p "$(dirname "$JANUS_PC")"
+        cat > "$JANUS_PC" <<PC
+prefix=$JANUS_PREFIX
+exec_prefix=\${prefix}
+libdir=\${exec_prefix}/lib
+includedir=\${prefix}/include
+
+Name: janus-gateway
+Description: Janus WebRTC Server
+Version: 1.0.0
+Requires: glib-2.0 jansson
+Cflags: -I\${includedir}/janus
+Libs: -L\${libdir}
+PC
+        ok "Wrote $JANUS_PC (glib/jansson cflags for the ustreamer plugin build)"
+    fi
 fi
+export PKG_CONFIG_PATH="$JANUS_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
 
 # ══════════════════════════════════════════════════════════════════
 # 4. ustreamer WITH_JANUS=1 (source build — the apt package lacks this)
@@ -198,9 +235,21 @@ if [[ "$JANUS_OK" == true ]]; then
     info "Building ustreamer with Janus plugin support..."
     cd "$BUILD_DIR"
     if [[ ! -d ustreamer ]]; then
-        git clone --depth 1 https://github.com/pikvm/ustreamer.git 2>&1 | tail -5
+        # Pin to $USTREAMER_TAG (matches the running binary => same memsink
+        # protocol). HEAD is unsafe: it targets a newer Janus plugin API.
+        git clone --depth 1 --branch "$USTREAMER_TAG" \
+            https://github.com/pikvm/ustreamer.git 2>&1 | tail -5
     fi
     cd ustreamer
+    # API-skew patch: ustreamer's janus plugin sets packet.extensions.abs_capture_ts,
+    # a field absent from Janus v1.0.0's janus_plugin_rtp_extensions struct, so the
+    # build fails with "has no member named 'abs_capture_ts'". It's a non-essential
+    # capture-time RTP header extension (receiver-side latency/A-V sync estimation);
+    # neuter the single assignment so the plugin compiles. Video path unaffected.
+    if grep -q 'abs_capture_ts = rtp.grab_ntp_ts;' janus/src/client.c; then
+        sed -i 's|packet.extensions.abs_capture_ts = rtp.grab_ntp_ts;|/* MagicBridge: abs_capture_ts absent from installed Janus RTP struct (API skew); non-essential capture-time RTP ext, video path unaffected */|' janus/src/client.c
+        ok "Patched out abs_capture_ts (Janus v1.0.0 API compatibility)"
+    fi
     make WITH_JANUS=1 WITH_GPIO=0 WITH_SYSTEMD=0 -j"$(nproc)" 2>&1 | tail -60
     if [[ -f ustreamer ]]; then
         install -m 755 ustreamer /usr/local/bin/ustreamer
@@ -232,40 +281,24 @@ if [[ -n "$JANUS_PLUGIN_SO" && -d "$JANUS_PLUGIN_DIR" ]]; then
     ok "Installed Janus ustreamer plugin to $JANUS_PLUGIN_DIR"
 
     mkdir -p "$JANUS_CONF_DIR"
-    # Config key is "memsink.object" (HOCON), per pikvm/ustreamer docs/h264.md —
-    # NOT "general.memsink_video" (that was wrong in the first pass of this script).
+    # Config schema per ustreamer v6.61 janus/src/config.c: the memsink name is
+    # "video.sink" (section "video", option "sink") — REQUIRED. (Older docs said
+    # "memsink.object"; that key does not exist in v6.61 and yields "Missing
+    # config value: video.sink".) Optional audio capture is "acap.device".
     #
-    # Audio block (C790 I2S HDMI audio -> Opus over the same WebRTC session,
-    # per pikvm/ustreamer docs/h264.md's "If you're using a TC358743-based
-    # video capture device that supports audio capture" section): the plugin
-    # reads raw PCM from an ALSA capture device ("hw:N") and muxes it in
-    # alongside the H.264 video — no separate Janus audiobridge plugin
-    # needed. "hw:1"/"/dev/video0" below are the upstream doc's own example
-    # values, used as an install-time placeholder — the EXACT ALSA card
-    # index and V4L2 device path depend on what else is attached once the
-    # C790 is physically wired, so video.py's h264 startup path (see
-    # _detect_audio_device() / _sync_janus_audio_cfg() in video.py) rewrites
-    # this same audio block with the actually-detected values every time it
-    # starts h264 mode. Treat what's written here as a placeholder, not the
-    # final source of truth.
-    #
-    # Also requires the target's EDID to advertise "Basic Audio Support" in
-    # its CEA extension block, or the source PC won't send LPCM/audio over
-    # HDMI at all regardless of I2S wiring — see EDID_CLONING_WORKFLOW.md.
+    # VIDEO-ONLY here: the C790 I2S audio path is a known upstream driver
+    # dead-end on the DIY Pi (the V4L2 driver detects audio but never programs
+    # the chip's I2S output regs — see docs/DIY_PROGRESS.md). An "acap.device"
+    # pointing at a non-existent ALSA card would just error; video is
+    # unaffected. Revisit only if upstream fixes the driver.
     cat > "$JANUS_CONF_DIR/janus.plugin.ustreamer.jcfg" <<EOF
-# MagicBridge C790/H.264 WebRTC bridge.
-# video.py's h264 mode feeds this memsink name (--h264-sink); keep in sync.
-memsink: {
-    object = "${MEMSINK_NAME}"
-}
-# Placeholder — video.py overwrites this block with detected values each
-# time h264 mode starts (see _sync_janus_audio_cfg() in video.py).
-audio: {
-    device = "hw:1"
-    tc358743 = "/dev/video0"
+# MagicBridge C790/H.264 -> WebRTC bridge (DIY), ustreamer janus plugin v6.61.
+# video.py's h264 mode feeds this memsink name (--h264-sink ${MEMSINK_NAME}); keep in sync.
+video: {
+    sink = "${MEMSINK_NAME}"
 }
 EOF
-    ok "Wrote $JANUS_CONF_DIR/janus.plugin.ustreamer.jcfg (memsink=${MEMSINK_NAME}, audio=placeholder)"
+    ok "Wrote $JANUS_CONF_DIR/janus.plugin.ustreamer.jcfg (video.sink=${MEMSINK_NAME}, video-only)"
 else
     warn "Skipping Janus plugin wiring (plugin .so not built or plugin dir missing)."
 fi
@@ -279,7 +312,7 @@ Description=Janus WebRTC Gateway (MagicBridge C790 video path)
 After=network.target
 
 [Service]
-ExecStart=${JANUS_BIN} --configs-folder ${JANUS_CONF_DIR} --plugins-folder ${JANUS_PLUGIN_DIR}
+ExecStart=${JANUS_BIN} --disable-colors --log-stdout --configs-folder ${JANUS_CONF_DIR} --plugins-folder ${JANUS_PLUGIN_DIR}
 Restart=on-failure
 RestartSec=3
 User=root
