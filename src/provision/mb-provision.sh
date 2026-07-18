@@ -109,13 +109,35 @@ wmm_enabled=0
 HOSTCONF
 
 # dnsmasq (DHCP + captive redirect)
+# bind-dynamic + except-interface=lo: only bind wlan0's address, never the
+# lo/wildcard :53 socket. Without this dnsmasq grabs the wildcard 0.0.0.0:53
+# and collides with anything already holding :53 (the system dnsmasq.service,
+# or systemd-resolved on other setups) -> our AP dnsmasq dies on EADDRINUSE ->
+# clients on MagicBridge-Setup get NO DHCP and NO captive-DNS -> the hotspot
+# appears but is dead. (Same class as the PiKVM port-53 saga; see
+# MAGICBRIDGE_SYSTEM.md.) dhcp-authoritative speeds up address handout; the
+# lease file lives in tmpfs.
 cat > /tmp/mb-dnsmasq.conf <<DNSCONF
 interface=$AP_IFACE
+except-interface=lo
+bind-dynamic
 dhcp-range=192.168.73.10,192.168.73.50,12h
+dhcp-authoritative
+dhcp-leasefile=/run/mb-dnsmasq.leases
 address=/#/$AP_IP
 no-resolv
 no-hosts
 DNSCONF
+
+# Free the WiFi radio and the :53 socket before we launch the AP.
+# rfkill unblock: harmless no-op if wifi isn't blocked, but if a fresh/relocated
+#   Pi has wlan0 soft-blocked, hostapd would silently fail and the setup hotspot
+#   would never appear at all ("no wifi found").
+# stop system dnsmasq.service: it's enabled on this image and holds the wildcard
+#   :53, which even bind-dynamic can't share -> our AP dnsmasq would fail to
+#   bind. Stopped only for the duration of provisioning; restored in teardown.
+rfkill unblock wifi 2>/dev/null || true
+systemctl stop dnsmasq 2>/dev/null || true
 
 pkill -f "hostapd /tmp/mb-hostapd" 2>/dev/null || true
 pkill -f "dnsmasq.*mb-dnsmasq"     2>/dev/null || true
@@ -148,6 +170,9 @@ pkill -F /tmp/mb-hostapd.pid 2>/dev/null || true
 pkill -F /tmp/mb-dnsmasq.pid 2>/dev/null || true
 iptables -t nat -F PREROUTING 2>/dev/null || true
 ip addr flush dev "$AP_IFACE" 2>/dev/null || true
+# Restore the system dnsmasq we stopped above so the box's normal DNS/DHCP
+# state matches what it was before provisioning (no-op if it wasn't enabled).
+systemctl start dnsmasq 2>/dev/null || true
 sleep 1
 
 # Connect saved WiFi via NetworkManager

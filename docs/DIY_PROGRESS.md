@@ -4,6 +4,45 @@ Detailed, DIY-specific technical record. For the big picture see
 `MAGICBRIDGE_SYSTEM.md`. This file is the deep hardware/driver journal so nobody
 re-derives it. Newest first.
 
+## 2026-07-18 — WiFi provisioning hotspot fix (dnsmasq :53 conflict)
+
+Ported the root-cause class from the PiKVM captive-portal saga (its bug #3) after
+Raj hit "auto WiFi hotspot / no wifi found" there. The DIY setup AP
+(`mb-provision.sh` → `hostapd` + `dnsmasq` on `wlan0`, SSID **MagicBridge-Setup**)
+had the same latent defect, proven live on a **dummy interface** (wlan0 untouched):
+
+- The image ships a **standalone `dnsmasq.service` enabled and running**, bound to
+  the **wildcard `0.0.0.0:53`** (it's the box's DNS). The provisioning script
+  launched its own `dnsmasq` for the AP's DHCP + captive-DNS redirect
+  (`address=/#/192.168.73.1`) but on the wildcard `:53` too → **`EADDRINUSE`, the
+  AP dnsmasq dies → clients on MagicBridge-Setup get no IP and no portal** (a
+  hotspot that appears but is dead).
+- **`bind-dynamic` alone does NOT fix it** — a specific-IP bind still collides
+  with a wildcard holder (verified: TEST B failed the same way). The load-bearing
+  fix is to **stop the system `dnsmasq.service` for the duration of provisioning**
+  and restart it in teardown. `bind-dynamic` + `except-interface=lo` added too, to
+  match PiKVM and avoid ever grabbing the `lo`/wildcard socket.
+- Also added `rfkill unblock wifi` before `hostapd` (a soft-blocked radio would
+  make the setup hotspot never appear at all — the literal "no wifi found").
+
+Test proof (dummy iface `mbtest0` @ 192.168.73.1, `wlan0` never touched):
+`OLD config + system dnsmasq up → EADDRINUSE` · `NEW bind-dynamic + system dnsmasq
+up → still EADDRINUSE` · `NEW config + system dnsmasq stopped → dnsmasq serves,
+DHCP .10–.50 on :67, bound 192.168.73.1:53`. Cleanup restored dnsmasq + DNS.
+
+Deployed to `/usr/local/bin/mb-provision.sh` (backup
+`mb-provision.sh.bak.wifi-fix`). DIY differs from PiKVM: **NetworkManager**
+(`nmcli`, not `wpa_supplicant`) so the `wpa_passphrase` bug is N/A; **read-write
+rootfs** so the `rw`/`ro` recursion bug is N/A; the portal (`mb-setup-ui.py`)
+already ends only on a real `/setup` POST + strips newlines + escapes the SSID.
+
+**Untested remotely (needs Raj on-site — triggering the AP drops wlan0, our only
+link):** the full `hostapd` broadcast → phone join → portal submit → `nmcli`
+connect flow. Only the dnsmasq DHCP/DNS bug (the actual failure) was reproduced +
+fixed here. **Open note:** why a standalone `dnsmasq.service` holds wildcard `:53`
+on a NetworkManager box is unexplained — likely image cruft; left in place (it's
+the current DNS), the patch stops/restarts it cleanly either way.
+
 ## 2026-07-18 — C790 (TC358743) HDMI→CSI-2 bring-up
 
 Replaced the MS2109 USB dongle with a **Geekworm C790** board (direct CSI/DMA,

@@ -13,6 +13,11 @@ Status legend: ✅ done · 🔵 next · ⏳ blocked/pending hardware · 💡 ide
   `/dev/video0`, resolution 1080p50, and the stream shows in the web console.
 
 ## Done (2026-07-18)
+- ✅ WiFi setup-hotspot dnsmasq `:53` conflict fixed in `mb-provision.sh`
+  (stop system `dnsmasq.service` during provisioning + `bind-dynamic`/
+  `except-interface=lo` + `rfkill unblock`). Ported from the PiKVM portal saga;
+  proven on a dummy iface. **Full AP→portal→connect flow still needs an on-site
+  test** (triggering the AP drops wlan0). See `DIY_PROGRESS.md`.
 - ✅ C790 driver enabled; `/dev/video0` capture at 1080p50 UYVY, 50 fps.
 - ✅ EDID persistence across reboot (`mb-hdmi-init`).
 - ✅ Portable restricted EDID (caps any source at 1080p50, no manual step).
