@@ -54,6 +54,13 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
    (`mdns_alias` in config, off by default) — avahi's automatic
    `<hostname>.local` + the IP still reach the unit. Check PiKVM's hostname
    (`pikvm`/`raspberrypi` would be tells) and any `.local` alias.
+5c. **Provisioning must not RE-brand the hostname** `[PORT]` — a subtle trap
+   found in the checkup: DIY's WiFi-provisioning script treated a realistic
+   `DESKTOP-*` hostname as an "imaging-tool default" and reset it back to
+   `magicbridge`, silently undoing the spoof mid-provision. ANY code path that
+   "normalizes" the hostname must KEEP realistic names and only replace an
+   actual tell. Audit every place PiKVM sets the hostname (install, provision,
+   first-boot) so none of them fight each other.
 
 ## 📶 WiFi / provisioning
 6. **Captive-portal dnsmasq `:53` conflict** `[VERIFY]` — DIY's setup-AP dnsmasq
@@ -130,6 +137,10 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
 
 ## Session commits (DIY repo `magicbridge-diy`, for reference)
 ```
+5b10cb9 fix(anonymity): provisioning must not re-brand hostname to "magicbridge"  (item 5c)
+b74c10c feat(anonymity): realistic hostname + drop branded mDNS name tells        (item 5b)
+9f08c94 feat(anonymity): realistic MAC on by default, persisted at the NM layer   (item 4)
+395483e docs: this handoff file
 ccef35a ui+stealth: dup update buttons, animated OLED update, realistic monitor EDID, display identity
 afa3005 ui(system): move Software Update into its own category; tidy sub-nav
 7d5f5f2 feat(update): incremental (fast) vs full (install.sh) updates, auto-detected
@@ -147,5 +158,11 @@ aa351be fix(anonymity): stop nginx port-80 redirect logging visitor IPs to the S
 b22fa5e fix(wifi): setup-hotspot dnsmasq :53 conflict kills captive portal
 ```
 
-Suggested order: anonymity (1–5) → UI/UX (13–17) → imaging (20). Skip
+Suggested order: anonymity (1–5c) → UI/UX (13–17) → imaging (20). Skip
 8, 9-descriptor. Re-verify everything against kvmd; don't copy DIY code.
+
+All DIY anonymity changes above were verified with a full offline checkup
+(compile + shell syntax + logic unit tests + EDID validation + a residual-tell
+sweep, 61 checks green) — the designs are sound to port; only device-runtime
+behavior (NM keeping the cloned MAC, DHCP/IP, gadget enumeration) still needs
+on-hardware confirmation on each side.
