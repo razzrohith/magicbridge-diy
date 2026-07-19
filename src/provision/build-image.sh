@@ -75,6 +75,7 @@ p=sys.argv[1]
 try: c=json.load(open(p))
 except Exception: c={}
 c["mac_persist"]={}          # empty -> first boot picks a unique vendor MAC
+c.setdefault("video",{})["mode"]="auto"   # detect C790/CSI vs USB on each unit
 json.dump(c,open(p,"w"),indent=2)
 PY
 fi
