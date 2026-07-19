@@ -64,7 +64,7 @@ ensure_mdns_healthy() {
     # with a fresh realistic name, so provisioning never re-brands the device.
     CUR_HOST=$(hostname)
     if [[ "$CUR_HOST" == "magicbridge" || "$CUR_HOST" == "raspberrypi" || "$CUR_HOST" == "localhost" || -z "$CUR_HOST" ]]; then
-        NEWHN="DESKTOP-$(tr -dc 'A-Z0-9' </dev/urandom | head -c 7)"
+        NEWHN="DESKTOP-$(tr -dc 'A-Z0-9' </dev/urandom 2>/dev/null | head -c 7 || true)"
         echo "[$(date)] Hostname '$CUR_HOST' is a tell - setting realistic '$NEWHN'"
         hostnamectl set-hostname "$NEWHN"
         sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$NEWHN.local $NEWHN/" /etc/hosts

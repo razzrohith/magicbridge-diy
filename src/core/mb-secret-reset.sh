@@ -28,7 +28,7 @@ ln -sf /etc/machine-id /var/lib/dbus/machine-id 2>/dev/null || true
 # 2b. Hostname — a realistic per-unit name. A clone must not share the builder's
 #     hostname, and must never advertise "magicbridge"/"raspberrypi" on the LAN
 #     (broadcast via DHCP + mDNS). DESKTOP-XXXXXXX reads as an ordinary PC.
-NEWHN="DESKTOP-$(tr -dc 'A-Z0-9' </dev/urandom | head -c 7)"
+NEWHN="DESKTOP-$(tr -dc 'A-Z0-9' </dev/urandom 2>/dev/null | head -c 7 || true)"
 info "regenerating hostname -> $NEWHN"
 hostnamectl set-hostname "$NEWHN" 2>/dev/null || true
 sed -i "/^127.0.1.1/d" /etc/hosts 2>/dev/null || true

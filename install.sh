@@ -461,7 +461,9 @@ CUR_HN="$(hostname)"
 if [[ "$CUR_HN" =~ ^DESKTOP-[A-Z0-9]{7}$ ]]; then
     HOSTNAME_NEW="$CUR_HN"
 else
-    HOSTNAME_NEW="DESKTOP-$(tr -dc 'A-Z0-9' </dev/urandom | head -c 7)"
+    # `|| true`: head closing the pipe SIGPIPEs tr (rc 141); under this script's
+    # `set -euo pipefail` that would abort the whole install right here.
+    HOSTNAME_NEW="DESKTOP-$(tr -dc 'A-Z0-9' </dev/urandom 2>/dev/null | head -c 7 || true)"
 fi
 info "Setting hostname to '$HOSTNAME_NEW'..."
 hostnamectl set-hostname "$HOSTNAME_NEW"
