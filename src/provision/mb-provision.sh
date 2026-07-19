@@ -58,19 +58,22 @@ ensure_mdns_healthy() {
     done
     systemctl enable avahi-daemon --now 2>/dev/null || systemctl restart avahi-daemon || true
 
-    # Only resets an obviously-bogus placeholder hostname - never touches a
-    # hostname someone actually chose on purpose.
+    # STEALTH: a realistic "DESKTOP-XXXXXXX"/"WIN-*" hostname is exactly the
+    # identity we want on the LAN (see install.sh) - keep it. Only replace an
+    # actual product/vendor TELL (magicbridge / raspberrypi / bare localhost)
+    # with a fresh realistic name, so provisioning never re-brands the device.
     CUR_HOST=$(hostname)
-    if [[ "$CUR_HOST" =~ ^DESKTOP-.* || "$CUR_HOST" =~ ^WIN-.* || "$CUR_HOST" == "localhost" ]]; then
-        echo "[$(date)] Hostname '$CUR_HOST' looks like an imaging-tool default, resetting to 'magicbridge'"
-        hostnamectl set-hostname magicbridge
-        sed -i "s/^127\.0\.1\.1.*/127.0.1.1\tmagicbridge/" /etc/hosts
+    if [[ "$CUR_HOST" == "magicbridge" || "$CUR_HOST" == "raspberrypi" || "$CUR_HOST" == "localhost" || -z "$CUR_HOST" ]]; then
+        NEWHN="DESKTOP-$(tr -dc 'A-Z0-9' </dev/urandom | head -c 7)"
+        echo "[$(date)] Hostname '$CUR_HOST' is a tell - setting realistic '$NEWHN'"
+        hostnamectl set-hostname "$NEWHN"
+        sed -i "s/^127\.0\.1\.1.*/127.0.1.1\t$NEWHN.local $NEWHN/" /etc/hosts
         systemctl restart avahi-daemon || true
     fi
 
-    # magicbridge.local is published as its own standing alias (see
-    # mb-mdns-alias.service) specifically so it keeps working even if the
-    # box's own hostname drifts again for some other reason in the future.
+    # Optional friendly mDNS alias is opt-in (config "mdns_alias", off by
+    # default); the service no-ops when unset. avahi still auto-publishes
+    # <hostname>.local, so the unit stays reachable without advertising a name.
     systemctl enable mb-mdns-alias.service --now 2>/dev/null || true
 }
 ensure_mdns_healthy
