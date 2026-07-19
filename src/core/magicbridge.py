@@ -1917,10 +1917,21 @@ async def api_update(request):
     # unit outside this process's cgroup. It detects the local clone (REPO_DIR)
     # as its source, so there's no re-clone. Progress -> magicbridge-update.log.
     upd_log = "/var/log/magicbridge-update.log"
+    # Show "Updating..." on the OLED for the whole run (oled.py picks up this
+    # status-override file), then clear it back to the normal display. Runs
+    # inside the detached unit so it survives the magicbridge restart.
+    _upd_sh = (
+        "mkdir -p /run/magicbridge; "
+        "printf 'MagicBridge\\nUpdating...\\nplease wait' > /run/magicbridge/oled-status; "
+        f"bash {REPO_DIR}/install.sh >{upd_log} 2>&1; RC=$?; "
+        "if [ $RC -eq 0 ]; then printf 'MagicBridge\\nUpdate done\\nrestarting...' > /run/magicbridge/oled-status; "
+        "else printf 'MagicBridge\\nUpdate FAILED\\nsee log' > /run/magicbridge/oled-status; fi; "
+        "sleep 4; rm -f /run/magicbridge/oled-status"
+    )
     try:
         r2 = _sp.run(
             ["systemd-run", "--collect", "--description", "MagicBridge self-update",
-             "/bin/bash", "-c", f"bash {REPO_DIR}/install.sh >{upd_log} 2>&1"],
+             "/bin/bash", "-c", _upd_sh],
             capture_output=True, text=True, timeout=20,
         )
         if r2.returncode != 0:
