@@ -832,21 +832,25 @@ body:not(.fs) .fs-hud{display:none!important}
       <!-- System tab -->
       <div class="tab" id="panel-system">
         <div class="sys-nav">
-          <button class="sys-nav-item active" data-cat="monitoring" onclick="sysNavShow('monitoring')" title="Monitoring">
+          <button class="sys-nav-item active" data-cat="monitoring" onclick="sysNavShow('monitoring')" title="Status &amp; health">
             <span class="ico">📊</span>
             <span class="sys-nav-label">Monitor<span class="sys-dot ok" id="sys-dot-monitoring"></span></span>
           </button>
-          <button class="sys-nav-item" data-cat="security" onclick="sysNavShow('security')" title="Security &amp; Account">
+          <button class="sys-nav-item" data-cat="peripherals" onclick="sysNavShow('peripherals')" title="Devices &amp; identity">
+            <span class="ico">🖱</span>
+            <span class="sys-nav-label">Devices</span>
+          </button>
+          <button class="sys-nav-item" data-cat="security" onclick="sysNavShow('security')" title="Security &amp; account">
             <span class="ico">🛡</span>
             <span class="sys-nav-label">Security<span class="sys-dot warn" id="sys-dot-security"></span></span>
           </button>
-          <button class="sys-nav-item" data-cat="power" onclick="sysNavShow('power')" title="Power &amp; Maintenance">
+          <button class="sys-nav-item" data-cat="power" onclick="sysNavShow('power')" title="Reboot &amp; shutdown">
             <span class="ico">⚡</span>
             <span class="sys-nav-label">Power<span class="sys-dot ok" id="sys-dot-power"></span></span>
           </button>
-          <button class="sys-nav-item" data-cat="peripherals" onclick="sysNavShow('peripherals')" title="Peripherals &amp; Identity">
-            <span class="ico">🖱</span>
-            <span class="sys-nav-label">Devices</span>
+          <button class="sys-nav-item" data-cat="update" onclick="sysNavShow('update')" title="Software update">
+            <span class="ico">⬆</span>
+            <span class="sys-nav-label">Update<span class="sys-dot ok" id="sys-dot-update"></span></span>
           </button>
         </div>
         <div class="sys-content">
@@ -910,17 +914,22 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="sys-cat" data-cat="power">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--red)"></span>Pi Power</div>
+          <div class="snote" style="margin-bottom:8px">Reboot or shut down the Pi. Shutdown needs a manual power cycle to start again.</div>
           <button class="sbtn warn" onclick="piPower('reboot')">↺ Reboot Pi</button>
           <button class="sbtn dan" onclick="piPower('shutdown')" style="margin-top:4px">⏻ Shutdown Pi</button>
         </div>
+        </div>
+
+        <div class="sys-cat" data-cat="update">
         <div class="scard">
-          <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>MagicBridge Update</div>
+          <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>Software Update</div>
+          <div class="snote" style="margin-bottom:8px">Pulls the latest from GitHub. Small changes update instantly; big ones do a full reinstall.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="sys-avail">-</span></div>
           <div class="srow"><span class="sk">Commit</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:10px">-</span></div>
           <div class="srow"><span class="sk">Branch</span><span class="sv" id="sys-branch">-</span></div>
           <div id="sys-update-out" style="display:none;font-size:10px;background:var(--surf2);border:1px solid var(--border);border-radius:4px;padding:6px;margin:6px 0;white-space:pre-wrap;max-height:120px;overflow:auto;font-family:monospace;color:var(--muted)"></div>
-          <button class="sbtn" onclick="sysCheckVer()" style="margin-top:6px">↺ Check Status</button>
-          <button class="sbtn suc" id="sys-update-btn" onclick="sysUpdate()" style="margin-top:4px">⬆ Pull & Update from GitHub</button>
+          <button class="sbtn" onclick="sysCheckVer()" style="margin-top:6px">↺ Check for updates</button>
+          <button class="sbtn suc" id="sys-update-btn" onclick="sysUpdate()" style="margin-top:4px">⬆ Update now</button>
         </div>
         </div>
 
@@ -2230,11 +2239,13 @@ async function sysCheckVer(){
       btn.textContent=quick?('Quick Update ('+(d.changed||0)+' file'+(d.changed===1?'':'s')+')'):'Full Upgrade (reinstall)';
       btn.classList.add('pulse');
       btn.dataset.mode=d.mode||'full';
+      const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='sys-dot warn';
     }else{
       avail.textContent='Up to date';
       avail.className='sv ok';
       btn.textContent='Check for updates';
       btn.classList.remove('pulse');
+      const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='sys-dot ok';
     }
     const out=document.getElementById('sys-update-out');
     out.textContent=d.out||'';out.style.display=d.out?'block':'none';
@@ -2434,7 +2445,7 @@ function hidAutoDcIdleChanged(){
 // which sys-nav-item is highlighted. Purely a display/grouping change -
 // none of the underlying cards, IDs, or their refresh functions moved or
 // changed, so nothing else in this file needed to know about it.
-const SYS_CAT_LABELS={monitoring:'Monitoring',security:'Security & account',power:'Power & maintenance',peripherals:'Peripherals & identity'};
+const SYS_CAT_LABELS={monitoring:'Monitoring',peripherals:'Devices & identity',security:'Security & account',power:'Power',update:'Software update'};
 function sysNavShow(cat){
   document.querySelectorAll('.sys-nav-item').forEach(b=>b.classList.toggle('active',b.dataset.cat===cat));
   document.querySelectorAll('.sys-cat').forEach(c=>c.classList.toggle('active',c.dataset.cat===cat));
