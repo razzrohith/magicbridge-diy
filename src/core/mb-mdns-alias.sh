@@ -26,11 +26,29 @@
 # to debug from the client side. Revisit before cloning this setup: either
 # make the alias name a per-unit config value, or drop the raj.local alias
 # from units other than this one.
+#
+# STEALTH DEFAULT (2026): the branded "magicbridge.local" and personal
+# "raj.local" aliases are LAN-visible NAME TELLS - a router client list or a
+# network scan would surface the product/owner name, breaking the anonymity
+# model. They are now OFF by default. avahi-daemon still auto-publishes
+# <hostname>.local (a realistic "DESKTOP-XXXXXXX.local"), which - together with
+# the IP - is enough to reach the unit without advertising what it is.
+#
+# Opt in to ONE friendly alias by setting "mdns_alias" in config.json
+# (e.g. "office-pc" -> office-pc.local). Choose an innocuous name; leave it
+# empty for full stealth.
 set -e
+CONFIG_FILE="/etc/magicbridge/config.json"
+ALIAS=""
+if [[ -f "$CONFIG_FILE" ]]; then
+    ALIAS=$(python3 -c "import json;print(json.load(open('$CONFIG_FILE')).get('mdns_alias','') or '')" 2>/dev/null || echo "")
+fi
+if [[ -z "$ALIAS" ]]; then
+    echo "mb-mdns-alias: no alias configured (stealth default); nothing to publish"
+    exit 0
+fi
 IP=$(hostname -I | awk '{print $1}')
-avahi-publish -a -R magicbridge.local "$IP" &
+avahi-publish -a -R "${ALIAS}.local" "$IP" &
 PID1=$!
-avahi-publish -a -R raj.local "$IP" &
-PID2=$!
-trap 'kill "$PID1" "$PID2" 2>/dev/null' TERM INT
-wait -n "$PID1" "$PID2"
+trap 'kill "$PID1" 2>/dev/null' TERM INT
+wait "$PID1"

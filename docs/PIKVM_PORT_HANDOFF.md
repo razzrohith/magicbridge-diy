@@ -41,7 +41,19 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
    lease/IP — reach the unit via mDNS. Port to kvmd (its own NM/dhcp setup).
 5. **Realistic identity defaults, verified** `[VERIFY]` — USB = Logitech USB
    Receiver, Monitor = Dell. Verify ALL spoofing (USB, MAC, EDID) defaults to
-   realistic values out of the box on PiKVM.
+   realistic values out of the box on PiKVM — on normal startup AND on a fresh
+   SD-card first boot (no manual step). In DIY: USB falls back to Logitech in
+   `mb-gadget.sh` even with no config; EDID auto-applies via `mb-hdmi-init`; MAC
+   auto-spoofs on first boot; all survive `mb-secret-reset` on a clone.
+5b. **Hostname + mDNS were name tells** `[PORT]` — the system hostname was
+   literally **`magicbridge`** (broadcast via the DHCP hostname option + mDNS →
+   shows as "magicbridge" in any router client list), and an alias service
+   published **`magicbridge.local` + `raj.local`**. Both broken. DIY now sets a
+   realistic per-unit **`DESKTOP-XXXXXXX`** hostname (idempotent across updates;
+   regenerated per unit by `mb-secret-reset`) and makes branded aliases **opt-in**
+   (`mdns_alias` in config, off by default) — avahi's automatic
+   `<hostname>.local` + the IP still reach the unit. Check PiKVM's hostname
+   (`pikvm`/`raspberrypi` would be tells) and any `.local` alias.
 
 ## 📶 WiFi / provisioning
 6. **Captive-portal dnsmasq `:53` conflict** `[VERIFY]` — DIY's setup-AP dnsmasq

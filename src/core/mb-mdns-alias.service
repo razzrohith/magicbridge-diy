@@ -1,5 +1,5 @@
 [Unit]
-Description=MagicBridge magicbridge.local + raj.local mDNS aliases (independent of system hostname)
+Description=MagicBridge optional mDNS alias (opt-in via config "mdns_alias"; off by default for stealth)
 After=network-online.target avahi-daemon.service
 Wants=network-online.target
 Requires=avahi-daemon.service

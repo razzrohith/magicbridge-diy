@@ -19,7 +19,7 @@
 #    6. Configures nginx, RAM-only (tmpfs) logs, systemd services, firewall
 #    7. Enables video capture services (mb-hdmi-init/watch) + OLED (mb-oled)
 #    8. Optionally Tailscale and, with --with-webrtc, the Janus WebRTC path
-#    9. Sets hostname to "magicbridge", enables SSH password login
+#    9. Sets a realistic per-unit hostname (DESKTOP-XXXXXXX), enables SSH login
 #
 #  Safe to re-run: every step is idempotent. LUKS at-rest encryption of
 #  /etc/magicbridge is an advanced hardening step and is NOT auto-applied
@@ -283,6 +283,7 @@ if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
   },
   "mac_persist":   {},
   "mac_autospoof": true,
+  "mdns_alias":    "",
   "duckdns":       {}
 }
 CONF
@@ -441,7 +442,17 @@ ok "SSH password login enabled"
 # ══════════════════════════════════════════════════════════════════════════════
 # 11. HOSTNAME + mDNS
 # ══════════════════════════════════════════════════════════════════════════════
-HOSTNAME_NEW="magicbridge"
+# Realistic, per-unit hostname. The old "magicbridge" hostname was broadcast to
+# the LAN via the DHCP hostname option and mDNS - a blatant product tell on any
+# router's client list. "DESKTOP-XXXXXXX" is exactly what an ordinary Windows PC
+# announces, so the device blends in. Stable across re-runs/updates (kept if it
+# already looks realistic); regenerated per unit by mb-secret-reset on a clone.
+CUR_HN="$(hostname)"
+if [[ "$CUR_HN" =~ ^DESKTOP-[A-Z0-9]{7}$ ]]; then
+    HOSTNAME_NEW="$CUR_HN"
+else
+    HOSTNAME_NEW="DESKTOP-$(tr -dc 'A-Z0-9' </dev/urandom | head -c 7)"
+fi
 info "Setting hostname to '$HOSTNAME_NEW'..."
 hostnamectl set-hostname "$HOSTNAME_NEW"
 if ! grep -q "^127.0.1.1.*$HOSTNAME_NEW" /etc/hosts; then
@@ -456,7 +467,7 @@ systemctl unmask avahi-daemon 2>/dev/null || true
 systemctl unmask avahi-daemon.socket 2>/dev/null || true
 systemctl enable avahi-daemon
 systemctl restart avahi-daemon
-ok "Hostname '$HOSTNAME_NEW.local' active"
+ok "Hostname '$HOSTNAME_NEW.local' active (blends in as an ordinary PC)"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 12. TAILSCALE (optional)
