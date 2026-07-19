@@ -132,7 +132,7 @@ EDID_DEFAULTS = {
     "enabled": False,
     "profile_idx": None,
     "mfr": "", "product_name": "", "product_id": 0, "serial": "",
-    "base_file": "/etc/magicbridge/tc358743-edid.hex",
+    "base_file": "/opt/magicbridge/edid/mb-edid-1080p50.hex",
     "applied_file": "/etc/magicbridge/tc358743-edid-identity.hex",
 }
 
@@ -304,7 +304,11 @@ def _edid_video_device() -> str:
                               text=True, timeout=5).stdout
     except Exception:
         return ""
-    m = re.search(r"tc358743[^\n]*\n\s*(/dev/video\d+)", out, re.IGNORECASE)
+    # The C790/TC358743 shows up in `v4l2-ctl --list-devices` under the Pi's
+    # CSI receiver driver name ("unicam" / "fe801000.csi"), NOT "tc358743" -
+    # matching only tc358743 was why the panel wrongly said "no C790 detected".
+    m = re.search(r"(?:tc358743|unicam|fe801000\.csi)[^\n]*\n\s*(/dev/video\d+)",
+                  out, re.IGNORECASE)
     return m.group(1) if m else ""
 
 

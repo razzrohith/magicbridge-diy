@@ -99,6 +99,12 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar{display:none!important}
 .stat-chip span{color:var(--sub);font-variant-numeric:tabular-nums}
 .stat-chip.multi span{color:var(--yellow)}
 .stat-chip.multi{color:var(--yellow)}
+#ss-viewers{margin:2px 0 4px}
+.vw{display:flex;gap:8px;align-items:baseline;font-size:11px;padding:4px 0;border-top:1px solid var(--border)}
+.vw-ip{color:var(--text);font-family:ui-monospace,monospace;min-width:100px}
+.vw-dev{color:var(--sub);flex:1}
+.vw-dur{color:var(--muted);font-variant-numeric:tabular-nums}
+.vw-none{color:var(--muted);font-size:11px;padding:4px 0}
 .tbtn{height:28px;padding:0 10px;background:var(--card);border:1px solid var(--border);
   border-radius:var(--r);color:var(--sub);font-size:11px;font-weight:500;
   display:flex;align-items:center;gap:5px;flex-shrink:0;cursor:pointer;
@@ -519,10 +525,10 @@ body:not(.fs) .fs-hud{display:none!important}
   <button class="tbtn icon" id="kb-btn" onclick="toggleVKBD()" title="Virtual keyboard">⌨</button>
   <button class="tbtn icon" id="audio-btn" onclick="toggleAudioMute()" title="Unmute target audio" style="display:none">🔇</button>
   <div id="sp"></div>
-  <div class="stat-chip" id="chip-viewers" title="Devices connected / controlling right now">👁 <span id="sv-viewers">—</span></div>
-  <div class="stat-chip" id="chip-uptime" title="Device uptime">⏱ <span id="sv-uptime">—</span></div>
-  <div class="stat-chip">🌡 <span id="sv-temp">—</span></div>
-  <div class="stat-chip">⚡ <span id="sv-lat">—</span></div>
+  <div class="stat-chip" id="chip-viewers" title="Devices connected / controlling right now">👁 <span id="sv-viewers">-</span></div>
+  <div class="stat-chip" id="chip-uptime" title="Device uptime">⏱ <span id="sv-uptime">-</span></div>
+  <div class="stat-chip">🌡 <span id="sv-temp">-</span></div>
+  <div class="stat-chip">⚡ <span id="sv-lat">-</span></div>
   <button class="tbtn icon" onclick="toggleFS()" title="Fullscreen">⛶</button>
   <button class="tbtn" id="set-btn" onclick="toggleSidebar()">⚙</button>
   <button class="tbtn icon" onclick="mbLogout()" title="Sign out">⏏</button>
@@ -593,12 +599,12 @@ body:not(.fs) .fs-hud{display:none!important}
       <div class="tab active" id="panel-stream">
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Live</div>
-          <div class="srow"><span class="sk">Status</span><span class="sv" id="s-stream">—</span></div>
-          <div class="srow"><span class="sk">Ping</span><span class="sv ac" id="s-lat">—</span></div>
-          <div class="srow"><span class="sk">Video FPS</span><span class="sv ac" id="s-vfps">—</span></div>
-          <div class="srow"><span class="sk">Temp</span><span class="sv" id="s-temp">—</span></div>
-          <div class="srow"><span class="sk">Uptime</span><span class="sv" id="s-uptime">—</span></div>
-          <div class="srow" id="s-audio-row" style="display:none"><span class="sk">Audio</span><span class="sv" id="s-audio">—</span></div>
+          <div class="srow"><span class="sk">Status</span><span class="sv" id="s-stream">-</span></div>
+          <div class="srow"><span class="sk">Ping</span><span class="sv ac" id="s-lat">-</span></div>
+          <div class="srow"><span class="sk">Video FPS</span><span class="sv ac" id="s-vfps">-</span></div>
+          <div class="srow"><span class="sk">Temp</span><span class="sv" id="s-temp">-</span></div>
+          <div class="srow"><span class="sk">Uptime</span><span class="sv" id="s-uptime">-</span></div>
+          <div class="srow" id="s-audio-row" style="display:none"><span class="sk">Audio</span><span class="sv" id="s-audio">-</span></div>
           <button class="sbtn" onclick="takeScreenshot()" style="margin-top:6px">📷 Screenshot</button>
         </div>
         <div class="scard">
@@ -626,7 +632,7 @@ body:not(.fs) .fs-hud{display:none!important}
             </select>
           </div>
           <button class="sbtn pri" style="margin-top:6px" onclick="applyVideo()">▶ Apply</button>
-          <div style="font-size:11px;opacity:.6;margin-top:6px">WebRTC is used by default. Falls back to MJPEG automatically if the C790 board / Janus isn't detected.</div>
+          <div style="font-size:11px;opacity:.6;margin-top:6px">WebRTC by default, falls back to MJPEG if unavailable.</div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Mouse Mode</div>
@@ -635,13 +641,9 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="cur-opt" id="mm-abs" onclick="setMouseMode('absolute')">Absolute</button>
           </div>
           <div class="snote" id="mm-note" style="margin-top:6px">
-            <b>Relative</b> — pointer-lock + movement deltas. Stealthiest: the USB
-            device stays an ordinary relative receiver mouse. A predictive dot
-            (below) shows your movement while the remote cursor catches up.<br>
-            <b>Absolute</b> — your cursor maps 1:1 to the screen, so you always
-            see exactly where it is with no drift. Switching rebuilds the USB
-            gadget as an absolute pointer, which is a subtle deep tell — off by
-            default, use when you want precise visible pointing.
+            <b>Relative</b>: pointer-lock, most stealthy (looks like a normal mouse).
+            <b>Absolute</b>: cursor maps 1:1 so you always see it. Rebuilds the USB
+            mouse, slightly less stealthy.
           </div>
         </div>
         <div class="scard">
@@ -670,7 +672,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="sbtn pri" onclick="wolWake()" style="flex:1">⚡ Wake PC</button>
           </div>
           <div class="snote" id="wol-msg" style="margin-bottom:0;margin-top:6px;display:none"></div>
-          <div class="snote" style="margin-bottom:0">Sends a magic packet to power on the target PC. Target must have WOL enabled in BIOS and NIC driver settings, and stay connected to power/ethernet while off.</div>
+          <div class="snote" style="margin-bottom:0">Powers on the target (magic packet). Needs WOL enabled in its BIOS + NIC, and power/ethernet kept connected.</div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Shortcuts</div>
@@ -690,7 +692,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <span id="wifi-active-pill" style="margin-left:6px;font-size:9px;background:var(--green);color:#000;padding:1px 7px;border-radius:10px;font-weight:700;display:none"></span>
             <button class="sbtn" style="margin:0 0 0 auto;height:22px;padding:0 10px;font-size:10px" onclick="wifiRefresh()">↺</button>
           </div>
-          <div class="srow" style="margin-bottom:8px"><span class="sk">This device's IP</span><span class="sv" id="ss-ip">—</span></div>
+          <div class="srow" style="margin-bottom:8px"><span class="sk">This device's IP</span><span class="sv" id="ss-ip">-</span></div>
 
           <!-- Saved networks list -->
           <div id="wifi-list" style="margin:4px 0 8px"></div>
@@ -711,7 +713,7 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-pur"></span>Tailscale
-            <span class="tag tag-pur" id="ts-tag" style="margin-left:auto">—</span>
+            <span class="tag tag-pur" id="ts-tag" style="margin-left:auto">-</span>
           </div>
           <div id="ts-install">
             <div class="snote">Not installed. Install for remote access from anywhere.</div>
@@ -735,7 +737,7 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
           <div id="ts-connected">
             <div class="srow"><span class="sk">Status</span><span class="sv ok">Connected ✓</span></div>
-            <div class="srow"><span class="sk">IP</span><span class="sv ts" id="ts-ip">—</span></div>
+            <div class="srow"><span class="sk">IP</span><span class="sv ts" id="ts-ip">-</span></div>
             <button class="sbtn suc" onclick="copyTsUrl2()">📋 Copy Access URL</button>
             <div style="display:flex;gap:6px;margin-top:4px">
               <button class="sbtn" style="flex:1" onclick="tsDisconnect()">⊘ Disconnect</button>
@@ -781,7 +783,7 @@ body:not(.fs) .fs-hud{display:none!important}
               <input class="sinput" type="password" id="ai-key" placeholder="API key" style="margin:0;flex:1" autocomplete="off" autocorrect="off">
               <button class="sbtn" style="width:auto;padding:0 10px;margin:0;flex-shrink:0;height:28px" onclick="aiSaveKey()">Save</button>
             </div>
-            <div class="snote" style="margin-top:-4px">Key is saved server-side on this Pi, never in the browser. Re-enter to replace; leave blank and Save to clear.</div>
+            <div class="snote" style="margin-top:-4px">Saved on the Pi, never in the browser. Blank + Save clears it.</div>
             <textarea id="ai-cmd" placeholder="E.g. 'Open Notepad and type Hello World' or 'Press Win+D then open Chrome'" autocomplete="off" spellcheck="false"></textarea>
             <button class="sbtn pur" id="ai-run-btn" onclick="aiRun()">▶ Execute</button>
             <div id="ai-log"></div>
@@ -819,11 +821,11 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-cyn"></span>Keyboard Layout</div>
-          <div class="snote">What layout the remote PC is set to - affects Paste and AI-typed text only (not manual key presses, which already send physical key positions). Wrong layout types the wrong characters, not garbled/random ones.</div>
+          <div class="snote">The target's keyboard layout. Affects Paste only, not live typing. Wrong layout types the wrong characters.</div>
           <select class="ssel" id="kb-layout" onchange="kbLayoutChange()">
             <option value="us">US (QWERTY)</option>
           </select>
-          <div class="snote" style="margin-bottom:0">Only US is verified so far. More layouts (UK/DE/FR…) can be added once needed - ask and it'll be a quick addition.</div>
+          <div class="snote" style="margin-bottom:0">Only US is tested. More can be added when needed.</div>
         </div>
       </div>
 
@@ -860,7 +862,7 @@ body:not(.fs) .fs-hud{display:none!important}
                   stroke-dasharray="276.5" stroke-dashoffset="276.5"/>
               </svg>
               <div class="gauge-center">
-                <div class="gauge-num" id="gauge-temp-num">—</div>
+                <div class="gauge-num" id="gauge-temp-num">-</div>
                 <div class="gauge-unit">CPU TEMP</div>
               </div>
             </div>
@@ -868,39 +870,40 @@ body:not(.fs) .fs-hud{display:none!important}
               <div class="gauge-label">Core Status</div>
               <div class="gauge-status" id="gauge-status"><span class="gsd"></span><span id="gauge-status-txt">Reading…</span></div>
               <div class="stat-tiles" style="margin-top:10px">
-                <div class="stat-tile"><div class="stat-tile-k">Power</div><div class="stat-tile-v" id="gauge-power">—</div></div>
-                <div class="stat-tile"><div class="stat-tile-k">Uptime</div><div class="stat-tile-v" id="gauge-uptime">—</div></div>
+                <div class="stat-tile"><div class="stat-tile-k">Power</div><div class="stat-tile-v" id="gauge-power">-</div></div>
+                <div class="stat-tile"><div class="stat-tile-k">Uptime</div><div class="stat-tile-v" id="gauge-uptime">-</div></div>
               </div>
             </div>
           </div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel"></span>Connection &amp; Devices</div>
-          <div class="srow"><span class="sk">HID KB</span><span class="sv" id="ss-hkb">—</span></div>
-          <div class="srow"><span class="sk">HID Mouse</span><span class="sv" id="ss-hms">—</span></div>
-          <div class="srow"><span class="sk">Video</span><span class="sv" id="ss-dev">—</span></div>
-          <div class="srow"><span class="sk">Stream</span><span class="sv" id="ss-str">—</span></div>
-          <div class="srow"><span class="sk">Clients</span><span class="sv" id="ss-cl">—</span></div>
-          <button class="sbtn" onclick="refreshStatus()" style="margin-top:6px">↺ Refresh</button>
+          <div class="srow"><span class="sk">HID KB</span><span class="sv" id="ss-hkb">-</span></div>
+          <div class="srow"><span class="sk">HID Mouse</span><span class="sv" id="ss-hms">-</span></div>
+          <div class="srow"><span class="sk">Video</span><span class="sv" id="ss-dev">-</span></div>
+          <div class="srow"><span class="sk">Stream</span><span class="sv" id="ss-str">-</span></div>
+          <div class="srow"><span class="sk">Connected</span><span class="sv" id="ss-cl">0</span></div>
+          <div id="ss-viewers"></div>
+          <button class="sbtn" onclick="refreshStatus()" style="margin-top:6px">Refresh</button>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--cyan)"></span>Power &amp; Health</div>
           <div class="srow">
             <span class="sk">Input power</span>
-            <span class="sv" id="ph-power"><span id="ph-power-text">—</span><span class="ph-warn" id="ph-power-warn" style="display:none" onclick="this.classList.toggle('show')">⚠<span class="ph-tip">Under-voltage detected on the 5V input. This Pi is powered through the GPIO 5V pins from a 5V/3A barrel adapter — a weak adapter or a thin/long cable can't supply enough current under load. Try the original supply on a short, thick cable directly into the wall (not a hub/extension).</span></span></span>
+            <span class="sv" id="ph-power"><span id="ph-power-text">-</span><span class="ph-warn" id="ph-power-warn" style="display:none" onclick="this.classList.toggle('show')">⚠<span class="ph-tip">Under-voltage detected on the 5V input. This Pi is powered through the GPIO 5V pins from a 5V/3A barrel adapter - a weak adapter or a thin/long cable can't supply enough current under load. Try the original supply on a short, thick cable directly into the wall (not a hub/extension).</span></span></span>
           </div>
-          <div class="srow"><span class="sk">Power state</span><span class="sv" id="ph-state">—</span></div>
+          <div class="srow"><span class="sk">Power state</span><span class="sv" id="ph-state">-</span></div>
           <div class="srow">
             <span class="sk">CPU temp</span>
-            <span class="sv" id="ph-temp"><span id="ph-temp-text">—</span><span class="ph-warn" id="ph-temp-warn" style="display:none" onclick="this.classList.toggle('show')">⚠<span class="ph-tip">The Pi is thermally throttling right now — CPU clock is being reduced to cool down. Check airflow/case ventilation.</span></span></span>
+            <span class="sv" id="ph-temp"><span id="ph-temp-text">-</span><span class="ph-warn" id="ph-temp-warn" style="display:none" onclick="this.classList.toggle('show')">⚠<span class="ph-tip">The Pi is thermally throttling right now - CPU clock is being reduced to cool down. Check airflow/case ventilation.</span></span></span>
           </div>
-          <div class="srow"><span class="sk">CPU load</span><span class="sv" id="ph-load">—</span></div>
-          <div class="srow"><span class="sk">CPU clock</span><span class="sv" id="ph-clock">—</span></div>
-          <div class="srow"><span class="sk">Memory</span><span class="sv" id="ph-mem">—</span></div>
-          <div class="srow"><span class="sk">Uptime</span><span class="sv" id="ph-uptime">—</span></div>
-          <div class="srow"><span class="sk">magicbridge</span><span class="tag" id="ph-svc-mb">—</span></div>
-          <div class="srow"><span class="sk">stealth-dashboard</span><span class="tag" id="ph-svc-sd">—</span></div>
-          <div class="srow"><span class="sk">ustreamer</span><span class="tag" id="ph-svc-us">—</span></div>
+          <div class="srow"><span class="sk">CPU load</span><span class="sv" id="ph-load">-</span></div>
+          <div class="srow"><span class="sk">CPU clock</span><span class="sv" id="ph-clock">-</span></div>
+          <div class="srow"><span class="sk">Memory</span><span class="sv" id="ph-mem">-</span></div>
+          <div class="srow"><span class="sk">Uptime</span><span class="sv" id="ph-uptime">-</span></div>
+          <div class="srow"><span class="sk">magicbridge</span><span class="tag" id="ph-svc-mb">-</span></div>
+          <div class="srow"><span class="sk">stealth-dashboard</span><span class="tag" id="ph-svc-sd">-</span></div>
+          <div class="srow"><span class="sk">ustreamer</span><span class="tag" id="ph-svc-us">-</span></div>
         </div>
         </div>
 
@@ -912,9 +915,9 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>MagicBridge Update</div>
-          <div class="srow"><span class="sk">Status</span><span class="sv" id="sys-avail">—</span></div>
-          <div class="srow"><span class="sk">Commit</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:10px">—</span></div>
-          <div class="srow"><span class="sk">Branch</span><span class="sv" id="sys-branch">—</span></div>
+          <div class="srow"><span class="sk">Status</span><span class="sv" id="sys-avail">-</span></div>
+          <div class="srow"><span class="sk">Commit</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:10px">-</span></div>
+          <div class="srow"><span class="sk">Branch</span><span class="sv" id="sys-branch">-</span></div>
           <div id="sys-update-out" style="display:none;font-size:10px;background:var(--surf2);border:1px solid var(--border);border-radius:4px;padding:6px;margin:6px 0;white-space:pre-wrap;max-height:120px;overflow:auto;font-family:monospace;color:var(--muted)"></div>
           <button class="sbtn" onclick="sysCheckVer()" style="margin-top:6px">↺ Check Status</button>
           <button class="sbtn suc" id="sys-update-btn" onclick="sysUpdate()" style="margin-top:4px">⬆ Pull & Update from GitHub</button>
@@ -924,7 +927,7 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="sys-cat" data-cat="security">
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Account</div>
-          <div class="snote" style="margin-bottom:8px">Change the password for this KVM page. This is separate from the /stealth/ admin panel password.</div>
+          <div class="snote" style="margin-bottom:8px">Password for this KVM page (separate from the /stealth/ admin panel).</div>
           <label class="wifi-label" for="pw-current">Current password</label>
           <input class="sinput wifi-field" type="password" id="pw-current" placeholder="Current password" autocomplete="current-password" style="margin-bottom:8px">
           <label class="wifi-label" for="pw-new1">New password</label>
@@ -936,8 +939,8 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>Network Lockdown</div>
-          <div class="snote" style="margin-bottom:8px">Restrict the web UI to Tailscale only: no LAN or public access. Requires Tailscale to be connected first, or it refuses to enable.</div>
-          <div class="srow"><span class="sk">Status</span><span class="sv" id="lockdown-status">—</span></div>
+          <div class="snote" style="margin-bottom:8px">Limit access to Tailscale only (no LAN or public). Needs Tailscale connected first.</div>
+          <div class="srow"><span class="sk">Status</span><span class="sv" id="lockdown-status">-</span></div>
           <button class="sbtn" id="lockdown-btn" onclick="toggleLockdown()" style="margin-top:6px">Enable Tailscale-only Access</button>
           <div id="lockdown-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
@@ -946,8 +949,8 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="sys-cat" data-cat="peripherals">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>Mouse Jiggler</div>
-          <div class="snote" style="margin-bottom:8px">Nudges the remote mouse now and then to keep the screen/session awake. Timing and movement are randomized, not a fixed pattern, and it always pauses itself while you're actually using the KVM.</div>
-          <div class="srow"><span class="sk">Status</span><span class="sv" id="jiggler-status">—</span></div>
+          <div class="snote" style="margin-bottom:8px">Keeps the target awake with occasional random mouse nudges. Pauses while you're using the KVM.</div>
+          <div class="srow"><span class="sk">Status</span><span class="sv" id="jiggler-status">-</span></div>
           <label class="wifi-label" for="jiggler-style" style="margin-top:8px">Style</label>
           <select class="sinput wifi-field" id="jiggler-style" onchange="jigglerStyleChanged()" style="margin-bottom:8px">
             <option value="minimal">Minimal - stays usable while enabled</option>
@@ -960,8 +963,8 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>HID Connect Only While In Use</div>
-          <div class="snote" style="margin-bottom:8px">When enabled, the USB keyboard/mouse device disconnects from the target entirely after an idle period with no active session, and reconnects the instant a new session starts (adds a brief ~1s delay on first input). Off by default. Note: this makes the mouse jiggler above go quiet while disconnected - the two aren't meant to run together.</div>
-          <div class="srow"><span class="sk">Status</span><span class="sv" id="hidautodc-status">—</span></div>
+          <div class="snote" style="margin-bottom:8px">Unplugs the USB keyboard/mouse from the target when idle, reconnects on next use (~1s delay). Don't run alongside the jiggler.</div>
+          <div class="srow"><span class="sk">Status</span><span class="sv" id="hidautodc-status">-</span></div>
           <label class="wifi-label" for="hidautodc-idle" style="margin-top:8px">Disconnect after (minutes idle)</label>
           <input class="sinput wifi-field" id="hidautodc-idle" type="number" min="1" max="180" value="15" onchange="hidAutoDcIdleChanged()" style="margin-bottom:8px">
           <button class="sbtn" id="hidautodc-btn" onclick="toggleHidAutoDc()">Enable Auto-Disconnect</button>
@@ -969,7 +972,7 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>OLED Display</div>
-          <div class="snote" style="margin-bottom:8px">Customize what shows on the case's status screen. Changes apply live within a couple seconds - no reboot needed.</div>
+          <div class="snote" style="margin-bottom:8px">What the case screen shows. Applies live.</div>
 
           <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:pointer;margin-bottom:10px">
             <input type="checkbox" id="oled-enabled" checked onchange="oledFormChanged()" style="accent-color:var(--accent)">
@@ -1035,7 +1038,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <input type="checkbox" id="oled-l4-enable" onchange="oledFormChanged()" style="accent-color:var(--accent)">
             Enable 4th line
           </label>
-          <div class="snote" style="margin:0 0 8px;color:var(--yellow)">⚠ Adding a 4th line shrinks the font on <b>all</b> lines to fit the screen - everything gets smaller, not just this one. Off by default (3 lines).</div>
+          <div class="snote" style="margin:0 0 8px;color:var(--yellow)">⚠ A 4th line shrinks the font on <b>all</b> lines to fit.</div>
           <div id="oled-l4-wrap" style="display:none">
             <label class="wifi-label" for="oled-l4-mode">Line 4</label>
             <select class="sinput wifi-field" id="oled-l4-mode" onchange="oledFormChanged()" style="margin-bottom:4px">
@@ -1064,20 +1067,20 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="scard-title"><span class="dot-acc"></span>Current Identity
             <span id="id-tag" class="tag tag-ok" style="margin-left:auto">Default</span>
           </div>
-          <div class="srow"><span class="sk">Device</span><span class="sv ac" id="id-prod">—</span></div>
-          <div class="srow"><span class="sk">Maker</span><span class="sv" id="id-mfr">—</span></div>
-          <div class="srow"><span class="sk">Serial</span><span class="sv" id="id-ser" style="font-family:monospace;font-size:11px">—</span></div>
-          <div class="srow"><span class="sk">VID/PID</span><span class="sv" id="id-ids" style="font-family:monospace;font-size:11px">—</span></div>
+          <div class="srow"><span class="sk">Device</span><span class="sv ac" id="id-prod">-</span></div>
+          <div class="srow"><span class="sk">Maker</span><span class="sv" id="id-mfr">-</span></div>
+          <div class="srow"><span class="sk">Serial</span><span class="sv" id="id-ser" style="font-family:monospace;font-size:11px">-</span></div>
+          <div class="srow"><span class="sk">VID/PID</span><span class="sv" id="id-ids" style="font-family:monospace;font-size:11px">-</span></div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Profile vs Current</div>
           <table class="id-table">
             <tr><th>Field</th><th>Profile Default</th><th>Now</th></tr>
-            <tr><td>Product</td><td class="id-orig">USB Receiver</td><td class="id-same" id="dd-prod">—</td></tr>
-            <tr><td>Maker</td><td class="id-orig">Logitech</td><td class="id-same" id="dd-mfr">—</td></tr>
-            <tr><td>Serial</td><td class="id-orig">(none)</td><td class="id-same" id="dd-ser">—</td></tr>
-            <tr><td>VID</td><td class="id-orig">0x046d</td><td class="id-same" id="dd-vid">—</td></tr>
-            <tr><td>PID</td><td class="id-orig">0xc52b</td><td class="id-same" id="dd-pid">—</td></tr>
+            <tr><td>Product</td><td class="id-orig">USB Receiver</td><td class="id-same" id="dd-prod">-</td></tr>
+            <tr><td>Maker</td><td class="id-orig">Logitech</td><td class="id-same" id="dd-mfr">-</td></tr>
+            <tr><td>Serial</td><td class="id-orig">(none)</td><td class="id-same" id="dd-ser">-</td></tr>
+            <tr><td>VID</td><td class="id-orig">0x046d</td><td class="id-same" id="dd-vid">-</td></tr>
+            <tr><td>PID</td><td class="id-orig">0xc52b</td><td class="id-same" id="dd-pid">-</td></tr>
           </table>
         </div>
         </div>
@@ -1183,7 +1186,7 @@ body:not(.fs) .fs-hud{display:none!important}
 
 <div id="toast"></div>
 
-<!-- WebRTC (C790/H.264) client libs — additive, only used when Transport is
+<!-- WebRTC (C790/H.264) client libs - additive, only used when Transport is
      set to WebRTC. Files are vendored by install_janus_webrtc.sh into
      /opt/magicbridge/web/static/vendor/; if that script hasn't run yet (or
      the C790 add-on isn't installed), these 404 harmlessly and startWebRTC()
@@ -1270,7 +1273,7 @@ const $ns=document.getElementById('nosig');
 let _frameLoadTimes=[];
 function onLoad(){
   // The MJPEG <img> keeps running in the background even while WebRTC is
-  // the active/visible transport (see setVideoTransport) — its own
+  // the active/visible transport (see setVideoTransport) - its own
   // load/error events shouldn't overwrite the status pills that are
   // currently describing the WebRTC stream the user can actually see.
   if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
@@ -1280,7 +1283,7 @@ function onLoad(){
   document.getElementById('s-stream').textContent='Live';
   document.getElementById('s-stream').className='sv ok';
   // Best-effort real video FPS. "Ping" above only measures the tiny WebSocket
-  // control channel round-trip (keyboard/mouse) — it says nothing about the
+  // control channel round-trip (keyboard/mouse) - it says nothing about the
   // video. Some browsers re-fire `load` on every multipart MJPEG part; where
   // that happens this gives an honest "frames actually rendered per second"
   // number instead. If it never updates in your browser, the control ping
@@ -1308,12 +1311,12 @@ function retryStream(){ $s.src='/stream?_='+Date.now(); _frameLoadTimes=[]; }
 // MJPEG-over-HTTP has no frame-dropping: TCP guarantees in-order delivery,
 // so if the browser or network ever falls behind the capture card's output
 // for even a moment, frames queue up and the picture keeps getting further
-// behind real time instead of catching back up — it never self-corrects.
+// behind real time instead of catching back up - it never self-corrects.
 // That's the "video gets more delayed the longer I use it" behavior. A
 // silent periodic reconnect clears any backlog before it becomes visible.
-// Cost: one dropped frame (~40ms at 25fps) every 15s — imperceptible next
+// Cost: one dropped frame (~40ms at 25fps) every 15s - imperceptible next
 // to the multi-second delay it prevents from accumulating.
-// Skipped entirely while WebRTC is the active transport — the MJPEG <img>
+// Skipped entirely while WebRTC is the active transport - the MJPEG <img>
 // is hidden then and this would just churn its background connection.
 setInterval(()=>{
   if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
@@ -1463,7 +1466,7 @@ document.addEventListener('keydown',e=>{
       _escHoldTimer=setTimeout(()=>{           // held long enough → release
         send({type:'keyup',code:'Escape'});
         _intentional=true;
-        toast('Control released — click the screen to recapture');
+        toast('Control released - click the screen to recapture');
         releaseAll();
         _escDown=0;
       }, ESC_HOLD_MS);
@@ -1671,8 +1674,8 @@ function toggleSidebar(){
 }
 // Auto-hide the settings sidebar while the user is actively controlling the
 // remote screen (pointer-locked), and bring it back once they exit control
-// (Esc / click away / lose lock). Doesn't touch _sideOpen — that's the
-// user's manual open/close preference via the settings button — this just
+// (Esc / click away / lose lock). Doesn't touch _sideOpen - that's the
+// user's manual open/close preference via the settings button - this just
 // forces the visual state during capture without losing that preference.
 function setSidebarForControl(visible){
   const on=visible && _sideOpen;
@@ -1731,7 +1734,7 @@ async function applyVideo(){
     const r=await fetch('/api/stream/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resolution:res,fps,mode})});
     const d=await r.json();
     if(d.ok){
-      toast('Video updated ✓ — reconnecting stream…');
+      toast('Video updated ✓ - reconnecting stream…');
       // Backend restarts ustreamer synchronously before this response comes
       // back, so the new stream is already live at this point. The <img>
       // element is still holding its old connection to the now-dead
@@ -1747,7 +1750,7 @@ async function applyVideo(){
 
 // --- WebRTC (C790/H.264 via Janus) -----------------------------------
 // WebRTC is the preferred/default transport (near-zero-latency hardware
-// H.264 over the C790/CSI path). MJPEG is the automatic fallback — used
+// H.264 over the C790/CSI path). MJPEG is the automatic fallback - used
 // whenever WebRTC can't actually be established, not just when the
 // dropdown says "mjpeg". Detection happens at two levels:
 //   1. Server-side: video.py's _start_ustreamer_h264 falls back to mjpeg
@@ -1755,7 +1758,7 @@ async function applyVideo(){
 //      no Janus-enabled build, etc). /api/status then reports the real
 //      running mode, which syncVideoTransport() below picks up.
 //   2. Client-side: even when ustreamer's h264 sink IS running, Janus
-//      itself might not be (e.g. janus-webrtc.service not started yet —
+//      itself might not be (e.g. janus-webrtc.service not started yet -
 //      that's the current state until the C790 physically arrives). The
 //      Janus connect/attach error handlers and the connect-timeout guard
 //      below catch that case and switch the UI back to MJPEG live,
@@ -1791,7 +1794,7 @@ function _webrtcFallbackToMjpeg(reason){
   document.getElementById('webrtc-view').style.display = 'none';
   document.getElementById('stream').style.display = '';
   retryStream();
-  toast('WebRTC unavailable — using MJPEG');
+  toast('WebRTC unavailable - using MJPEG');
 }
 
 function startWebRTC(){
@@ -1810,7 +1813,7 @@ function startWebRTC(){
     if(_activeTransport === 'h264') _webrtcFallbackToMjpeg('connect timeout (8s)');
   }, 8000);
   // Callback names/shape below (onremotetrack + manual MediaStream assembly,
-  // watch/start/jsep flow) match janus.js v1.0.0 specifically — that's the
+  // watch/start/jsep flow) match janus.js v1.0.0 specifically - that's the
   // tag install_janus_webrtc.sh pins the server + this client library to,
   // since ustreamer's bundled Janus plugin isn't guaranteed to compile
   // against newer Janus API revisions. If the vendored janus.js is ever
@@ -1915,24 +1918,36 @@ function stopWebRTC(){
 function dispWinP(){send({type:'combo',codes:['MetaLeft','KeyP']});toast('Win+P →');}
 
 // Status
+function durShort(s){ return s>=3600?Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m':s>=60?Math.floor(s/60)+'m':(s|0)+'s'; }
+function uaShort(ua){
+  if(!ua) return 'device';
+  let os='', br='';
+  if(/Windows/.test(ua))os='Windows'; else if(/Android/.test(ua))os='Android';
+  else if(/iPhone|iPad|iPod/.test(ua))os='iOS'; else if(/Mac OS X|Macintosh/.test(ua))os='macOS';
+  else if(/CrOS/.test(ua))os='ChromeOS'; else if(/Linux/.test(ua))os='Linux';
+  if(/Edg\//.test(ua))br='Edge'; else if(/OPR\/|Opera/.test(ua))br='Opera';
+  else if(/Chrome\//.test(ua))br='Chrome'; else if(/Firefox\//.test(ua))br='Firefox';
+  else if(/Safari\//.test(ua))br='Safari';
+  return (br&&os)?br+' on '+os : (br||os||'device');
+}
 function applyStatus(d){
   if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;}
   if(d.uptime){
     document.getElementById('s-uptime').textContent=d.uptime;
     const uc=document.getElementById('sv-uptime'); if(uc) uc.textContent=d.uptime.trim();
   }
-  // Who's connected / controlling (top-bar 👁 chip). Show the count, and on
-  // hover list each device's IP + how long it's been connected.
+  // Who's connected now: top-bar count chip + the System-tab device list.
   if(Array.isArray(d.viewers)){
     const vc=document.getElementById('sv-viewers'), chip=document.getElementById('chip-viewers');
     if(vc) vc.textContent=String(d.viewers.length);
-    if(chip){
-      const fmt=s=>s>=3600?Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m':s>=60?Math.floor(s/60)+'m':s+'s';
-      chip.title = d.viewers.length
-        ? 'Connected now:\n'+d.viewers.map(v=>'• '+v.ip+' — '+fmt(v.secs)).join('\n')
-        : 'No active viewers';
-      // Subtle emphasis when more than just you are connected.
-      chip.classList.toggle('multi', d.viewers.length>1);
+    if(chip) chip.classList.toggle('multi', d.viewers.length>1);
+    const list=document.getElementById('ss-viewers');
+    if(list){
+      list.innerHTML = d.viewers.length
+        ? d.viewers.map(v=>'<div class="vw"><span class="vw-ip">'+v.ip+'</span>'
+            +'<span class="vw-dev">'+uaShort(v.ua)+'</span>'
+            +'<span class="vw-dur">'+durShort(v.secs)+'</span></div>').join('')
+        : '<div class="vw-none">no active connections</div>';
     }
   }
   if(d.local_ip) document.getElementById('ss-ip').textContent=d.local_ip;
@@ -1940,7 +1955,7 @@ function applyStatus(d){
   if(d.hid_ms!=null) document.getElementById('ss-hms').textContent=d.hid_ms?'✓ /dev/hidg1':'✗';
   if(d.stream){
     const s=d.stream;
-    document.getElementById('ss-dev').textContent=s.device||'—';
+    document.getElementById('ss-dev').textContent=s.device||'-';
     document.getElementById('ss-str').textContent=s.running?'Running':'Stopped';
     syncVideoTransport(s.mode);
     // Audio pass-through status (C790 I2S -> Janus). Row only shows once a
@@ -1959,30 +1974,30 @@ function applyStatus(d){
 // Power & Health card (System tab). Reconciles fully from whatever
 // /api/status reports each poll - no local state carried between calls.
 const _phStateLabel={ok:'Healthy',under_voltage:'Under-voltage now',throttled:'Throttled now',
-  was_throttled:'OK now — was throttled since boot',unknown:'Unavailable (vcgencmd)'};
+  was_throttled:'OK now - was throttled since boot',unknown:'Unavailable (vcgencmd)'};
 const _phStateCls={ok:'ok',under_voltage:'err',throttled:'err',was_throttled:'warn',unknown:''};
 function _phSvcPill(id,alive){
   const el=document.getElementById(id); if(!el) return;
-  if(alive==null){el.textContent='—';el.className='tag';return;}
+  if(alive==null){el.textContent='-';el.className='tag';return;}
   el.textContent=alive?'● active':'● stopped';
   el.className='tag '+(alive?'tag-ok':'tag-err');
 }
 function applyPowerHealth(d){
   const p=d.power||{state:'unknown'};
   const stEl=document.getElementById('ph-state');
-  if(stEl){stEl.textContent=_phStateLabel[p.state]||p.state||'—';stEl.className='sv '+(_phStateCls[p.state]||'');}
+  if(stEl){stEl.textContent=_phStateLabel[p.state]||p.state||'-';stEl.className='sv '+(_phStateCls[p.state]||'');}
 
   const powTxt=document.getElementById('ph-power-text');
   if(powTxt){
     powTxt.textContent=(d.watts_in!=null&&d.volts_in!=null&&d.amps_in!=null)
       ? d.volts_in.toFixed(2)+'V · '+d.amps_in.toFixed(2)+'A ('+d.watts_in+'W)'
-      : (_phStateLabel[p.state]||'—');
+      : (_phStateLabel[p.state]||'-');
   }
   const powWarn=document.getElementById('ph-power-warn');
   if(powWarn) powWarn.style.display=(p.uv_now||p.throttled_now)?'inline-block':'none';
 
   const tempTxt=document.getElementById('ph-temp-text');
-  if(tempTxt) tempTxt.textContent=(d.temp_c!=null)?d.temp_c.toFixed(1)+'°C':'—';
+  if(tempTxt) tempTxt.textContent=(d.temp_c!=null)?d.temp_c.toFixed(1)+'°C':'-';
   const tempWarn=document.getElementById('ph-temp-warn');
   if(tempWarn) tempWarn.style.display=p.temp_limit_now?'inline-block':'none';
 
@@ -2004,16 +2019,16 @@ function applyPowerHealth(d){
       gStat.style.color=c; if(dot) dot.style.background=c;}
   }
   const gPow=document.getElementById('gauge-power');
-  if(gPow) gPow.textContent=(d.watts_in!=null&&d.volts_in!=null)?d.volts_in.toFixed(1)+'V · NOM':(_phStateLabel[p.state]||'—');
+  if(gPow) gPow.textContent=(d.watts_in!=null&&d.volts_in!=null)?d.volts_in.toFixed(1)+'V · NOM':(_phStateLabel[p.state]||'-');
   const gUp=document.getElementById('gauge-uptime');
   if(gUp&&d.uptime) gUp.textContent=d.uptime;
 
   const loadEl=document.getElementById('ph-load');
-  if(loadEl) loadEl.textContent=(d.load_pct!=null)?d.load_pct+'% (avg '+d.load1+')':'—';
+  if(loadEl) loadEl.textContent=(d.load_pct!=null)?d.load_pct+'% (avg '+d.load1+')':'-';
   const clockEl=document.getElementById('ph-clock');
-  if(clockEl) clockEl.textContent=(d.clock_mhz!=null)?d.clock_mhz+' MHz':'—';
+  if(clockEl) clockEl.textContent=(d.clock_mhz!=null)?d.clock_mhz+' MHz':'-';
   const memEl=document.getElementById('ph-mem');
-  if(memEl) memEl.textContent=(d.mem_used_pct!=null)?d.mem_used_pct+'% ('+d.mem_used_gb+'/'+d.mem_total_gb+' GB)':'—';
+  if(memEl) memEl.textContent=(d.mem_used_pct!=null)?d.mem_used_pct+'% ('+d.mem_used_gb+'/'+d.mem_total_gb+' GB)':'-';
   const upEl=document.getElementById('ph-uptime');
   if(upEl&&d.uptime) upEl.textContent=d.uptime;
 
@@ -2072,14 +2087,14 @@ function renderTs(d){
   const tag=document.getElementById('ts-tag');
   [inst,login,conn,stop].forEach(e=>{if(e)e.style.display='none';});
   if(!d.installed){tag.textContent='Not installed';tag.className='tag tag-err';inst.style.display='block';}
-  else if(d.connected){tag.textContent='● Connected';tag.className='tag tag-ok';conn.style.display='block';document.getElementById('ts-ip').textContent=d.ip||'—';}
+  else if(d.connected){tag.textContent='● Connected';tag.className='tag tag-ok';conn.style.display='block';document.getElementById('ts-ip').textContent=d.ip||'-';}
   else if(d.logged_in){tag.textContent='Stopped';tag.className='tag tag-warn';stop.style.display='block';}
   else{tag.textContent='Not connected';tag.className='tag tag-warn';login.style.display='block';if(d.login_url)showTsUrl(d.login_url);}
 }
 function showTsUrl(url){_tsUrl=url;document.getElementById('ts-url-area').style.display='block';document.getElementById('ts-url-disp').textContent=url;}
 function copyTsUrl(){if(_tsUrl){navigator.clipboard.writeText(_tsUrl);toast('Link copied ✓');}}
 function openTsUrl(){if(_tsUrl) window.open(_tsUrl,'_blank');}
-function copyTsUrl2(){const ip=document.getElementById('ts-ip').textContent;if(ip&&ip!=='—'){navigator.clipboard.writeText('https://'+ip+'/');toast('URL copied ✓');}}
+function copyTsUrl2(){const ip=document.getElementById('ts-ip').textContent;if(ip&&ip!=='-'){navigator.clipboard.writeText('https://'+ip+'/');toast('URL copied ✓');}}
 async function tsInstall(){toast('Installing…',30000);const r=await fetch('/api/tailscale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'install'})});const d=await r.json();toast(d.ok?'Installed ✓':'Failed');if(d.ok)setTimeout(tsRefresh,1000);}
 async function tsGetLoginUrl(){toast('Getting link…',6000);const r=await fetch('/api/tailscale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'login'})});const d=await r.json();if(d.login_url)showTsUrl(d.login_url);else toast('Failed: '+(d.out||''));}
 async function tsAuthKey(){const k=document.getElementById('ts-authkey').value.trim();if(!k){toast('Enter auth key');return;}toast('Connecting…',8000);const r=await fetch('/api/tailscale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'up',authkey:k})});const d=await r.json();toast(d.ok?'Connected ✓':'Failed');if(d.ok)setTimeout(tsRefresh,1000);}
@@ -2092,10 +2107,10 @@ const _ORIG={prod:'USB Receiver',mfr:'Logitech',vid:'0x046d',pid:'0xc52b'};
 async function identityRefresh(){
   try{
     const r=await fetch('/api/identity');const d=await r.json();
-    const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v||'—';};
+    const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v||'-';};
     set('id-prod',d.product);set('id-mfr',d.manufacturer);set('id-ser',d.serial);
-    set('id-ids',(d.vid||'—')+' / '+(d.pid||'—'));
-    function dd(id,orig,curr){const e=document.getElementById(id);if(!e)return;e.textContent=curr||'—';e.className=curr===orig?'id-same':'id-curr';}
+    set('id-ids',(d.vid||'-')+' / '+(d.pid||'-'));
+    function dd(id,orig,curr){const e=document.getElementById(id);if(!e)return;e.textContent=curr||'-';e.className=curr===orig?'id-same':'id-curr';}
     dd('dd-prod',_ORIG.prod,d.product);dd('dd-mfr',_ORIG.mfr,d.manufacturer);
     // Real Logitech Unifying Receivers report no serial number at all, so
     // "no serial" is the default/expected state now, not "device-specific".
@@ -2893,6 +2908,10 @@ oledUpdatePreview();
 refreshOledSettings();
 refreshWolSettings();
 loadMouseMode();
+
+// Keep connections, uptime and temp live: poll status every 5s while the page
+// is visible and not actively controlling (the top bar is hidden during capture).
+setInterval(()=>{ if(document.visibilityState==='visible' && !captured) refreshStatus(); }, 5000);
 </script>
 </body>
 </html>

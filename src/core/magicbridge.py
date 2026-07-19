@@ -1067,7 +1067,8 @@ async def api_status(request: web.Request) -> web.Response:
     # devices - this is the admin looking at their own device, not a leak.
     _now = time.time()
     viewers = sorted(
-        ({"ip": v.get("ip", "?"), "secs": int(_now - v.get("since", _now))}
+        ({"ip": v.get("ip", "?"), "secs": int(_now - v.get("since", _now)),
+          "ua": v.get("ua", "")[:180]}
          for v in list(_ws_info.values())),
         key=lambda x: x["secs"], reverse=True,
     )
