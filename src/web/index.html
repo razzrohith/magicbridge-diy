@@ -2224,15 +2224,16 @@ async function sysCheckVer(){
     const avail=document.getElementById('sys-avail');
     const btn=document.getElementById('sys-update-btn');
     if(d.update_available){
-      const n=d.commits_behind||1;
-      avail.textContent='⬆ Update available ('+n+' new commit'+(n===1?'':'s')+')';
+      const n=d.commits_behind||1, quick=(d.mode==='incremental');
+      avail.textContent=(quick?'Quick update':'Full upgrade')+' ('+n+' commit'+(n===1?'':'s')+')';
       avail.className='sv warn';
-      btn.textContent='⬆ Update available - Pull & Update';
+      btn.textContent=quick?('Quick Update ('+(d.changed||0)+' file'+(d.changed===1?'':'s')+')'):'Full Upgrade (reinstall)';
       btn.classList.add('pulse');
+      btn.dataset.mode=d.mode||'full';
     }else{
-      avail.textContent='✓ Up to date';
+      avail.textContent='Up to date';
       avail.className='sv ok';
-      btn.textContent='⬆ Pull & Update from GitHub';
+      btn.textContent='Check for updates';
       btn.classList.remove('pulse');
     }
     const out=document.getElementById('sys-update-out');
@@ -2262,15 +2263,22 @@ async function sysUpdate(){
     return;
   }
 
-  if(!confirm('Pull latest from GitHub and restart magicbridge?\nThis will briefly disconnect you.'))return;
-  toast('Updating…',30000);
+  const quick=(d0.mode==='incremental');
+  if(!confirm((quick?'Quick update':'Full upgrade')+': pull from GitHub and '
+      +(quick?'restart only the changed service':'reinstall + restart everything')
+      +'?\nThis briefly disconnects you.'))return;
+  toast(quick?'Quick update…':'Full upgrade…',quick?15000:30000);
   out.textContent='Pulling from GitHub…';out.style.display='block';
   try{
     const r=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update'})});
     const d=await r.json();
-    out.textContent=d.out||'Done';
+    out.textContent=d.note||d.out||'Done';
     toast(d.ok?'Updated ✓':'Failed');
-    if(d.ok&&d.restarted)setTimeout(()=>{toast('Reconnecting…');setTimeout(()=>location.reload(),2000);},2000);
+    if(d.ok&&d.restarted){
+      const wait=(d.mode==='full')?90000:6000;
+      toast(d.mode==='full'?'Upgrading, reconnecting in ~90s…':'Reconnecting…',wait);
+      setTimeout(()=>location.reload(),wait);
+    }
   }catch(e){out.textContent='Error: '+e;toast('Error');}
 }
 

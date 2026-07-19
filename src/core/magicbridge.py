@@ -1826,13 +1826,81 @@ async def api_wifi(request):
 
 
 
-async def api_update(request):
-    """POST /api/update: pull the latest code from GitHub and redeploy.
+# --- Update sizing: incremental (fast, copy changed runtime files) vs full ----
+_UPD_INSTALL_DIR = "/opt/magicbridge"
+# repo-relative runtime file -> (live destination, service to restart | None |
+# "nginx-reload"). A change limited to these (or docs/static/build tooling) is an
+# INCREMENTAL update; anything structural forces a FULL install.sh run.
+_UPD_FILE_MAP = {
+    "src/core/magicbridge.py":            (_UPD_INSTALL_DIR + "/core/magicbridge.py", "magicbridge"),
+    "src/core/hid.py":                    (_UPD_INSTALL_DIR + "/core/hid.py", "magicbridge"),
+    "src/core/video.py":                  (_UPD_INSTALL_DIR + "/core/video.py", "magicbridge"),
+    "src/core/oled.py":                   (_UPD_INSTALL_DIR + "/core/oled.py", "mb-oled"),
+    "src/web/index.html":                 (_UPD_INSTALL_DIR + "/web/index.html", None),
+    "src/dashboard/stealth-dashboard.py": (_UPD_INSTALL_DIR + "/dashboard/stealth-dashboard.py", "stealth-dashboard"),
+    "src/provision/mb-setup-ui.py":       (_UPD_INSTALL_DIR + "/provision/mb-setup-ui.py", None),
+    "src/core/mb-gadget.sh":              ("/usr/local/bin/mb-gadget.sh", None),
+    "src/core/mb-hdmi-init.sh":           ("/usr/local/bin/mb-hdmi-init.sh", None),
+    "src/core/mb-mdns-alias.sh":          ("/usr/local/bin/mb-mdns-alias.sh", None),
+    "src/core/mb-lockdown.sh":            ("/usr/local/bin/mb-lockdown.sh", None),
+    "src/core/mb-firstboot.sh":           ("/usr/local/bin/mb-firstboot.sh", None),
+    "src/core/mb-secret-reset.sh":        ("/usr/local/bin/mb-secret-reset.sh", None),
+    "src/provision/mb-provision.sh":      ("/usr/local/bin/mb-provision.sh", None),
+    "src/nginx/magicbridge.conf":         ("/etc/nginx/sites-available/magicbridge", "nginx-reload"),
+    "src/edid/mb-edid-1080p50.hex":       (_UPD_INSTALL_DIR + "/edid/mb-edid-1080p50.hex", None),
+}
+# Non-runtime paths: changing only these needs no deploy (docs, build-host tools).
+_UPD_IGNORE_PREFIXES = ("docs/", "src/provision/build-image.sh")
+_UPD_IGNORE_FILES    = ("README.md", ".gitignore", "LICENSE", "NOTICE", "CLAUDE.md",
+                        "MAGICBRIDGE_HANDBOOK.md")
 
-    /opt/magicbridge is a flat runtime directory, not a git repo. install.sh
-    populates it by copying files out of a real clone at /opt/magicbridge-repo.
-    This handler pulls that clone, then re-runs the same file-copy step
-    install.sh uses to deploy into /opt/magicbridge.
+def _upd_classify(changed):
+    """'full' or 'incremental' for a list of repo-relative changed paths.
+    Structural changes (install.sh, any *.service, the Janus installer, or a
+    runtime file we don't know how to place) force a full install.sh run."""
+    for f in changed:
+        if f == "install.sh" or f.endswith(".service") or f == "src/install_janus_webrtc.sh":
+            return "full"
+        if f in _UPD_FILE_MAP or f.startswith("src/web/static/"):
+            continue
+        if f.startswith(_UPD_IGNORE_PREFIXES) or f in _UPD_IGNORE_FILES:
+            continue
+        return "full"   # unknown runtime file - let the installer handle it
+    return "incremental"
+
+def _upd_incremental(changed, repo_dir):
+    """Copy just the changed runtime files to their live paths. Returns
+    (copied, services_to_restart, reload_nginx)."""
+    import shutil as _sh
+    copied, restarts, reload_nginx = [], set(), False
+    for f in changed:
+        if f in _UPD_FILE_MAP:
+            dst, svc = _UPD_FILE_MAP[f]
+            src = os.path.join(repo_dir, f)
+            if os.path.isfile(src):
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                _sh.copyfile(src, dst)
+                if dst.startswith("/usr/local/bin"):
+                    os.chmod(dst, 0o755)
+                copied.append(f)
+                if svc == "nginx-reload": reload_nginx = True
+                elif svc: restarts.add(svc)
+        elif f.startswith("src/web/static/"):
+            s = os.path.join(repo_dir, "src/web/static")
+            if os.path.isdir(s):
+                _sh.copytree(s, _UPD_INSTALL_DIR + "/web/static", dirs_exist_ok=True)
+                if "static/" not in copied: copied.append("static/")
+    return copied, restarts, reload_nginx
+
+
+async def api_update(request):
+    """POST /api/update: pull from GitHub and redeploy.
+
+    Picks the smallest safe update: an INCREMENTAL copy of only the changed
+    runtime files (+ restart just the affected service) when nothing structural
+    changed, or a FULL idempotent install.sh run when it did (deps, config.txt
+    overlays, services, new files). action="update" auto-picks; pass
+    {"mode":"full"} to force a reinstall.
     """
     import subprocess as _sp
     import shutil as _shutil
@@ -1888,66 +1956,101 @@ async def api_update(request):
             commits_behind = 0
         update_available = bool(local_hash and remote_hash
                                  and local_hash != remote_hash and commits_behind > 0)
+        changed = []
+        if update_available:
+            _diff = _sp.run(["git", "-C", REPO_DIR, "diff", "--name-only",
+                             f"HEAD..origin/{BRANCH}"], capture_output=True, text=True, timeout=10)
+            changed = [x for x in _diff.stdout.split("\n") if x.strip()]
+        mode = _upd_classify(changed) if update_available else "none"
         return web.json_response({
             "ok": True,
             "version": ver.stdout.strip(),
             "branch": branch.stdout.strip(),
             "update_available": update_available,
             "commits_behind": commits_behind,
-            "out": (f"{commits_behind} new commit(s) available on GitHub"
-                    if update_available else "Up to date"),
+            "mode": mode,                 # "incremental" | "full" | "none"
+            "changed": len(changed),
+            "out": ("Up to date" if not update_available else
+                    (f"Quick update: {commits_behind} commit(s), {len(changed)} file(s)"
+                     if mode == "incremental" else
+                     f"Full upgrade: {commits_behind} commit(s) (structural changes)")),
         })
 
     # action == "update"
-    r = _sp.run(["git", "-C", REPO_DIR, "pull", "--ff-only"],
-                capture_output=True, text=True, timeout=60)
+    # Fetch so origin reflects GitHub, see what changed, and size the update.
+    _sp.run(["git", "-C", REPO_DIR, "fetch", "--quiet"], capture_output=True, text=True, timeout=25)
+    _diff = _sp.run(["git", "-C", REPO_DIR, "diff", "--name-only", f"HEAD..origin/{BRANCH}"],
+                    capture_output=True, text=True, timeout=10)
+    changed = [x for x in _diff.stdout.split("\n") if x.strip()]
+    if not changed:
+        return web.json_response({"ok": True, "out": "Already up to date", "restarted": False})
+
+    forced = str(d.get("mode", "")).strip().lower()
+    mode = forced if forced in ("full", "incremental") else _upd_classify(changed)
+
+    # Pull to latest (the source tree for both paths).
+    r = _sp.run(["git", "-C", REPO_DIR, "pull", "--ff-only"], capture_output=True, text=True, timeout=60)
     out = (r.stdout + r.stderr).strip()
-    ok = r.returncode == 0
-    if not ok:
+    if r.returncode != 0:
         return web.json_response({"ok": False, "out": out, "restarted": False})
 
-    if "Already up to date" in out:
-        return web.json_response({"ok": True, "out": out, "restarted": False})
-
-    # FULL auto-update: run the idempotent installer DETACHED so it applies both
-    # code and STRUCTURAL changes (new apt deps, config.txt overlays, systemd
-    # services, new files) - not just the fixed code-copy list this used to do,
-    # which silently missed anything new. install.sh restarts magicbridge itself,
-    # so it must survive our restart: systemd-run puts it in its own transient
-    # unit outside this process's cgroup. It detects the local clone (REPO_DIR)
-    # as its source, so there's no re-clone. Progress -> magicbridge-update.log.
-    upd_log = "/var/log/magicbridge-update.log"
-    # Show "Updating..." on the OLED for the whole run (oled.py picks up this
-    # status-override file), then clear it back to the normal display. Runs
-    # inside the detached unit so it survives the magicbridge restart.
-    _upd_sh = (
-        "mkdir -p /run/magicbridge; "
-        "printf 'MagicBridge\\nUpdating...\\nplease wait' > /run/magicbridge/oled-status; "
-        f"bash {REPO_DIR}/install.sh >{upd_log} 2>&1; RC=$?; "
-        "if [ $RC -eq 0 ]; then printf 'MagicBridge\\nUpdate done\\nrestarting...' > /run/magicbridge/oled-status; "
-        "else printf 'MagicBridge\\nUpdate FAILED\\nsee log' > /run/magicbridge/oled-status; fi; "
-        "sleep 4; rm -f /run/magicbridge/oled-status"
-    )
-    try:
-        r2 = _sp.run(
-            ["systemd-run", "--collect", "--description", "MagicBridge self-update",
-             "/bin/bash", "-c", _upd_sh],
-            capture_output=True, text=True, timeout=20,
+    if mode == "full":
+        # Structural change: run the idempotent installer DETACHED (own transient
+        # unit) so it applies deps/config.txt/services/new files and survives the
+        # magicbridge restart it triggers. OLED shows progress; log -> update.log.
+        upd_log = "/var/log/magicbridge-update.log"
+        _full_sh = (
+            "mkdir -p /run/magicbridge; "
+            "printf 'MagicBridge\\nUpdating...\\nplease wait' > /run/magicbridge/oled-status; "
+            f"bash {REPO_DIR}/install.sh >{upd_log} 2>&1; RC=$?; "
+            "if [ $RC -eq 0 ]; then printf 'MagicBridge\\nUpdate done\\nrestarting...' > /run/magicbridge/oled-status; "
+            "else printf 'MagicBridge\\nUpdate FAILED\\nsee log' > /run/magicbridge/oled-status; fi; "
+            "sleep 4; rm -f /run/magicbridge/oled-status"
         )
-        if r2.returncode != 0:
+        try:
+            r2 = _sp.run(["systemd-run", "--collect", "--description", "MagicBridge self-update",
+                          "/bin/bash", "-c", _full_sh], capture_output=True, text=True, timeout=20)
+            if r2.returncode != 0:
+                return web.json_response({"ok": False, "restarted": False,
+                    "out": out + "\ncould not launch installer: " + (r2.stdout + r2.stderr)[-300:]})
+        except Exception as e:
             return web.json_response({"ok": False, "restarted": False,
-                "out": out + "\ncould not launch installer: " + (r2.stdout + r2.stderr)[-300:]})
+                "out": out + "\ninstaller launch error: " + str(e)})
+        return web.json_response({
+            "ok": True, "mode": "full", "out": out, "restarted": True,
+            "note": ("Full upgrade: reconciling code + structure in the background; "
+                     "services restart, reconnect in ~1-2 min. Log: " + upd_log),
+        })
+
+    # INCREMENTAL: copy only the changed runtime files, restart only what's
+    # affected. Copies run here (fast); restarts run detached (with OLED) so a
+    # magicbridge restart doesn't kill this response mid-flight.
+    try:
+        copied, restarts, reload_nginx = _upd_incremental(changed, REPO_DIR)
     except Exception as e:
         return web.json_response({"ok": False, "restarted": False,
-            "out": out + "\ninstaller launch error: " + str(e)})
-
+            "out": out + "\nincremental copy failed: " + str(e)})
+    cmds = []
+    if reload_nginx: cmds.append("nginx -t && systemctl reload nginx")
+    for svc in ("stealth-dashboard", "mb-oled", "magicbridge"):
+        if svc in restarts: cmds.append("systemctl restart " + svc)
+    _incr_sh = ("mkdir -p /run/magicbridge; "
+                "printf 'MagicBridge\\nUpdating...\\n(quick)' > /run/magicbridge/oled-status; "
+                + ("; ".join(cmds) + "; " if cmds else "")
+                + "sleep 2; rm -f /run/magicbridge/oled-status")
+    try:
+        _sp.run(["systemd-run", "--collect", "--description", "MagicBridge quick-update",
+                 "/bin/bash", "-c", _incr_sh], capture_output=True, text=True, timeout=15)
+    except Exception as e:
+        return web.json_response({"ok": False, "restarted": False,
+            "out": out + "\nrestart launch error: " + str(e)})
+    _svcs = sorted(restarts) + (["nginx"] if reload_nginx else [])
     return web.json_response({
-        "ok": True,
-        "out": out,
-        "restarted": True,
-        "note": ("Pulled new commits. The installer is reconciling this device "
-                 "(code + structure) in the background; services will restart - "
-                 "reconnect in ~1-2 min. Progress log: " + upd_log),
+        "ok": True, "mode": "incremental", "out": out, "restarted": bool(cmds),
+        "copied": copied,
+        "note": ("Quick update - " + (", ".join(copied) if copied else "docs only, nothing to deploy")
+                 + (". Restarting: " + ", ".join(_svcs) if _svcs else "")
+                 + (". Reconnect in a few seconds." if "magicbridge" in restarts else ".")),
     })
 
 
