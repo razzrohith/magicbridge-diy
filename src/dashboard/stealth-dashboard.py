@@ -220,6 +220,10 @@ def _boot():
     _ensure_defaults(cfg)
     app.secret_key = cfg["auth"]["secret_key"]
     _purge_old_logs_if_due()
+    try:
+        _ensure_default_mac(cfg)   # best-effort; never block dashboard startup
+    except Exception:
+        pass
 
 # CSRF
 def _csrf_ok() -> bool:
@@ -385,11 +389,40 @@ def _cur_mac(iface: str = "eth0") -> str:
     except Exception:
         return ""
 
+NM_MAC_CONF = "/etc/NetworkManager/conf.d/00-mb-macspoof.conf"
+
+def _iface_is_wifi(iface: str) -> bool:
+    return iface.startswith("wl") or Path(f"/sys/class/net/{iface}/wireless").exists()
+
+def _nm_apply_mac(iface: str, mac: str):
+    """Make NetworkManager itself adopt `mac`. Without this, NM reasserts the
+    permanent (real Raspberry Pi) MAC on the next (re)connect and silently
+    reverts the ip-link change below - the whole reason a spoof "doesn't stick"
+    under NetworkManager. Sets cloned-mac on the iface's active profile and
+    reapplies it (a wifi reapply is a ~1-2s reconnect)."""
+    try:
+        setting = ("802-11-wireless.cloned-mac-address" if _iface_is_wifi(iface)
+                   else "802-3-ethernet.cloned-mac-address")
+        r = _nm("-t", "-f", "GENERAL.CONNECTION", "device", "show", iface, timeout=8)
+        name = ""
+        for ln in (r.stdout or "").splitlines():
+            if ln.startswith("GENERAL.CONNECTION:"):
+                name = ln.split(":", 1)[1].strip(); break
+        if name and name != "--":
+            _nm("connection", "modify", name, setting, mac, timeout=10)
+            _nm("device", "reapply", iface, timeout=20)
+    except Exception:
+        pass
+
 def _set_mac(iface: str, mac: str):
+    # 1) immediate link-level change (takes effect now, and covers pre-
+    #    association / an iface NM isn't managing). 2) NM-level change so it
+    #    survives the next reconnect instead of reverting to the permanent MAC.
     for cmd in [["ip","link","set",iface,"down"],
                 ["ip","link","set",iface,"address",mac],
                 ["ip","link","set",iface,"up"]]:
         subprocess.run(cmd, capture_output=True)
+    _nm_apply_mac(iface, mac)
 
 def _persist_mac(iface: str, mac: str):
     cfg = _load()
@@ -397,7 +430,35 @@ def _persist_mac(iface: str, mac: str):
     _save(cfg)
     _write_mac_svc(cfg)
 
+def _write_nm_mac_conf(cfg: dict):
+    """Persist the spoof at the NetworkManager layer (authoritative). A conf.d
+    cloned-mac default makes NM keep the spoofed MAC for current AND future
+    connections (including the setup hotspot), so it never reverts on connect.
+    The old ip-link-only service ran before NM, then NM overrode it."""
+    persist = cfg.get("mac_persist", {})
+    rx = re.compile(r'^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$')
+    wifi = eth = ""
+    for inf, m in persist.items():
+        if not (m and rx.match(m)):
+            continue
+        if _iface_is_wifi(inf): wifi = m
+        else:                   eth = m
+    try:
+        if not wifi and not eth:
+            Path(NM_MAC_CONF).unlink(missing_ok=True)
+            return
+        lines = ["# Managed by MagicBridge - realistic NIC identity (stealth panel).",
+                 "[connection]"]
+        if wifi: lines.append(f"wifi.cloned-mac-address={wifi}")
+        if eth:  lines.append(f"ethernet.cloned-mac-address={eth}")
+        Path(NM_MAC_CONF).parent.mkdir(parents=True, exist_ok=True)
+        Path(NM_MAC_CONF).write_text("\n".join(lines) + "\n")
+        _nm("general", "reload", timeout=10)
+    except Exception:
+        pass
+
 def _write_mac_svc(cfg: dict):
+    _write_nm_mac_conf(cfg)   # NM-layer (authoritative) - stops NM reverting it
     persist = cfg.get("mac_persist", {})
     valid   = {k: v for k, v in persist.items()
                if v and re.match(r'^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$', v)}
@@ -443,6 +504,30 @@ def _rand_mac(oui=None) -> str:
     b = list(oui) if oui else [0x00, 0x1a, 0x2b]
     b += [secrets.randbits(8) for _ in range(3)]
     return ":".join(f"{x:02x}" for x in b)
+
+def _ensure_default_mac(cfg: dict):
+    """Spoof a realistic vendor MAC on first boot so the device never sits on
+    the LAN advertising the real Raspberry Pi OUI (dc:a6:32...), which every
+    router client-list and network scanner flags as "Raspberry Pi" instantly.
+    Runs once: once mac_persist is populated (here, or by the user) it never
+    touches the live link again. Opt out with config "mac_autospoof": false.
+    NOTE: this changes the WiFi MAC, so the DHCP lease/IP may change on the
+    first boot after enabling - reach the unit via magicbridge.local if so."""
+    if not cfg.get("mac_autospoof", True) or cfg.get("mac_persist"):
+        return
+    prof = secrets.choice(MAC_PROFILES)          # one vendor = one laptop identity
+    applied = {}
+    for iface in ("wlan0", "eth0"):
+        if Path(f"/sys/class/net/{iface}").exists():
+            m = _rand_mac(prof["oui"])
+            _set_mac(iface, m)
+            applied[iface] = m
+    if applied:
+        cfg.setdefault("mac_persist", {}).update(applied)
+        _save(cfg)
+        _write_mac_svc(cfg)
+        _log_sess(f"MAC auto-spoof first boot [{prof['name']}]: "
+                  + ", ".join(f"{i}->{m}" for i, m in applied.items()))
 
 def _tailscale_status() -> dict:
     try:

@@ -27,9 +27,18 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
    DEL** (identity only). Ensure PiKVM's EDID monitor name/manufacturer is a real
    monitor, not "MagicBridge"/a tell. (kvmd EDID differs; V4 Mini can do 1080p60
    so timings differ — but the **identity** must be realistic.)
-4. **MAC defaults to the real Pi/CM4 OUI (`dc:a6:32…`)** `[PORT]` — a network
-   tell. Flagged, not auto-fixed (blind MAC change risks dropping the network).
-   Consider a realistic default MAC (real vendor OUI, persisted at boot).
+4. **Realistic MAC on by default (was the real Pi/CM4 OUI `dc:a6:32…`)** `[PORT]`
+   — the default MAC is a network tell every router client-list / scanner labels
+   "Raspberry Pi". DIY now **auto-spoofs a real vendor MAC on first boot**
+   (`_ensure_default_mac`, picks a verified Dell/HP/Samsung OUI + random suffix)
+   and **persists it at the NetworkManager layer** via
+   `/etc/NetworkManager/conf.d/00-mb-macspoof.conf` (`wifi/ethernet.cloned-mac-
+   address`). Key lesson: the old `ip link set … address` approach **silently
+   reverts** because NM reasserts the permanent MAC on reconnect — you must set
+   `cloned-mac-address` on the connection/global default, not just the link.
+   `mb-secret-reset` deletes the conf so each unit regenerates. Opt out with
+   config `mac_autospoof:false`. Caveat: changing the WiFi MAC can move the DHCP
+   lease/IP — reach the unit via mDNS. Port to kvmd (its own NM/dhcp setup).
 5. **Realistic identity defaults, verified** `[VERIFY]` — USB = Logitech USB
    Receiver, Monitor = Dell. Verify ALL spoofing (USB, MAC, EDID) defaults to
    realistic values out of the box on PiKVM.

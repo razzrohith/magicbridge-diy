@@ -70,6 +70,9 @@ rm -f /var/lib/tailscale/tailscaled.state 2>/dev/null || true
 rm -f /etc/cron.d/mb-duckdns 2>/dev/null || true
 systemctl disable mb-mac.service 2>/dev/null || true
 rm -f /etc/systemd/system/mb-mac.service 2>/dev/null || true
+# Drop the NM-layer MAC override too, so a fresh unit picks a NEW random
+# vendor MAC on first boot (via the dashboard) instead of the builder's.
+rm -f /etc/NetworkManager/conf.d/00-mb-macspoof.conf 2>/dev/null || true
 
 # 8. Clear any provisioning/first-boot leftovers + RAM logs.
 rm -f /etc/magicbridge/.provision-wifi /tmp/mb-ts-key 2>/dev/null || true

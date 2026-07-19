@@ -281,8 +281,9 @@ if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
     "quality":    80,
     "mode":       "mjpeg"
   },
-  "mac_persist": {},
-  "duckdns":     {}
+  "mac_persist":   {},
+  "mac_autospoof": true,
+  "duckdns":       {}
 }
 CONF
     # auth.main_password_hash / auth.password_hash are bootstrapped on first
