@@ -64,7 +64,21 @@ rm -f "$MNT"/etc/ssh/ssh_host_* \
       "$MNT"/etc/machine-id 2>/dev/null || true
 : > "$MNT/etc/machine-id" 2>/dev/null || true
 rm -f "$MNT"/var/log/magicbridge-ram/* "$MNT"/var/log/magicbridge-firstboot.log 2>/dev/null || true
-ok "Stripped baked secrets from the image"
+# Also clear the spoofed-MAC identity, so no two flashed units ever share a MAC
+# (a shared MAC would cross-link units + collide on one LAN). First boot then
+# generates a fresh per-unit vendor MAC. Belt-and-suspenders with mb-secret-reset.
+rm -f "$MNT"/etc/NetworkManager/conf.d/00-mb-macspoof.conf 2>/dev/null || true
+if [[ -f "$MNT/etc/magicbridge/config.json" ]] && command -v python3 >/dev/null; then
+    python3 - "$MNT/etc/magicbridge/config.json" <<'PY' 2>/dev/null || true
+import json,sys
+p=sys.argv[1]
+try: c=json.load(open(p))
+except Exception: c={}
+c["mac_persist"]={}          # empty -> first boot picks a unique vendor MAC
+json.dump(c,open(p,"w"),indent=2)
+PY
+fi
+ok "Stripped baked secrets + MAC identity from the image"
 
 sync; umount "$MNT"; losetup -d "$LOOP"; LOOP=""; trap - EXIT; rmdir "$MNT"
 

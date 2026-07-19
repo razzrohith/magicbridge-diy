@@ -68,7 +68,11 @@ Prefer pi-gen/clone if you want the OLED-guided experience.
    *Join hotspot MagicBridge-Setup*.
 3. Join `MagicBridge-Setup` (open) from a phone/laptop, complete the captive
    portal WiFi form. The unit reboots/joins your WiFi; OLED shows the IP.
-4. Open `https://magicbridge.local/`, change both default passwords.
+4. Find the unit's IP: it now uses a realistic `DESKTOP-XXXXXXX` hostname + a
+   spoofed vendor MAC (anonymity), so look for that in your router's client list
+   or read the IP off the OLED. Open `https://<ip>/` and change both default
+   passwords. (`magicbridge.local` is off by default; opt in with config
+   `mdns_alias`.)
 
 ## Updates (backend → GitHub, code **and** structure)
 The built-in updater (System → Update, i.e. `POST /api/update`) pulls
