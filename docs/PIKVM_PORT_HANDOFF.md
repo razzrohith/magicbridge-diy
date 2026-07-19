@@ -67,6 +67,14 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
    "normalizes" the hostname must KEEP realistic names and only replace an
    actual tell. Audit every place PiKVM sets the hostname (install, provision,
    first-boot) so none of them fight each other.
+5d. **Two install-script bugs the full-reinstall path hit (both fixed)** `[VERIFY]`
+   — check PiKVM's equivalents: (1) the RAM-log tmpfs must be `mode=0755`, NOT
+   `1777` — a world-writable sticky dir holding www-data-owned nginx logs trips
+   `fs.protected_regular` (Bookworm default 2) so even root can't open them and
+   `nginx -t` fails, aborting a re-install (first install works only because the
+   logs don't exist yet). See item 1. (2) A `tr -dc … </dev/urandom | head -c N`
+   generator SIGPIPEs `tr` (rc 141); under `set -euo pipefail` that aborts the
+   whole script — guard any such pipeline with `|| true`.
 
 ## 📶 WiFi / provisioning
 6. **Captive-portal dnsmasq `:53` conflict** `[VERIFY]` — DIY's setup-AP dnsmasq
@@ -83,6 +91,20 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
    DIY effort (janus-gateway.pc, `abs_capture_ts` patch, config dir, `video.sink`
    key). **kvmd already has native Janus/WebRTC.** This was DIY catching up to
    PiKVM. Skip entirely.
+8b. **Auto-detect the capture hardware: CSI board vs USB dongle** `[PORT-concept]`
+   — DIY now detects the capture device at runtime and picks the pipeline: the
+   C790/TC358743 CSI board → H.264/WebRTC (DEFAULT/preferred), a USB UVC dongle
+   (MS2109/MS2130/Cam Link) → MJPEG; if both are present the CSI board wins. One
+   image now works on either hardware with no config. `video.device_type()`
+   classifies a V4L2 node (`tc358743`/`unicam`/`fe801000` = csi, bus `usb-*` =
+   usb) and `mode="auto"` resolves it. **Verified live on both** a real C790
+   (1080p50 H.264, EDID cap enforced) and an MS2109 (1080p MJPEG, real frame
+   captured). Two things to carry over: (a) the EDID/timings bring-up script must
+   SKIP a USB dongle — never push `--set-edid` onto one (it has its own fixed
+   EDID); (b) stealth caveat — the restricted-EDID trick (1080p50 cap + Dell
+   monitor identity) is **CSI-only** (it lives in the TC358743), so on the USB
+   path the dongle's own EDID is what the target sees. If PiKVM ever ships a
+   USB-capture variant, port this detection; otherwise it's informational.
 
 ## 🖱 HID / input
 9. **Absolute + relative mouse** `[PORT-UI-only]` — DIY had to build a whole
@@ -128,6 +150,10 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
     `build-image.sh` + `docs/IMAGE_BUILD.md` runbook. Build a distributable
     MagicBridge-PiKVM image the same way (base = PiKVM OS). **Adapt the
     secret-reset for kvmd's secrets/certs** so units never ship shared creds.
+    `build-image.sh` also **strips the per-unit identity** so no two flashed
+    units collide/cross-link: the spoofed MAC (`00-mb-macspoof.conf` +
+    `mac_persist={}`) AND `video.mode=auto` (so a unit flashed onto USB-capture
+    hardware doesn't inherit the golden unit's CSI mode). Do the same for PiKVM.
 21. **Idempotent installer + `--check` doctor** `[PORT-concept]` — installer is
     safe to re-run and has a read-only status report. Fold into `magic-install.sh`;
     add `--check`. (Mirrors PiKVM's open "installer gap" about file-level rebrands
@@ -143,6 +169,11 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
 
 ## Session commits (DIY repo `magicbridge-diy`, for reference)
 ```
+1865fcf feat(image): ship video.mode=auto so flashed units detect capture hw   (item 20)
+d9fe895 feat(video): auto-detect C790/CSI vs USB capture, default to C790       (item 8b)
+94889c1 feat(image): strip spoofed-MAC identity when arming an image            (item 20)
+d52ba3f fix(install): hostname gen aborted installer under set -euo pipefail    (item 5d)
+f21e6b8 fix(install): RAM-log tmpfs mode=0755 not 1777 (unbreaks re-install)    (item 1/5d)
 5b10cb9 fix(anonymity): provisioning must not re-brand hostname to "magicbridge"  (item 5c)
 b74c10c feat(anonymity): realistic hostname + drop branded mDNS name tells        (item 5b)
 9f08c94 feat(anonymity): realistic MAC on by default, persisted at the NM layer   (item 4)
