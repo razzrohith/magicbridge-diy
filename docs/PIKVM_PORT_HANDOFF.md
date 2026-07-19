@@ -18,7 +18,13 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
 1. **Session logs RAM-only** `[VERIFY]` — DIY's backend was writing connection
    IPs + User-Agents + timestamps to the SD card; moved to a tmpfs log dir.
    Confirm every MagicBridge/kvmd/nginx access/session log on PiKVM goes to RAM
-   (tmpfs), never the rootfs.
+   (tmpfs), never the rootfs. **Gotcha (found the hard way):** do NOT mount that
+   tmpfs `mode=1777`. A world-writable sticky dir holding nginx logs owned by
+   `www-data` trips the kernel's `fs.protected_regular` (Bookworm default = 2),
+   which blocks even root from opening the not-owned log files — `nginx -t` then
+   fails and any *re-install* aborts (first install works because the logs don't
+   exist yet). Mount it `mode=0755 root:root` (all log writers run as root; nginx
+   creates its logs as root then hands them to www-data).
 2. **nginx HTTP→HTTPS redirect logged visitor IPs to disk** `[VERIFY]` — the
    port-80 redirect vhost had no `access_log off`, so every first visit wrote an
    IP to the SD card. Check PiKVM's redirect vhost has `access_log off` (or RAM).

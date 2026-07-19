@@ -323,16 +323,26 @@ fi
 # the card exposes no connection IPs/history. nginx.conf and both Python
 # backends write here; wiped on reboot/power-loss by design.
 info "Setting up RAM-only (tmpfs) log directory..."
-FSTAB_LINE="tmpfs /var/log/magicbridge-ram tmpfs defaults,noatime,mode=1777,size=32m 0 0"
-if ! grep -q '/var/log/magicbridge-ram' /etc/fstab; then
-    echo "$FSTAB_LINE" >> /etc/fstab
-    ok "Added tmpfs mount for /var/log/magicbridge-ram to /etc/fstab"
-else
-    ok "tmpfs fstab entry already present"
+# mode=0755, NOT 1777. A world-writable sticky dir holding nginx logs owned by
+# www-data trips the kernel's fs.protected_regular (Bookworm default = 2): it
+# blocks EVEN ROOT from opening a not-owned file inside a sticky world-writable
+# dir, so `nginx -t` fails and a re-install aborts (first install works only
+# because the logs don't exist yet). All writers here run as root (magicbridge,
+# stealth-dashboard) and nginx's master creates its logs as root before handing
+# them to www-data, so 0755 root:root is sufficient - and avoids the trap.
+FSTAB_LINE="tmpfs /var/log/magicbridge-ram tmpfs defaults,noatime,mode=0755,size=32m 0 0"
+# Normalize any existing entry (e.g. an older mode=1777 line) to the correct one
+# so a re-run self-heals instead of leaving the boot-time mode wrong.
+if grep -q '[[:space:]]/var/log/magicbridge-ram[[:space:]]' /etc/fstab; then
+    sed -i '\|[[:space:]]/var/log/magicbridge-ram[[:space:]]|d' /etc/fstab
 fi
+echo "$FSTAB_LINE" >> /etc/fstab
+ok "tmpfs fstab entry set (mode=0755) for /var/log/magicbridge-ram"
 mkdir -p /var/log/magicbridge-ram
 mountpoint -q /var/log/magicbridge-ram || mount /var/log/magicbridge-ram 2>/dev/null || true
-chmod 1777 /var/log/magicbridge-ram 2>/dev/null || true
+# A tmpfs remount won't change its mode, but chmod does - and that's what fixes
+# the already-mounted (possibly 1777) dir on an update so nginx -t can pass now.
+chmod 0755 /var/log/magicbridge-ram 2>/dev/null || true
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 7. NGINX
