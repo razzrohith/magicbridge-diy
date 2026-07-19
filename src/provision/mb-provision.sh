@@ -30,6 +30,11 @@ TS_KEY_TMP="/tmp/mb-ts-key"
 exec >> "$LOG" 2>&1
 echo "[$(date)] mb-provision.sh starting"
 
+# OLED guidance for a headless user (picked up by oled.py's status override).
+mkdir -p /run/magicbridge 2>/dev/null || true
+oled()       { printf '%s\n' "$@" > /run/magicbridge/oled-status 2>/dev/null || true; }
+clear_oled() { rm -f /run/magicbridge/oled-status 2>/dev/null || true; }
+
 # --- mDNS self-heal (2026-07-09) -----------------------------------------
 # avahi-daemon was found masked+inactive on a live unit, and the hostname
 # had been reset to a bogus "DESKTOP-XXXXXXX"-style placeholder (an
@@ -77,6 +82,7 @@ sleep 8   # give NetworkManager time to connect saved networks
 CONNECTED=$(nmcli -t -f STATE general 2>/dev/null | grep -c "^connected$" || true)
 if [[ "$CONNECTED" -gt 0 ]]; then
     echo "[$(date)] Already connected, nothing to do"
+    clear_oled                      # normal status display
     touch "$FLAG_FILE"
     exit 0
 fi
@@ -153,6 +159,7 @@ iptables -t nat -A PREROUTING -i "$AP_IFACE" -p tcp --dport 443 \
          -j DNAT --to-destination "${AP_IP}:${PORTAL_PORT}" 2>/dev/null || true
 
 echo "[$(date)] AP up, SSID '$AP_SSID', IP $AP_IP, portal :$PORTAL_PORT"
+oled "WiFi setup" "Join hotspot:" "$AP_SSID" "then open portal"
 
 # Run captive portal (blocks until user submits)
 # Temporarily disable errexit: if the portal script exits non-zero (crash, kill,
@@ -191,6 +198,7 @@ if [[ -f "$WIFI_FILE" ]]; then
     fi
     nmcli connection up "$SSID" || true
     rm -f "$WIFI_FILE"
+    clear_oled                      # connected → back to normal status
 fi
 
 # Tailscale auth key (if provided)

@@ -65,6 +65,23 @@ LINE_Y_SMALL  = (0, 8, 16, 24)    # 4-line layout (opt-in, smaller font)
 
 CONFIG_PATH = "/etc/magicbridge/config.json"   # shared with magicbridge.py
 
+# Setup/status override. First-boot install and WiFi provisioning write short
+# guidance here (up to 4 lines) to steer the user on the physical panel
+# ("First setup, please wait...", "Join hotspot MagicBridge-Setup", etc.). When
+# this file has content it fully replaces the normal status layout, and it's
+# shown even if the OLED is "disabled" in config. Lives in tmpfs /run so it
+# clears on reboot. Empty/absent -> normal status display.
+STATUS_FILE = "/run/magicbridge/oled-status"
+
+def _read_status_override():
+    try:
+        raw = Path(STATUS_FILE).read_text()
+    except Exception:
+        return None
+    if not raw.strip():
+        return None
+    return [l.rstrip("\r\n") for l in raw.splitlines()][:4]
+
 # Mirrors magicbridge.py's OLED_DEFAULTS - kept in sync manually since these
 # are two separate processes/files. Reproduces the exact original static
 # layout: "MagicBridge" / IP / "{temp}C up{uptime} {OK/DOWN}/{LIVE/OFF}".
@@ -284,6 +301,24 @@ def main():
                         # worth spamming the journal every retry.
                         log.info("OLED not ready yet (%s) - retrying every %ds", e, RETRY_SEC)
                         last_init_error = str(e)
+            time.sleep(1)
+            continue
+
+        # Setup/status override (first-boot, WiFi provisioning). Shown even when
+        # the OLED is "disabled" in config, so setup guidance is never hidden.
+        override = _read_status_override()
+        if override is not None:
+            try:
+                from luma.core.render import canvas
+                many = len(override) > 3
+                ys = LINE_Y_SMALL if many else LINE_Y_NORMAL
+                f  = font_small if many else font_normal
+                with canvas(device) as draw:
+                    for i, txt in enumerate(override[:4]):
+                        draw.text((0, ys[i]), str(txt)[:21], font=f, fill="white")
+            except Exception as e:
+                log.warning("OLED status-override render failed, re-init: %s", e)
+                device = None
             time.sleep(1)
             continue
 

@@ -237,8 +237,11 @@ cp "$SRC_DIR/src/core/mb-lockdown.sh"  /usr/local/bin/mb-lockdown.sh
 cp "$SRC_DIR/src/core/mb-mdns-alias.sh" /usr/local/bin/mb-mdns-alias.sh
 cp "$SRC_DIR/src/core/mb-hdmi-init.sh" /usr/local/bin/mb-hdmi-init.sh   # C790 EDID/timings at boot + hot-plug
 cp "$SRC_DIR/src/core/mb-setup-fan.sh" /usr/local/bin/mb-setup-fan.sh   # optional case-fan helper (run manually with a GPIO pin)
+cp "$SRC_DIR/src/core/mb-firstboot.sh"   /usr/local/bin/mb-firstboot.sh   # first-boot install/personalize + OLED guidance
+cp "$SRC_DIR/src/core/mb-secret-reset.sh" /usr/local/bin/mb-secret-reset.sh # per-unit secret reset (pre-baked images)
 chmod +x /usr/local/bin/mb-gadget.sh /usr/local/bin/mb-provision.sh /usr/local/bin/mb-lockdown.sh \
-         /usr/local/bin/mb-mdns-alias.sh /usr/local/bin/mb-hdmi-init.sh /usr/local/bin/mb-setup-fan.sh
+         /usr/local/bin/mb-mdns-alias.sh /usr/local/bin/mb-hdmi-init.sh /usr/local/bin/mb-setup-fan.sh \
+         /usr/local/bin/mb-firstboot.sh /usr/local/bin/mb-secret-reset.sh
 
 # Stage the WebRTC add-on installer so `--with-webrtc` (or a later manual run)
 # can build the Janus H.264 path. It is NOT executed here unless --with-webrtc.
@@ -369,6 +372,15 @@ systemctl enable mb-hdmi-init
 systemctl enable mb-hdmi-watch
 systemctl enable mb-oled
 
+# First-boot service: copied but deliberately NOT enabled here. Enabling it
+# would make THIS (already-installed) unit re-run first-boot — including a
+# per-unit secret reset — on its next boot. Only the image builder
+# (src/provision/build-image.sh) enables it and removes the done-flag, arming a
+# freshly-flashed card. Marking the flag here keeps a normal install inert.
+cp "$SRC_DIR/src/core/mb-firstboot.service" /etc/systemd/system/
+systemctl daemon-reload
+touch "$CONFIG_DIR/.firstboot-done"
+
 # Note: ustreamer.service is intentionally NOT installed or enabled here.
 # video.py starts and manages ustreamer itself as a subprocess (and stops
 # any systemd-managed instance it finds), so a separately enabled
@@ -444,8 +456,12 @@ ok "Hostname '$HOSTNAME_NEW.local' active"
 # 12. TAILSCALE (optional)
 # ══════════════════════════════════════════════════════════════════════════════
 if ! command -v tailscale &>/dev/null; then
-    echo ""
-    read -r -t 10 -p "Install Tailscale for remote access? [Y/n]: " TS_ANS || TS_ANS="Y"
+    if [[ -t 0 ]]; then
+        echo ""
+        read -r -t 10 -p "Install Tailscale for remote access? [Y/n]: " TS_ANS || TS_ANS="Y"
+    else
+        TS_ANS="n"   # non-interactive (self-update / firstboot): don't install unattended
+    fi
     if [[ "${TS_ANS:-Y}" =~ ^[Yy]$ ]]; then
         info "Installing Tailscale..."
         curl -fsSL https://tailscale.com/install.sh | bash 2>&1 | tail -5

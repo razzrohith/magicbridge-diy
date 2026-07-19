@@ -1,0 +1,18 @@
+[Unit]
+Description=MagicBridge first-boot setup (install / personalize + OLED guidance)
+# Needs the network for a net-install clone; ordered before the main service so
+# a net-install image finishes installing before magicbridge tries to start.
+After=network-online.target local-fs.target
+Wants=network-online.target
+Before=magicbridge.service
+# Only meaningful until the first boot completes; the script self-disables.
+ConditionPathExists=!/etc/magicbridge/.firstboot-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mb-firstboot.sh
+RemainAfterExit=yes
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target
