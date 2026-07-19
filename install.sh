@@ -183,6 +183,11 @@ modprobe i2c-dev 2>/dev/null || true
 # ══════════════════════════════════════════════════════════════════════════════
 # 3. CLONE / UPDATE REPO
 # ══════════════════════════════════════════════════════════════════════════════
+# Trust /opt/magicbridge-repo for root's git regardless of HOME, so the built-in
+# updater's `git pull` (run as root by magicbridge.py) never trips git's
+# "dubious ownership" guard. System-wide (/etc/gitconfig), so it always applies.
+git config --system --add safe.directory /opt/magicbridge-repo 2>/dev/null || true
+
 SRC_DIR="/tmp/magicbridge-src"
 
 if [[ -d "/opt/magicbridge-repo/.git" ]]; then
