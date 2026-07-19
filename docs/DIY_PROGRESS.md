@@ -4,6 +4,30 @@ Detailed, DIY-specific technical record. For the big picture see
 `MAGICBRIDGE_SYSTEM.md`. This file is the deep hardware/driver journal so nobody
 re-derives it. Newest first.
 
+## 2026-07-18 — install.sh made fresh-install-complete + idempotent (+ --check doctor)
+
+The installer only set up the MJPEG-era base (HID + web UI + stealth + WiFi +
+TLS + nginx + 5 services); the C790 video path, EDID services, OLED, RAM-only
+logs, and WebRTC had all been done by hand on the dev unit and never folded in.
+Closed the gaps so a fresh SD card → one script → working unit:
+- **config.txt** (idempotent `set_cfgtxt`): `camera_auto_detect=0`,
+  `dtoverlay=tc358743(+-audio)`, `dtparam=i2c_arm=on` (was dwc2 only).
+- **Files**: copy `oled.py`, the 1080p50 EDID blob, `mb-hdmi-init.sh`,
+  `mb-setup-fan.sh`; `pip install luma.oled`; stage `install_janus_webrtc.sh`.
+- **Services**: enable `mb-hdmi-init`, `mb-hdmi-watch`, `mb-oled`.
+- **RAM-only logs**: add the `/var/log/magicbridge-ram` tmpfs to fstab + mount
+  it **before nginx** (nginx.conf logs there; ordering matters or `nginx -t` dies).
+- **`--with-webrtc`** flag builds Janus/H.264 and flips `video.mode` to h264.
+- **`--check`** read-only doctor reports every component's state; **canonical
+  repo URL** pinned (was the pre-rename `MagicBridge` name).
+
+Validated: `bash install.sh --check` on the live unit is **all-green** (my
+installer's target state == what actually works, LUKS included). LUKS at-rest
+encryption is deliberately NOT auto-applied (risky to do blind) — documented as
+the one manual hardening step; the rest of the anonymity model (RAM logs,
+spoofable identity) is set up. Full clean-Pi run still wants a spare board to
+prove end to end. Commit: see git log.
+
 ## 2026-07-18 — Janus WebRTC + H.264: the missing plugin, built & wired (server-verified)
 
 The C790→ustreamer→`/dev/shm/magicbridge::h264` memsink was already live; the one

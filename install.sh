@@ -4,19 +4,27 @@
 #  Raspberry Pi 4, Pi OS Bookworm (64-bit)
 #
 #  Run as root:
-#    curl -fsSL https://raw.githubusercontent.com/razzrohith/MagicBridge/main/install.sh | sudo bash
+#    curl -fsSL https://raw.githubusercontent.com/razzrohith/magicbridge-diy/main/install.sh | sudo bash
 #  Or from a local clone:
-#    sudo bash install.sh
+#    sudo bash install.sh                 # full functional install (MJPEG video)
+#    sudo bash install.sh --with-webrtc   # + build Janus/H.264 WebRTC (~15-30 min)
+#    sudo bash install.sh --check         # read-only status report, changes nothing
 #
 #  What this does:
-#    1. Checks / installs all prerequisites via apt
-#    2. Enables USB OTG (dwc2) via /boot/firmware/config.txt
-#    3. Clones or updates razzrohith/MagicBridge from GitHub
-#    4. Installs all components to /opt/magicbridge/
-#    5. Generates self-signed TLS cert
-#    6. Configures nginx, systemd services, firewall
-#    7. Optionally installs Tailscale
-#    8. Sets hostname to "magicbridge", enables SSH password login
+#    1. Installs all prerequisites via apt (+ luma.oled for the panel)
+#    2. Boot overlays: USB OTG (dwc2), C790/TC358743 capture, I2C for OLED
+#    3. Clones/updates razzrohith/magicbridge-diy from GitHub
+#    4. Installs all components to /opt/magicbridge/ (incl. oled.py + EDID blob)
+#    5. Generates a self-signed TLS cert
+#    6. Configures nginx, RAM-only (tmpfs) logs, systemd services, firewall
+#    7. Enables video capture services (mb-hdmi-init/watch) + OLED (mb-oled)
+#    8. Optionally Tailscale and, with --with-webrtc, the Janus WebRTC path
+#    9. Sets hostname to "magicbridge", enables SSH password login
+#
+#  Safe to re-run: every step is idempotent. LUKS at-rest encryption of
+#  /etc/magicbridge is an advanced hardening step and is NOT auto-applied
+#  (see the closing notes) - everything else the anonymity model needs
+#  (RAM-only logs, spoofable identity) is set up here.
 #
 #  Assumes the Pi user account (raj/lol, or whatever username was set
 #  during Raspberry Pi Imager flashing) already has sudo + SSH access.
@@ -51,10 +59,59 @@ ARCH=$(uname -m)
     warn "Architecture '$ARCH', this installer targets Raspberry Pi 4"
 
 # Configuration
-REPO_URL="https://github.com/razzrohith/MagicBridge"
+REPO_URL="https://github.com/razzrohith/magicbridge-diy"
 BRANCH="main"
 INSTALL_DIR="/opt/magicbridge"
 CONFIG_DIR="/etc/magicbridge"
+CONFIG_TXT="/boot/firmware/config.txt"; [[ -f "$CONFIG_TXT" ]] || CONFIG_TXT="/boot/config.txt"
+
+# Flags:
+#   --with-webrtc  also build Janus + hardware H.264 WebRTC (LONG: ~15-30 min).
+#                  Without it you get the MJPEG video path (WebRTC can be added
+#                  later by running src/install_janus_webrtc.sh).
+#   --check        read-only status report of every component, then exit. Safe
+#                  to run on a live unit; changes nothing.
+WITH_WEBRTC=0; DO_CHECK=0
+for a in "$@"; do
+  case "$a" in
+    --with-webrtc) WITH_WEBRTC=1 ;;
+    --check|--doctor) DO_CHECK=1 ;;
+    *) warn "Unknown argument: $a (valid: --with-webrtc, --check)" ;;
+  esac
+done
+
+# Idempotent config.txt line setter: drop any prior "<key>" form, then add the
+# exact line under [all]. Re-runs never duplicate or leave a stale value.
+set_cfgtxt() {   # $1 = ^regex to remove   $2 = exact line to add
+  sed -i "\|^$1|d" "$CONFIG_TXT"
+  grep -q '^\[all\]' "$CONFIG_TXT" || echo '[all]' >> "$CONFIG_TXT"
+  sed -i "/^\[all\]/a $2" "$CONFIG_TXT"
+}
+
+# ── Read-only doctor (--check): report state, change nothing ──────────────────
+if [[ "$DO_CHECK" == 1 ]]; then
+  echo -e "${BOLD}MagicBridge install check — read-only, nothing is modified${NC}\n"
+  chk() { if eval "$2" &>/dev/null; then ok "$1"; else warn "$1 — MISSING"; fi; }
+  chk "config.txt: dwc2 peripheral (USB HID)"  "grep -q '^dtoverlay=dwc2' '$CONFIG_TXT'"
+  chk "config.txt: camera_auto_detect=0"       "grep -q '^camera_auto_detect=0' '$CONFIG_TXT'"
+  chk "config.txt: tc358743 (C790 capture)"    "grep -q '^dtoverlay=tc358743' '$CONFIG_TXT'"
+  chk "config.txt: i2c_arm (OLED)"             "grep -q '^dtparam=i2c_arm=on' '$CONFIG_TXT'"
+  chk "core: magicbridge.py / hid.py / video.py" "test -f $INSTALL_DIR/core/magicbridge.py -a -f $INSTALL_DIR/core/video.py"
+  chk "core: oled.py"                          "test -f $INSTALL_DIR/core/oled.py"
+  chk "web: index.html"                        "test -f $INSTALL_DIR/web/index.html"
+  chk "edid blob (1080p50)"                    "test -f $INSTALL_DIR/edid/mb-edid-1080p50.hex"
+  chk "script: mb-hdmi-init.sh"                "test -x /usr/local/bin/mb-hdmi-init.sh"
+  chk "RAM-log tmpfs mounted"                  "findmnt -no FSTYPE /var/log/magicbridge-ram | grep -q tmpfs"
+  chk "TLS cert"                               "test -f $CONFIG_DIR/ssl/cert.pem"
+  chk "nginx site enabled"                     "test -L /etc/nginx/sites-enabled/magicbridge"
+  for s in mb-gadget magicbridge stealth-dashboard mb-provision mb-mdns-alias mb-hdmi-init mb-hdmi-watch mb-oled; do
+    chk "service enabled: $s" "systemctl is-enabled $s.service"
+  done
+  chk "WebRTC: janus-webrtc enabled"           "systemctl is-enabled janus-webrtc.service"
+  chk "config: /etc/magicbridge on LUKS (optional)" "lsblk -no TYPE \$(findmnt -no SOURCE $CONFIG_DIR 2>/dev/null) 2>/dev/null | grep -q crypt"
+  echo ""; info "Check complete — nothing was changed."
+  exit 0
+fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 1. PREREQUISITES
@@ -94,29 +151,34 @@ info "Installing packages..."
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     "${APT_PKGS[@]}" 2>&1 | grep -E "^(Setting up|E:|W:)" || true
 
-# Python packages not in apt
+# Python packages not in apt (luma.oled drives the SSD1306 status panel)
 pip3 install --break-system-packages --quiet \
-    aiohttp flask bcrypt 2>/dev/null || true
+    aiohttp flask bcrypt luma.oled 2>/dev/null || true
 
 ok "Prerequisites installed"
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 2. USB OTG (dwc2)
+# 2. BOOT OVERLAYS  (USB OTG + C790/TC358743 capture + I2C for OLED)
 # ══════════════════════════════════════════════════════════════════════════════
-CONFIG_TXT="/boot/firmware/config.txt"
-[[ -f "$CONFIG_TXT" ]] || CONFIG_TXT="/boot/config.txt"
-
-info "Configuring USB OTG (peripheral mode) in $CONFIG_TXT..."
-# Remove any existing dtoverlay=dwc2 line from any section
-sed -i '/^dtoverlay=dwc2/d' "$CONFIG_TXT"
-# Ensure [all] section exists; Pi 4 only applies settings outside [cm4]/[cm5]/[pi4] blocks
+info "Configuring boot overlays in $CONFIG_TXT ..."
+# USB OTG peripheral mode = the HID gadget (/dev/hidg*). Idempotent.
+set_cfgtxt "dtoverlay=dwc2" "dtoverlay=dwc2,dr_mode=peripheral"
+# C790 / TC358743 HDMI->CSI-2 capture. Without these /dev/video0 never appears,
+# so there is no video at all. camera_auto_detect MUST be 0 or it fights the
+# explicit overlay. tc358743-audio is the (currently upstream-limited) I2S audio
+# DAI - harmless to load; see docs/DIY_PROGRESS.md.
+set_cfgtxt "camera_auto_detect=" "camera_auto_detect=0"
+sed -i '\|^dtoverlay=tc358743|d' "$CONFIG_TXT"     # clears tc358743 AND tc358743-audio
 grep -q '^\[all\]' "$CONFIG_TXT" || echo '[all]' >> "$CONFIG_TXT"
-# Insert immediately after [all] so it applies to all Pi models including Pi 4
-sed -i '/^\[all\]/a dtoverlay=dwc2,dr_mode=peripheral' "$CONFIG_TXT"
-ok "dtoverlay=dwc2,dr_mode=peripheral added to [all] section (Pi 4 / Pi 5 compatible)"
+sed -i '/^\[all\]/a dtoverlay=tc358743-audio' "$CONFIG_TXT"
+sed -i '/^\[all\]/a dtoverlay=tc358743' "$CONFIG_TXT"
+# I2C for the SSD1306 OLED status panel.
+set_cfgtxt "dtparam=i2c_arm=" "dtparam=i2c_arm=on"
+ok "config.txt set: dwc2 + tc358743(+audio) + camera_auto_detect=0 + i2c_arm (idempotent)"
 
-# Load module now, for immediate use without reboot
+# Load modules now where possible (full effect needs a reboot).
 modprobe libcomposite 2>/dev/null || warn "libcomposite not loadable now, needs reboot"
+modprobe i2c-dev 2>/dev/null || true
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 3. CLONE / UPDATE REPO
@@ -143,13 +205,19 @@ fi
 # ══════════════════════════════════════════════════════════════════════════════
 info "Installing MagicBridge to $INSTALL_DIR..."
 
-mkdir -p "$INSTALL_DIR"/{core,web,dashboard,provision}
+mkdir -p "$INSTALL_DIR"/{core,web,dashboard,provision,edid}
 mkdir -p "$CONFIG_DIR"/ssl
 
 # Core KVM server
 cp "$SRC_DIR/src/core/magicbridge.py"  "$INSTALL_DIR/core/"
 cp "$SRC_DIR/src/core/hid.py"         "$INSTALL_DIR/core/"
 cp "$SRC_DIR/src/core/video.py"       "$INSTALL_DIR/core/"
+cp "$SRC_DIR/src/core/oled.py"        "$INSTALL_DIR/core/"   # OLED status panel (mb-oled.service)
+
+# EDID blob: caps ANY source at 1080p50 (the Pi 4B 2-CSI-lane ceiling), applied
+# at boot by mb-hdmi-init. Without it the TC358743 has no EDID after reboot and
+# the source sends no signal.
+cp "$SRC_DIR/src/edid/mb-edid-1080p50.hex" "$INSTALL_DIR/edid/"
 
 # Web UI
 cp "$SRC_DIR/src/web/index.html"      "$INSTALL_DIR/web/"
@@ -167,7 +235,14 @@ cp "$SRC_DIR/src/core/mb-gadget.sh"    /usr/local/bin/mb-gadget.sh
 cp "$SRC_DIR/src/provision/mb-provision.sh" /usr/local/bin/mb-provision.sh
 cp "$SRC_DIR/src/core/mb-lockdown.sh"  /usr/local/bin/mb-lockdown.sh
 cp "$SRC_DIR/src/core/mb-mdns-alias.sh" /usr/local/bin/mb-mdns-alias.sh
-chmod +x /usr/local/bin/mb-gadget.sh /usr/local/bin/mb-provision.sh /usr/local/bin/mb-lockdown.sh /usr/local/bin/mb-mdns-alias.sh
+cp "$SRC_DIR/src/core/mb-hdmi-init.sh" /usr/local/bin/mb-hdmi-init.sh   # C790 EDID/timings at boot + hot-plug
+cp "$SRC_DIR/src/core/mb-setup-fan.sh" /usr/local/bin/mb-setup-fan.sh   # optional case-fan helper (run manually with a GPIO pin)
+chmod +x /usr/local/bin/mb-gadget.sh /usr/local/bin/mb-provision.sh /usr/local/bin/mb-lockdown.sh \
+         /usr/local/bin/mb-mdns-alias.sh /usr/local/bin/mb-hdmi-init.sh /usr/local/bin/mb-setup-fan.sh
+
+# Stage the WebRTC add-on installer so `--with-webrtc` (or a later manual run)
+# can build the Janus H.264 path. It is NOT executed here unless --with-webrtc.
+cp "$SRC_DIR/src/install_janus_webrtc.sh" "$INSTALL_DIR/install_janus_webrtc.sh" 2>/dev/null || true
 
 ok "Files installed"
 
@@ -232,6 +307,24 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 6b. RAM-ONLY LOGS  (must exist BEFORE nginx starts — nginx.conf logs here)
+# ══════════════════════════════════════════════════════════════════════════════
+# MAGICBRIDGE_SYSTEM.md §2: auth/session/nginx logs live in a tmpfs so pulling
+# the card exposes no connection IPs/history. nginx.conf and both Python
+# backends write here; wiped on reboot/power-loss by design.
+info "Setting up RAM-only (tmpfs) log directory..."
+FSTAB_LINE="tmpfs /var/log/magicbridge-ram tmpfs defaults,noatime,mode=1777,size=32m 0 0"
+if ! grep -q '/var/log/magicbridge-ram' /etc/fstab; then
+    echo "$FSTAB_LINE" >> /etc/fstab
+    ok "Added tmpfs mount for /var/log/magicbridge-ram to /etc/fstab"
+else
+    ok "tmpfs fstab entry already present"
+fi
+mkdir -p /var/log/magicbridge-ram
+mountpoint -q /var/log/magicbridge-ram || mount /var/log/magicbridge-ram 2>/dev/null || true
+chmod 1777 /var/log/magicbridge-ram 2>/dev/null || true
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 7. NGINX
 # ══════════════════════════════════════════════════════════════════════════════
 info "Configuring nginx..."
@@ -262,6 +355,9 @@ cp "$SRC_DIR/src/core/magicbridge.service"        /etc/systemd/system/
 cp "$SRC_DIR/src/dashboard/stealth-dashboard.service" /etc/systemd/system/
 cp "$SRC_DIR/src/provision/mb-provision.service" /etc/systemd/system/
 cp "$SRC_DIR/src/core/mb-mdns-alias.service"     /etc/systemd/system/
+cp "$SRC_DIR/src/core/mb-hdmi-init.service"      /etc/systemd/system/   # C790 EDID + timings at boot
+cp "$SRC_DIR/src/core/mb-hdmi-watch.service"     /etc/systemd/system/   # re-arms EDID on hot-plug
+cp "$SRC_DIR/src/core/mb-oled.service"           /etc/systemd/system/   # SSD1306 status panel
 
 systemctl daemon-reload
 systemctl enable mb-gadget
@@ -269,6 +365,9 @@ systemctl enable magicbridge
 systemctl enable stealth-dashboard
 systemctl enable mb-provision
 systemctl enable mb-mdns-alias
+systemctl enable mb-hdmi-init
+systemctl enable mb-hdmi-watch
+systemctl enable mb-oled
 
 # Note: ustreamer.service is intentionally NOT installed or enabled here.
 # video.py starts and manages ustreamer itself as a subprocess (and stops
@@ -360,13 +459,38 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 13. LOG FILES
+# 13. OPERATIONAL LOG  (RAM-only logs were set up in 6b, before nginx)
 # ══════════════════════════════════════════════════════════════════════════════
-touch /var/log/magicbridge-auth.log \
-      /var/log/magicbridge-sessions.log \
-      /var/log/magicbridge-provision.log \
-      /var/log/magicbridge.log
-chmod 640 /var/log/magicbridge-*.log
+# The provisioning log is operational (not connection data) and stays on disk
+# so `tail` works across reboots; the sensitive auth/session/nginx logs are the
+# tmpfs ones from section 6b.
+touch /var/log/magicbridge-provision.log 2>/dev/null || true
+chmod 640 /var/log/magicbridge-provision.log 2>/dev/null || true
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 14. WEBRTC / H.264  (optional — only with --with-webrtc)
+# ══════════════════════════════════════════════════════════════════════════════
+if [[ "$WITH_WEBRTC" == 1 ]]; then
+    info "Building Janus + hardware H.264 WebRTC — this can take 15-30 min..."
+    if bash "$INSTALL_DIR/install_janus_webrtc.sh"; then
+        systemctl enable janus-webrtc 2>/dev/null || true
+        systemctl start  janus-webrtc 2>/dev/null || true
+        # Prefer the H.264/WebRTC path; video.py falls back to MJPEG on its own
+        # if Janus or the C790 aren't actually available, so this is safe.
+        if command -v jq &>/dev/null && [[ -f "$CONFIG_DIR/config.json" ]]; then
+            tmp=$(mktemp)
+            jq '.video.mode = "h264"' "$CONFIG_DIR/config.json" > "$tmp" \
+                && mv "$tmp" "$CONFIG_DIR/config.json" && chmod 600 "$CONFIG_DIR/config.json"
+        fi
+        ok "WebRTC installed + enabled (video mode set to h264)"
+    else
+        warn "WebRTC build failed — the MJPEG path still works. Re-run later:"
+        warn "  sudo bash $INSTALL_DIR/install_janus_webrtc.sh"
+    fi
+else
+    info "WebRTC not built (MJPEG video works now). Add it anytime with:"
+    info "  sudo bash install.sh --with-webrtc   (or bash $INSTALL_DIR/install_janus_webrtc.sh)"
+fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # DONE
@@ -384,14 +508,23 @@ echo ""
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "?")
 echo -e "  ${BOLD}Local IP${NC}          $LOCAL_IP"
 echo ""
-warn "A reboot is required to activate USB OTG (dwc2 overlay)."
+warn "A reboot is required to activate the new boot overlays (USB OTG dwc2,"
+warn "C790/tc358743 capture, i2c) — video and the OLED won't work until then."
 echo -e "  ${BOLD}sudo reboot${NC}"
 echo ""
 echo -e "  If this Pi has no saved WiFi network yet, it will boot into a"
 echo -e "  setup hotspot named ${BOLD}MagicBridge-Setup${NC}. Connect to it and follow"
 echo -e "  the on-screen steps to join your WiFi."
 echo ""
-echo -e "  After reboot, connect the Pi's USB-C port to the target computer."
+echo -e "  After reboot, connect BOTH cables to the target computer:"
+echo -e "    • HDMI  (target's output) → C790 capture board → Pi CSI ribbon"
+echo -e "    • USB-C (Pi OTG port)     → a DATA USB port on the target (keyboard/mouse)"
 echo -e "  Open ${BOLD}https://magicbridge.local/${NC} on any device on the same network."
 echo -e "  Change both default passwords on first login."
+echo ""
+echo -e "  ${BOLD}Verify anytime:${NC}  sudo bash install.sh --check   (read-only status)"
+echo -e "  ${BOLD}Advanced (optional, manual):${NC} LUKS at-rest encryption of"
+echo -e "  /etc/magicbridge is NOT auto-applied — a botched setup can lock out"
+echo -e "  config. See MAGICBRIDGE_SYSTEM.md §2. The rest of the anonymity model"
+echo -e "  (RAM-only logs, spoofable USB/MAC/EDID identity) is already active."
 echo ""
