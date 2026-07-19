@@ -1072,11 +1072,24 @@ async def api_status(request: web.Request) -> web.Response:
          for v in list(_ws_info.values())),
         key=lambda x: x["secs"], reverse=True,
     )
+    # What the target sees as the attached monitor (EDID identity). Uses the
+    # stealth-panel override if set, else the realistic default the base EDID
+    # advertises (Dell P2419H). Shown next to the USB identity in the UI.
+    try:
+        _edid = json.loads(Path(CONFIG_PATH).read_text()).get("edid", {})
+    except Exception:
+        _edid = {}
+    display = {
+        "name":   _edid.get("product_name") or "DELL P2419H",
+        "mfr":    _edid.get("mfr") or "DEL",
+        "serial": _edid.get("serial") or "",
+    }
 
     return web.json_response({
         "version":    VERSION,
         "clients":    len(_ws_clients),
         "viewers":    viewers,
+        "display":    display,
         "hid_kb":     os.path.exists("/dev/hidg0"),
         "hid_ms":     os.path.exists("/dev/hidg1"),
         "stream":     stream_status,
@@ -2001,9 +2014,9 @@ async def api_update(request):
         upd_log = "/var/log/magicbridge-update.log"
         _full_sh = (
             "mkdir -p /run/magicbridge; "
-            "printf 'MagicBridge\\nUpdating...\\nplease wait' > /run/magicbridge/oled-status; "
+            "printf '@UPDATING Upgrading' > /run/magicbridge/oled-status; "   # animated on the OLED
             f"bash {REPO_DIR}/install.sh >{upd_log} 2>&1; RC=$?; "
-            "if [ $RC -eq 0 ]; then printf 'MagicBridge\\nUpdate done\\nrestarting...' > /run/magicbridge/oled-status; "
+            "if [ $RC -eq 0 ]; then printf 'MagicBridge\\nUpdated!\\nrestarting...' > /run/magicbridge/oled-status; "
             "else printf 'MagicBridge\\nUpdate FAILED\\nsee log' > /run/magicbridge/oled-status; fi; "
             "sleep 4; rm -f /run/magicbridge/oled-status"
         )
@@ -2035,9 +2048,11 @@ async def api_update(request):
     for svc in ("stealth-dashboard", "mb-oled", "magicbridge"):
         if svc in restarts: cmds.append("systemctl restart " + svc)
     _incr_sh = ("mkdir -p /run/magicbridge; "
-                "printf 'MagicBridge\\nUpdating...\\n(quick)' > /run/magicbridge/oled-status; "
+                "printf '@UPDATING Quick update' > /run/magicbridge/oled-status; "  # animated on the OLED
+                "sleep 3; "                       # let the animation play even on a no-restart change
                 + ("; ".join(cmds) + "; " if cmds else "")
-                + "sleep 2; rm -f /run/magicbridge/oled-status")
+                + "printf 'MagicBridge\\nUpdated!\\n:)' > /run/magicbridge/oled-status; "
+                "sleep 2; rm -f /run/magicbridge/oled-status")
     try:
         _sp.run(["systemd-run", "--collect", "--description", "MagicBridge quick-update",
                  "/bin/bash", "-c", _incr_sh], capture_output=True, text=True, timeout=15)

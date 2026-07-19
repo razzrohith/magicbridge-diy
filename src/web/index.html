@@ -1073,7 +1073,14 @@ body:not(.fs) .fs-hud{display:none!important}
           <div id="oled-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
         <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>Current Identity
+          <div class="scard-title"><span class="dot-acc"></span>How the target sees it</div>
+          <div class="snote" style="margin-bottom:8px">The identity the connected computer reads: the USB device and the monitor. Change these in the /stealth/ panel.</div>
+          <div class="srow"><span class="sk">Monitor</span><span class="sv ac" id="disp-name">-</span></div>
+          <div class="srow"><span class="sk">Maker</span><span class="sv" id="disp-mfr">-</span></div>
+          <div class="srow"><span class="sk">Serial</span><span class="sv" id="disp-ser" style="font-family:monospace;font-size:11px">-</span></div>
+        </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>USB Device
             <span id="id-tag" class="tag tag-ok" style="margin-left:auto">Default</span>
           </div>
           <div class="srow"><span class="sk">Device</span><span class="sv ac" id="id-prod">-</span></div>
@@ -1977,6 +1984,10 @@ function applyStatus(d){
     }
   }
   if(d.clients!=null) document.getElementById('ss-cl').textContent=String(d.clients);
+  if(d.display){
+    const g=(id,v)=>{const e=document.getElementById(id); if(e) e.textContent=v||'-';};
+    g('disp-name',d.display.name); g('disp-mfr',d.display.mfr); g('disp-ser',d.display.serial||'-');
+  }
   applyPowerHealth(d);
 }
 
@@ -2238,13 +2249,15 @@ async function sysCheckVer(){
       avail.className='sv warn';
       btn.textContent=quick?('Quick Update ('+(d.changed||0)+' file'+(d.changed===1?'':'s')+')'):'Full Upgrade (reinstall)';
       btn.classList.add('pulse');
+      btn.disabled=false;
       btn.dataset.mode=d.mode||'full';
       const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='sys-dot warn';
     }else{
       avail.textContent='Up to date';
       avail.className='sv ok';
-      btn.textContent='Check for updates';
+      btn.textContent='✓ Up to date';       // distinct from the grey "Check" button, and inert
       btn.classList.remove('pulse');
+      btn.disabled=true;
       const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='sys-dot ok';
     }
     const out=document.getElementById('sys-update-out');

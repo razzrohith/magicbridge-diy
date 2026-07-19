@@ -40,8 +40,10 @@ W, H = 598, 336  # image size mm (16:9)
 
 # ---- BASE BLOCK -------------------------------------------------------
 e = [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]
-e += pnp("MGB")                      # manufacturer
-e += [0x01, 0x00]                    # product code
+# Realistic monitor identity by default (Dell P2419H) - the target must see an
+# ordinary monitor, never "MagicBridge". Identity only; timings stay 1080p50.
+e += pnp("DEL")                      # manufacturer (Dell)
+e += [0x6B, 0xA0]                    # product code 0xA06B (P2419H), little-endian
 e += [0x01, 0x00, 0x00, 0x00]        # serial
 e += [0x01, 0x22]                    # week 1, year 2024 (0x22=34 -> 1990+34)
 e += [0x01, 0x03]                    # EDID 1.3
@@ -58,8 +60,8 @@ e += dtd(148500, 1920, 720, 1080, 45, 528, 44, 4, 5, W, H)
 e += dtd(74250, 1280, 370, 720, 30, 110, 40, 5, 5, W, H)
 # range limits: 23-61Hz vert, 15-70kHz horiz, max 150MHz  (61 blocks 1080p60)
 e += desc(0xFD, [23, 61, 15, 70, 15, 0x00, 0x0A, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20])
-# monitor name
-e += desc(0xFC, [ord(c) for c in "MagicBridge"] + [0x0A])
+# monitor name (realistic, not "MagicBridge")
+e += desc(0xFC, [ord(c) for c in "DELL P2419H"] + [0x0A])
 e += [0x01]                          # 1 extension block
 e += [(256 - (sum(e) % 256)) % 256]  # checksum
 assert len(e) == 128, len(e)
@@ -105,7 +107,8 @@ print("checksums OK, header OK, no 1080p60 advertised:", ok)
 print("preferred timing: 1920x1080 @ 50Hz (148.5MHz)")
 print("VIC list:", [v & 0x7F for v in vics])
 
-out = r"E:\Startup\magicbridge-scratch\mb-edid-1080p50.hex"
+import os as _os
+out = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "mb-edid-1080p50.hex")
 with open(out, "w", newline="\n") as f:
     for blk in (full[:128], full[128:]):
         for i in range(0, 128, 16):

@@ -82,6 +82,25 @@ def _read_status_override():
         return None
     return [l.rstrip("\r\n") for l in raw.splitlines()][:4]
 
+# Animated "updating" screen: shown while the status file's first line is the
+# marker "@UPDATING" (optionally "@UPDATING <label>"). A frame counter drives a
+# spinner + a Knight-Rider segment sweeping a framed bar - reads clearly as
+# "working" on the tiny 128x32 panel.
+_anim_frame = [0]
+
+def _draw_update_anim(draw, frame, font, label="Updating"):
+    W, H = OLED_WIDTH, OLED_HEIGHT
+    spin = "|/-\\"[frame % 4]
+    draw.text((0, 1),  "MagicBridge", font=font, fill="white")
+    draw.text((0, 12), (label + " " + spin)[:21], font=font, fill="white")
+    y0 = H - 7
+    draw.rectangle((0, y0, W - 1, H - 1), outline="white")   # bar frame
+    seg = 20
+    travel = max(1, (W - 2) - seg)
+    cyc = (frame * 3) % (2 * travel)
+    pos = cyc if cyc <= travel else (2 * travel - cyc)       # bounce 0..travel..0
+    draw.rectangle((1 + pos, y0 + 2, 1 + pos + seg, H - 3), fill="white")
+
 # Mirrors magicbridge.py's OLED_DEFAULTS - kept in sync manually since these
 # are two separate processes/files. Reproduces the exact original static
 # layout: "MagicBridge" / IP / "{temp}C up{uptime} {OK/DOWN}/{LIVE/OFF}".
@@ -308,8 +327,16 @@ def main():
         # the OLED is "disabled" in config, so setup guidance is never hidden.
         override = _read_status_override()
         if override is not None:
+            marker = override[0].strip() if override else ""
             try:
                 from luma.core.render import canvas
+                if marker.startswith("@UPDATING"):
+                    label = marker[len("@UPDATING"):].strip() or "Updating"
+                    _anim_frame[0] += 1
+                    with canvas(device) as draw:
+                        _draw_update_anim(draw, _anim_frame[0], font_normal, label)
+                    time.sleep(0.12)      # fast refresh = smooth animation
+                    continue
                 many = len(override) > 3
                 ys = LINE_Y_SMALL if many else LINE_Y_NORMAL
                 f  = font_small if many else font_normal
