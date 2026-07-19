@@ -2,15 +2,17 @@
 """
 MagicBridge Video Capture Manager
 
-Manages the MJPEG/H264 stream from USB HDMI capture cards.
+Auto-detects the capture hardware and picks the right pipeline, defaulting to
+the C790:
+  - C790 / TC358743 HDMI->CSI-2 board (DEFAULT/preferred): hardware H.264 +
+    Janus WebRTC (low latency), with the restricted 1080p50 EDID for stealth.
+  - USB UVC HDMI dongle (MS2109/MS2130, Elgato Cam Link, UGREEN, etc.): native
+    MJPEG. Used automatically when no CSI board is present.
+Both are V4L2 devices; device_type() classifies them and start() resolves
+mode="auto" to "h264" (csi) or "mjpeg" (usb).
+
 Primary streamer: ustreamer (apt install ustreamer)
 Fallback:         ffmpeg (apt install ffmpeg)
-
-Compatible capture cards (all UVC/V4L2):
-  - Generic MS2109 USB HDMI capture cards
-  - Elgato Cam Link 4K (UVC-compatible on Linux)
-  - UGREEN USB capture cards
-  - Any V4L2 VIDEO_CAPTURE device
 """
 import glob
 import logging
@@ -36,7 +38,7 @@ class VideoManager:
         self.resolution = "1920x1080"
         self.fps        = 30
         self.quality    = 90      # MJPEG quality 1-100
-        self.mode       = "h264"  # "h264" (C790/CSI + Janus WebRTC, default/preferred) | "mjpeg" (MS2109/USB fallback)
+        self.mode       = "auto"  # "auto" (detect hardware) -> "h264" (C790/CSI + Janus WebRTC, preferred) | "mjpeg" (MS2109/USB)
         self.port       = STREAM_PORT
         self.h264_sink  = None    # ustreamer memsink name, set when h264 mode starts
         self._lock      = threading.Lock()
@@ -110,6 +112,27 @@ class VideoManager:
 
         log.info("No USB or C790/CSI device found, falling back to first V4L2 device: %s", devs[0]["device"])
         return devs[0]["device"]
+
+    def device_type(self, dev: str = None) -> str:
+        """Classify a capture device so the stream mode can auto-follow the
+        hardware: 'csi' (C790/TC358743 on the Pi CSI port), 'usb' (a UVC HDMI
+        dongle like the MS2109), or 'other'. CSI -> hardware H.264/WebRTC (the
+        preferred/default path); USB -> MJPEG."""
+        dev = dev or self.device
+        if not dev:
+            return "other"
+        try:
+            r = subprocess.run(["v4l2-ctl", "--device", dev, "--info"],
+                               capture_output=True, text=True, timeout=2)
+            blob = r.stdout.lower()
+        except Exception:
+            return "other"
+        if "tc358743" in blob or "unicam" in blob or "fe801000" in blob:
+            return "csi"
+        m = re.search(r"bus info\s*:\s*(\S+)", blob)
+        if m and m.group(1).startswith("usb"):
+            return "usb"
+        return "other"
 
     # Audio (C790 I2S HDMI de-embedded audio -> Janus, see h264.md's audio block)
 
@@ -263,6 +286,17 @@ class VideoManager:
             if not self.device:
                 log.warning("No V4L2 capture device found")
                 return False
+
+            # Resolve "auto" mode from the detected capture hardware: the
+            # C790/TC358743 CSI board -> hardware H.264 + WebRTC (preferred), a
+            # USB UVC dongle (or anything else) -> MJPEG. The h264 launcher still
+            # falls back to MJPEG on its own if the Janus-enabled ustreamer isn't
+            # present, so this stays safe on a CSI board without WebRTC built.
+            if self.mode in (None, "", "auto"):
+                dtype = self.device_type(self.device)
+                self.mode = "h264" if dtype == "csi" else "mjpeg"
+                log.info("Auto capture mode: %s is '%s' -> %s mode",
+                         self.device, dtype, self.mode)
 
             # Auto-detect best native MJPEG resolution when not explicitly set.
             # This lets MagicBridge adapt to any laptop/screen resolution automatically:
@@ -671,6 +705,7 @@ class VideoManager:
         return {
             "running":    self.is_running(),
             "device":     self.device,
+            "device_type": self.device_type(self.device) if self.device else None,
             "resolution": self.resolution,
             "fps":        self.fps,
             "quality":    self.quality,

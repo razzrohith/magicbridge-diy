@@ -279,7 +279,7 @@ if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
     "resolution": "1920x1080",
     "fps":        30,
     "quality":    80,
-    "mode":       "mjpeg"
+    "mode":       "auto"
   },
   "mac_persist":   {},
   "mac_autospoof": true,

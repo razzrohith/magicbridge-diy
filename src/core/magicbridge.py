@@ -2411,11 +2411,11 @@ async def main():
         resolution = vc.get("resolution", "1920x1080"),
         fps        = int(vc.get("fps", 30)),
         quality    = int(vc.get("quality", 80)),
-        # Default to the WebRTC/H.264 path (C790/CSI) — video.start() /
-        # _start_ustreamer_h264 auto-detects failure (no C790 yet, ustreamer
-        # build lacking Janus support, etc.) and falls back to mjpeg on its
-        # own, so this is safe even before the hardware/Janus stack exists.
-        mode       = vc.get("mode", "h264"),
+        # "auto": video.start() detects the capture hardware and picks the
+        # pipeline — C790/CSI -> H.264+WebRTC (preferred), USB dongle -> MJPEG.
+        # Falls back to mjpeg on its own if the CSI/Janus path can't start, so
+        # this is safe on any hardware combination.
+        mode       = vc.get("mode", "auto"),
     ))
     if ok:
         log.info("Stream started: %s", video.status())
