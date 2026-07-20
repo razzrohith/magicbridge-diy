@@ -1352,6 +1352,67 @@ async def api_wol_wake(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "mac": mac})
 
 
+def _write_wol_cron(schedules) -> None:
+    """Rewrite /etc/cron.d/mb-wol from the saved schedules. Each is
+    {time:'HH:MM', days:'*'|'1-5'|'0,6', enabled}. No schedules -> remove the
+    file. cron.d entries need the user field (root) and each line a newline."""
+    path = "/etc/cron.d/mb-wol"
+    body = ["# MagicBridge scheduled Wake-on-LAN (managed by the web UI)\n",
+            "SHELL=/bin/sh\nPATH=/usr/bin:/bin\n"]
+    n = 0
+    for s in (schedules or []):
+        if not isinstance(s, dict) or not s.get("enabled", True):
+            continue
+        t = str(s.get("time", "")).strip()
+        if ":" not in t:
+            continue
+        try:
+            hh, mm = (int(x) for x in t.split(":", 1))
+            assert 0 <= hh < 24 and 0 <= mm < 60
+        except Exception:
+            continue
+        days = str(s.get("days", "*")).strip() or "*"
+        if any(c not in "0123456789,-*" for c in days):   # cron day field only
+            days = "*"
+        body.append(f"{mm} {hh} * * {days} root /usr/bin/python3 "
+                    f"/opt/magicbridge/core/magicbridge.py --send-wol >/dev/null 2>&1\n")
+        n += 1
+    try:
+        if n == 0:
+            if os.path.exists(path):
+                os.remove(path)
+            return
+        Path(path).write_text("".join(body))
+        os.chmod(path, 0o644)
+    except Exception as e:
+        log.warning("could not write WoL cron: %s", e)
+
+
+async def api_wol_schedule(request: web.Request) -> web.Response:
+    """GET/POST /api/wol/schedule: manage recurring Wake-on-LAN times (cron)."""
+    cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+    wol = cfg.get("wol", {})
+    if request.method == "GET":
+        return web.json_response({"ok": True, "schedules": wol.get("schedules", []),
+                                  "mac": wol.get("mac", "")})
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    scheds = d.get("schedules", [])
+    if not isinstance(scheds, list) or len(scheds) > 20:
+        return web.json_response({"ok": False, "error": "invalid schedules"}, status=400)
+    wol["schedules"] = scheds
+    cfg["wol"] = wol
+    try:
+        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, _write_wol_cron, scheds)
+    return web.json_response({"ok": True, "schedules": scheds})
+
+
 # Target keyboard layout. See hid.py's CHAR_MAPS comment for the underlying
 # reason this exists: HID usage codes are physical-position, not character,
 # so the paste/AI-typed-text feature needs to know what layout the TARGET OS
@@ -2341,6 +2402,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/wol/settings",    api_wol_settings)
     app.router.add_post("/api/wol/settings",   api_wol_settings)
     app.router.add_post("/api/wol/wake",       api_wol_wake)
+    app.router.add_get("/api/wol/schedule",    api_wol_schedule)
+    app.router.add_post("/api/wol/schedule",   api_wol_schedule)
     app.router.add_get("/api/keyboard/settings",  api_keyboard_settings)
     app.router.add_post("/api/keyboard/settings", api_keyboard_settings)
     app.router.add_post("/api/power",     api_power)
@@ -2463,4 +2526,16 @@ async def main():
 
 
 if __name__ == "__main__":
+    import sys as _sys
+    if "--send-wol" in _sys.argv:
+        # Entry point for the scheduled-WoL cron job: read the saved target MAC
+        # and fire one magic packet, then exit. No server, no event loop.
+        try:
+            _c = (json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}).get("wol", {})
+            _mac = _wol_normalize_mac(_c.get("mac", ""))
+            _wol_send_packet(_mac, _c.get("broadcast", "255.255.255.255"), int(_c.get("port", 9)))
+            print("scheduled WoL sent to", _mac)
+        except Exception as _e:
+            print("scheduled WoL error:", _e)
+        _sys.exit(0)
     asyncio.run(main())

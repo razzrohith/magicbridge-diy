@@ -683,6 +683,19 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
           <div class="snote" id="wol-msg" style="margin-bottom:0;margin-top:6px;display:none"></div>
           <div class="snote" style="margin-bottom:0">Powers on the target (magic packet). Needs WOL enabled in its BIOS + NIC, and power/ethernet kept connected.</div>
+          <div class="scard-title" style="margin-top:12px"><span class="dot-cyn"></span>Wake schedule <span style="font-size:10px;color:var(--muted);margin-left:auto;font-weight:400;text-transform:none">auto wake at set times</span></div>
+          <div id="wol-sched-list"></div>
+          <div style="display:flex;gap:5px;margin-top:5px">
+            <input class="sinput" type="time" id="wsch-time" style="width:auto;margin:0">
+            <select class="ssel" id="wsch-days" style="width:auto;margin:0">
+              <option value="*">Every day</option>
+              <option value="1-5">Weekdays</option>
+              <option value="0,6">Weekends</option>
+              <option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option>
+              <option value="4">Thu</option><option value="5">Fri</option><option value="6">Sat</option><option value="0">Sun</option>
+            </select>
+            <button class="sbtn" onclick="wolSchedAdd()" style="margin:0">+ Add</button>
+          </div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Shortcuts</div>
@@ -2743,7 +2756,37 @@ async function refreshWolSettings(){
     const d = await r.json();
     if(d.ok) document.getElementById('wol-mac').value = d.config.mac || '';
   }catch(e){}
+  wolSchedLoad();
 }
+// Scheduled Wake-on-LAN (cron-backed on the Pi via /api/wol/schedule)
+let _wolScheds=[];
+const _wolDayLabel={'*':'Every day','1-5':'Weekdays','0,6':'Weekends','0':'Sun','1':'Mon','2':'Tue','3':'Wed','4':'Thu','5':'Fri','6':'Sat'};
+async function wolSchedLoad(){
+  try{ const r=await fetch('/api/wol/schedule'); const d=await r.json(); if(d.ok){ _wolScheds=d.schedules||[]; wolSchedRender(); } }catch(e){}
+}
+function wolSchedRender(){
+  const el=document.getElementById('wol-sched-list'); if(!el) return;
+  el.innerHTML=_wolScheds.length ? _wolScheds.map((s,i)=>
+    '<div class="clip-item"><span class="clip-name">'+(s.time||'?')+' · '+(_wolDayLabel[s.days]||s.days||'Every day')+
+    (s.enabled===false?' <span style="color:var(--muted)">(off)</span>':'')+'</span>'+
+    '<button class="clip-act clip-del" onclick="wolSchedDel('+i+')">✕</button></div>'
+  ).join('') : '<div style="font-size:11px;color:var(--muted)">No wake schedules.</div>';
+}
+async function wolSchedSave(){
+  try{
+    const r=await fetch('/api/wol/schedule',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({schedules:_wolScheds})});
+    const d=await r.json();
+    if(d.ok){ _wolScheds=d.schedules||_wolScheds; wolSchedRender(); _wolShow('Wake schedule saved ✓',true); }
+    else _wolShow(d.error||'Failed',false);
+  }catch(e){ _wolShow('Error: '+e,false); }
+}
+function wolSchedAdd(){
+  const t=document.getElementById('wsch-time').value, days=document.getElementById('wsch-days').value;
+  if(!t){ _wolShow('Pick a time first',false); return; }
+  if(!document.getElementById('wol-mac').value.trim()){ _wolShow('Save the target MAC first',false); return; }
+  _wolScheds.push({time:t,days:days,enabled:true}); wolSchedSave();
+}
+function wolSchedDel(i){ _wolScheds.splice(i,1); wolSchedSave(); }
 async function wolSave(){
   const mac = document.getElementById('wol-mac').value.trim();
   try{
