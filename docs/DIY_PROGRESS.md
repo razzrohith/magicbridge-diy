@@ -217,8 +217,23 @@ identical Dell EDID, cross-linking units). Every late-stage failure path exits 0
 `mb-rescue.ps1` diagnoses/fixes a unit stuck on its hotspot **offline**, since
 joining that hotspot kills the laptop's internet.
 
-**Still pending: the end-to-end flash test** (blank card → boot → WiFi → prove
-uniqueness vs the golden unit and that root grew to fill the card).
+**END-TO-END FLASH TEST PASSED (2026-07-19).** A blank 256 GB card flashed from
+`magicbridge.img.xz` (910 MB): first boot personalized into a UNIQUE unit —
+hostname `DESKTOP-HEF7EYZ`, MAC `00:14:22:a3:08:4f`, its own SSH host key,
+machine-id, and (new) a randomized EDID serial `0xaebb6434` — all differing from
+the golden unit. **Root grew from the shrunk 4.4 GB to `255.8 GB`, filling the
+card** (pishrink's hook did it; `mb-firstboot-late` correctly no-op'd as the
+safety net). `/boot/firmware` came up `nofail`; under-voltage was flagged in the
+late log; both first-boot markers present (no loop).
+
+**The test caught one real bug (fixed):** a fresh flash came up on WiFi (OLED
+showed its IP) but SSH/80/443 were all dead. Cause — the image ships with SSH
+host keys + TLS cert STRIPPED, so sshd/nginx fail early in boot before
+`mb-secret-reset` recreates them, and secret-reset never restarted them (same
+class as the sibling's stripped-cert bug). Fixed: `mb-secret-reset` now restarts
+ssh/nginx/magicbridge/stealth-dashboard after regenerating their secrets, so a
+fresh flash is reachable with no manual reboot. (The unit tested needed a
+one-time reboot because it was flashed before the fix.)
 
 ## Earlier DIY history (V1, condensed)
 Hand-built KVM on bare Pi OS: USB gadget HID (`hid.py`), MS2109 MJPEG capture,
