@@ -64,10 +64,17 @@ PY
 fi
 
 # 5. Saved WiFi — the unit must provision fresh, not join the builder's network.
-info "clearing saved WiFi connections"
-rm -f /etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null || true
-nmcli -t -f UUID,TYPE connection show 2>/dev/null | awk -F: '$2 ~ /wireless/ {print $1}' \
-    | xargs -r -n1 nmcli connection delete 2>/dev/null || true
+#    MB_KEEP_WIFI=1 (set by mb-firstboot when it detects an already-provisioned
+#    unit) skips this, so a stray re-run can never strand a working unit on its
+#    setup hotspot. Arming an image always runs with no saved profiles present.
+if [[ "${MB_KEEP_WIFI:-0}" == "1" ]]; then
+    info "MB_KEEP_WIFI=1 - keeping saved WiFi (not stranding an in-service unit)"
+else
+    info "clearing saved WiFi connections"
+    rm -f /etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null || true
+    nmcli -t -f UUID,TYPE connection show 2>/dev/null | awk -F: '$2 ~ /wireless/ {print $1}' \
+        | xargs -r -n1 nmcli connection delete 2>/dev/null || true
+fi
 
 # 6. Tailscale — don't inherit the builder's node identity.
 info "clearing Tailscale state"

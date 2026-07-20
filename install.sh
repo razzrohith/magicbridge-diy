@@ -243,10 +243,11 @@ cp "$SRC_DIR/src/core/mb-mdns-alias.sh" /usr/local/bin/mb-mdns-alias.sh
 cp "$SRC_DIR/src/core/mb-hdmi-init.sh" /usr/local/bin/mb-hdmi-init.sh   # C790 EDID/timings at boot + hot-plug
 cp "$SRC_DIR/src/core/mb-setup-fan.sh" /usr/local/bin/mb-setup-fan.sh   # optional case-fan helper (run manually with a GPIO pin)
 cp "$SRC_DIR/src/core/mb-firstboot.sh"   /usr/local/bin/mb-firstboot.sh   # first-boot install/personalize + OLED guidance
+cp "$SRC_DIR/src/core/mb-firstboot-late.sh" /usr/local/bin/mb-firstboot-late.sh  # post-boot part 2: rootfs grow + unique EDID serial
 cp "$SRC_DIR/src/core/mb-secret-reset.sh" /usr/local/bin/mb-secret-reset.sh # per-unit secret reset (pre-baked images)
 chmod +x /usr/local/bin/mb-gadget.sh /usr/local/bin/mb-provision.sh /usr/local/bin/mb-lockdown.sh \
          /usr/local/bin/mb-mdns-alias.sh /usr/local/bin/mb-hdmi-init.sh /usr/local/bin/mb-setup-fan.sh \
-         /usr/local/bin/mb-firstboot.sh /usr/local/bin/mb-secret-reset.sh
+         /usr/local/bin/mb-firstboot.sh /usr/local/bin/mb-firstboot-late.sh /usr/local/bin/mb-secret-reset.sh
 
 # Stage the WebRTC add-on installer so `--with-webrtc` (or a later manual run)
 # can build the Janus H.264 path. It is NOT executed here unless --with-webrtc.
@@ -395,8 +396,25 @@ systemctl enable mb-oled
 # (src/provision/build-image.sh) enables it and removes the done-flag, arming a
 # freshly-flashed card. Marking the flag here keeps a normal install inert.
 cp "$SRC_DIR/src/core/mb-firstboot.service" /etc/systemd/system/
+cp "$SRC_DIR/src/core/mb-firstboot-late.service" /etc/systemd/system/
+
+# BOOT SAFETY: /boot/firmware is NOT essential to a running system, but stock
+# fstab mounts it with fsck pass 2 and no `nofail` - so a partition left slightly
+# inconsistent (e.g. by a resize) blocks the ENTIRE boot: the unit pings but has
+# no SSH/services. With nofail it can never hold boot hostage; worst case it just
+# isn't mounted. (Lesson ported from the PiKVM sibling's imaging work.)
+if grep -qE '^[^#].*[[:space:]]/boot/firmware[[:space:]]' /etc/fstab && \
+   ! grep -qE '^[^#].*[[:space:]]/boot/firmware[[:space:]].*nofail' /etc/fstab; then
+    sed -i -E '/^[^#].*[[:space:]]\/boot\/firmware[[:space:]]/ s/(vfat[[:space:]]+)([^[:space:]]+)/\1\2,nofail,x-systemd.device-timeout=15s/' /etc/fstab
+    ok "/boot/firmware mount made nofail (a bad boot partition can no longer block boot)"
+else
+    ok "/boot/firmware already nofail (or not in fstab)"
+fi
 systemctl daemon-reload
-touch "$CONFIG_DIR/.firstboot-done"
+# Both markers: a DIRECT install is already personalized, so neither first-boot
+# stage may run (they would wipe WiFi / re-randomize the EDID). build-image.sh
+# removes both when arming a distributable image.
+touch "$CONFIG_DIR/.firstboot-done" "$CONFIG_DIR/.firstboot-late-done"
 
 # Note: ustreamer.service is intentionally NOT installed or enabled here.
 # video.py starts and manages ustreamer itself as a subprocess (and stops

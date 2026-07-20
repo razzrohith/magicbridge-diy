@@ -1,0 +1,18 @@
+[Unit]
+Description=MagicBridge first-boot finalize, part 2 (post-boot, non-blocking)
+# Ordered AFTER the system is up on purpose: this does the slow/live-device work
+# (rootfs grow, EDID serial) that must never sit in the boot path where it could
+# blow a timeout and strand the unit on its setup hotspot. Nothing depends on it.
+After=multi-user.target magicbridge.service
+ConditionPathExists=!/etc/magicbridge/.firstboot-late-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mb-firstboot-late.sh
+RemainAfterExit=yes
+# Generous: an online resize2fs of a large card can take a while. Even a timeout
+# here is harmless - the script is marker-guarded and boot has already completed.
+TimeoutStartSec=1800
+
+[Install]
+WantedBy=multi-user.target

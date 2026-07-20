@@ -59,10 +59,29 @@ else
     # USB serial, saved WiFi, Tailscale state).
     oled "MagicBridge" "Personalizing" "this device..."
     echo "[$(date)] pre-installed image - running secret reset"
+    # SAFETY NET: secret-reset deletes saved WiFi (correct when arming an image).
+    # If this ever re-runs on a unit the user ALREADY provisioned, that wipe would
+    # drop it back to the setup hotspot - and if the marker below also failed to
+    # write, it would loop forever (the exact failure the PiKVM sibling hit). A
+    # freshly-armed image has no saved profiles, so this never fires there.
+    if ls /etc/NetworkManager/system-connections/*.nmconnection >/dev/null 2>&1; then
+        echo "[$(date)] WARNING: saved WiFi present on a first-boot run - keeping it (refusing to strand this unit)"
+        export MB_KEEP_WIFI=1
+    fi
     /usr/local/bin/mb-secret-reset.sh || echo "[$(date)] secret-reset had errors (non-fatal)"
 fi
 
-touch "$DONE_FLAG"
+# Write the done-marker and PROVE it landed. A silent failure here (read-only or
+# full rootfs) means first-boot re-runs every boot, re-wiping WiFi -> endless
+# "join hotspot" loop. Verify + sync, and disable the unit either way.
+mkdir -p "$(dirname "$DONE_FLAG")" 2>/dev/null
+date > "$DONE_FLAG" 2>/dev/null
+sync
+if [ -s "$DONE_FLAG" ]; then
+    echo "[$(date)] done-marker written: $DONE_FLAG"
+else
+    echo "[$(date)] ERROR: could not write $DONE_FLAG (read-only/full rootfs?) - disabling the unit anyway so first-boot cannot re-run"
+fi
 systemctl disable mb-firstboot.service 2>/dev/null || true
 echo "[$(date)] first-boot finalize complete"
 
