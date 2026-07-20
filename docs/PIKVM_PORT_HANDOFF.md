@@ -164,11 +164,55 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
     `align_pi.py` (git-reset): trivial diffs = fast path, structural = full.
 23. **OLED "Updating…" during self-update; canonical repo URL pinned; git
     `safe.directory` for the root-run updater** `[PORT-concept / VERIFY]`.
+24. **Four first-boot bugs the DIY end-to-end flash test caught** `[PORT — VERIFY hard]`
+    — every one appeared ONLY on a real flash, never on the build host. Check
+    PiKVM's equivalents before you ship a base image:
+    - **(i) Fresh flash boots on WiFi but SSH + web are DEAD.** The image ships
+      with the SSH host keys + TLS cert STRIPPED (correct — per-unit), so sshd and
+      the web server start EARLY and fail before first-boot regenerates them, and
+      nothing restarts them → the unit looks up (OLED shows its IP) but nothing
+      answers. Fix: after `mb-secret-reset` regenerates the keys/cert, RESTART
+      those early services. (kvmd: `kvmd-nginx` + sshd; regen must be
+      unconditional too — see IMAGING.md status note.)
+    - **(ii) That restart can DEADLOCK first-boot.** Restarting a service ordered
+      *after* the first-boot unit (DIY: `magicbridge`; kvmd: `kvmd`/`kvmd-nginx`
+      if ordered after your first-boot) from *inside* first-boot blocks forever —
+      the restart waits for first-boot to finish, which is waiting on the restart.
+      Symptom: hangs before WiFi provisioning → no hotspot, OLED never progresses.
+      Fix: restart ONLY services NOT ordered after first-boot (sshd + the web
+      server), or use `--no-block`.
+    - **(iii) The captive portal can't bind :80 because the web server holds it.**
+      The portal needs `AP_IP:80`; nginx/kvmd-nginx listens on `0.0.0.0:80`. The
+      portal dies with "Address already in use", provisioning tears the AP down,
+      and the user stares at "join hotspot" for a hotspot that's gone. LATENT: it
+      only appears once the web server actually starts (bug i's fix un-hid it).
+      Fix: stop the web server for the duration of provisioning, restore it after
+      (on the failure path too). Verify `mb-portal.sh` vs kvmd-nginx.
+    - **(iv) A stuck unit is undiagnosable — write a report to the FAT boot
+      partition.** A unit with no WiFi and no working hotspot is unreachable, and
+      its ext4/root logs can't be read on Windows/macOS (`wsl --mount` refuses
+      removable SD readers). DIY now mirrors a plain-text report (who holds :80,
+      is hostapd running, portal exit, log tails) to `/boot/firmware/*.txt`, which
+      any OS reads. PiKVM's boot partition is `PIBOOT` (FAT) — do the same.
+25. **Base = repo HEAD, not a raw golden snapshot** `[PORT-concept]` — DIY's
+    `build-image.sh` deploys the FULL repo HEAD into the image and syncs the baked
+    git clone to `origin/main`, so a fresh unit reports "up to date" (not a
+    day-one N-commit full reinstall) and the web updater is only ever used for
+    FUTURE releases. It also strips `wtmp`/`btmp`/`lastlog` (the golden unit's
+    login/reboot history otherwise ships and cross-links units). Adapt to
+    `align_pi.py`.
 
 ---
 
 ## Session commits (DIY repo `magicbridge-diy`, for reference)
 ```
+3195250 feat(image): base = repo HEAD (full deploy + repo sync) + wtmp strip     (item 25)
+b0e7d98 feat(provision): Windows-readable setup report on the FAT boot partition (item 24-iv)
+7f279fe fix(wifi): captive portal never bound :80 - nginx held it, AP torn down  (item 24-iii)
+507de5c fix(image): service-restart fix deadlocked first-boot - restart ssh+nginx (item 24-ii)
+dc0e5a1 fix(image): fresh flash left SSH+web DOWN - restart services after reset  (item 24-i)
+0e26b57 feat(oled): animated first-boot journey (setup->personalize->wifi->ready) (item 18/19)
+036b3b7 feat(image): zero+shrink+xz pipeline, --verify, boot/first-boot hardening (item 20)
 1865fcf feat(image): ship video.mode=auto so flashed units detect capture hw   (item 20)
 d9fe895 feat(video): auto-detect C790/CSI vs USB capture, default to C790       (item 8b)
 94889c1 feat(image): strip spoofed-MAC identity when arming an image            (item 20)
