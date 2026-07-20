@@ -154,15 +154,33 @@ class VideoManager:
             out = subprocess.run(["arecord", "-l"], capture_output=True, text=True, timeout=3).stdout
         except Exception:
             return None
+        csi_dev = usb_dev = None
         for line in out.splitlines():
             m = re.match(r"card (\d+):.*\[(.*?)\]", line)
-            if m and ("tc358743" in line.lower() or "csi" in line.lower() or "hdmi" in line.lower()):
-                card = m.group(1)
-                log.info("Auto-detected C790 audio capture device: hw:%s (%s)", card, line.strip())
-                return f"hw:{card}"
-        log.info("No C790/TC358743 audio capture card found in `arecord -l` "
-                 "(expected if dtoverlay=tc358743-audio isn't loaded yet, or "
-                 "the board isn't wired for audio)")
+            if not m:
+                continue
+            card, low = m.group(1), line.lower()
+            # C790/TC358743 HDMI-audio capture - NOT the Pi's own bcm2835 HDMI.
+            is_csi = "tc358743" in low or "csi" in low or ("hdmi" in low and "bcm2835" not in low)
+            # A USB-audio class capture adapter (line-in from the target).
+            is_usb = ("usb" in low or "uac" in low) and "bcm2835" not in low
+            if is_csi and csi_dev is None:
+                csi_dev = (card, line.strip())
+            elif is_usb and usb_dev is None:
+                # A cheap USB audio adapter (line-in from the target's audio out)
+                # is the RELIABLE audio path: the C790's own I2S output is a
+                # parked upstream driver dead-end (arecord EIOs), so a USB-audio
+                # class capture device is what actually delivers sound to WebRTC.
+                usb_dev = (card, line.strip())
+        # Prefer the C790 if it ever works; otherwise the USB-audio adapter.
+        if csi_dev:
+            log.info("Auto-detected C790/TC358743 audio capture: hw:%s (%s)", csi_dev[0], csi_dev[1])
+            return f"hw:{csi_dev[0]}"
+        if usb_dev:
+            log.info("Auto-detected USB audio capture: hw:%s (%s)", usb_dev[0], usb_dev[1])
+            return f"hw:{usb_dev[0]}"
+        log.info("No audio capture card found in `arecord -l` (no C790 I2S and no "
+                 "USB-audio adapter). Video works fine without it.")
         return None
 
     def _sync_janus_audio_cfg(self):
