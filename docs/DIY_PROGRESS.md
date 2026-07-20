@@ -186,6 +186,32 @@ only and never programs the chip's I2S output registers. No published fix
 register writes — would risk the working video path. Revisit only if upstream
 fixes it. Audio is a nice-to-have for a KVM; `video.py` runs fine without it.
 
+## SHIPPABLE BASE IMAGE — complete + hardware-proven (2026-07-20)
+`magicbridge-base.img.xz` (~911 MB) is the canonical fresh-flash base. Flash it
+to any blank card before shipping; first boot personalizes into a UNIQUE unit
+(MAC/hostname/SSH-keys/machine-id/EDID-serial), the animated OLED guides WiFi
+setup, and it comes up fully stealthed. `build-image.sh` now deploys the FULL
+repo HEAD into the image and syncs the baked git clone to origin HEAD, so a fresh
+unit reports "up to date" (no day-one 10-commit reinstall); it also strips
+wtmp/btmp/lastlog so the golden unit's history never ships. Model: BASE image for
+new hardware, web-page **System > Update** (incremental or full, auto-detected,
+GitHub-backed) for units already in the field - both verified on real hardware.
+
+**Bugs the end-to-end flash test caught on real hardware (all fixed - none would
+ever show on the build host):**
+- Fresh flash came up on WiFi but SSH/80/443 were dead: sshd/nginx start before
+  first-boot regenerates their stripped keys/cert -> now restarted after
+  secret-reset (ssh+nginx only).
+- That restart first DEADLOCKED first-boot (restarting magicbridge, which is
+  ordered *after* mb-firstboot) -> hung before WiFi provisioning -> fixed to
+  restart only ssh+nginx.
+- Hotspot prompt but no visible AP: nginx holds :80, the captive portal needs
+  it, provisioning tore the AP down -> now stops nginx during provisioning,
+  restores it after; writes a Windows-readable report to the FAT boot partition
+  for any future unreachable unit.
+Confidence lesson, reinforced repeatedly: first-boot/imaging bugs only surface on
+a real flash - verify on hardware, never claim done from the build host alone.
+
 ## Distributable image: zero + shrink + xz, and boot/first-boot hardening (2026-07-19)
 Ported the IDEA (not the code) of the PiKVM sibling's imaging work. **DIY's stack
 is the opposite in the way that matters:** 2 partitions, rw rootfs, and the
