@@ -634,6 +634,13 @@ body:not(.fs) .fs-hud{display:none!important}
               <option value="15">15 fps</option>
             </select>
           </div>
+          <div class="srow" style="margin-top:6px"><span class="sk">Bandwidth</span>
+            <span style="display:flex;gap:4px">
+              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('640x360',15)" title="640x360 @ 15fps - for slow / remote links">Low</button>
+              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('1280x720',25)" title="720p @ 25fps - balanced default">Bal</button>
+              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('1920x1080',30)" title="1080p @ 30fps - LAN / fast link">Sharp</button>
+            </span>
+          </div>
           <button class="sbtn pri" style="margin-top:6px" onclick="applyVideo()">▶ Apply</button>
           <div style="font-size:11px;opacity:.6;margin-top:6px">WebRTC by default, falls back to MJPEG if unavailable.</div>
         </div>
@@ -1756,6 +1763,14 @@ async function sendPaste(){
 document.getElementById('pinput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendPaste();}});
 
 // Video
+// One-click bandwidth presets: set the res/fps selects and apply. The measured
+// throughput shows live in the "s-vfps" pill, so you can pick the preset that
+// actually holds up on your link (great for remote-over-Tailscale).
+function setBandwidth(res,fps){
+  const r=document.getElementById('sel-res'), f=document.getElementById('sel-fps');
+  if(r) r.value=res; if(f) f.value=String(fps);
+  applyVideo();
+}
 async function applyVideo(){
   const res=document.getElementById('sel-res').value;
   const fps=parseInt(document.getElementById('sel-fps').value);
