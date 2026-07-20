@@ -145,8 +145,18 @@ DNSCONF
 # stop system dnsmasq.service: it's enabled on this image and holds the wildcard
 #   :53, which even bind-dynamic can't share -> our AP dnsmasq would fail to
 #   bind. Stopped only for the duration of provisioning; restored in teardown.
+# stop nginx: it binds 0.0.0.0:80 as default_server, so the captive portal
+#   (which binds AP_IP:80) fails with "Address already in use" -> the portal
+#   exits immediately -> the teardown below removes the AP -> the user is left
+#   staring at an OLED telling them to join a hotspot that no longer exists.
+#   This was latent: on a fresh flash nginx used to be DEAD (its TLS cert is
+#   stripped from the image), so :80 happened to be free and provisioning
+#   worked by accident. Restored in teardown.
 rfkill unblock wifi 2>/dev/null || true
 systemctl stop dnsmasq 2>/dev/null || true
+NGINX_WAS_ACTIVE=0
+systemctl is-active --quiet nginx && NGINX_WAS_ACTIVE=1
+[ "$NGINX_WAS_ACTIVE" = "1" ] && { systemctl stop nginx 2>/dev/null || true; }
 
 pkill -f "hostapd /tmp/mb-hostapd" 2>/dev/null || true
 pkill -f "dnsmasq.*mb-dnsmasq"     2>/dev/null || true
@@ -183,6 +193,15 @@ ip addr flush dev "$AP_IFACE" 2>/dev/null || true
 # Restore the system dnsmasq we stopped above so the box's normal DNS/DHCP
 # state matches what it was before provisioning (no-op if it wasn't enabled).
 systemctl start dnsmasq 2>/dev/null || true
+# Restore nginx (stopped so the portal could own :80). Do this even on the
+# failure path - the web UI must come back regardless of how provisioning ended.
+[ "${NGINX_WAS_ACTIVE:-0}" = "1" ] && { systemctl start nginx 2>/dev/null || true; }
+# If the portal never got a WiFi submission, don't leave the OLED telling the
+# user to join a hotspot we just tore down - say what actually happened.
+if [[ "${PORTAL_EXIT:-1}" -ne 0 && ! -f "$WIFI_FILE" ]]; then
+    echo "[$(date)] portal exited $PORTAL_EXIT with no WiFi submitted - flagging on OLED"
+    oled "Setup problem" "portal failed" "see provision.log"
+fi
 sleep 1
 
 # Connect saved WiFi via NetworkManager
