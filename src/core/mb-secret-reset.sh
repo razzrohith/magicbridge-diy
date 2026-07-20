@@ -94,17 +94,23 @@ rm -f /etc/NetworkManager/conf.d/00-mb-macspoof.conf 2>/dev/null || true
 rm -f /etc/magicbridge/.provision-wifi /tmp/mb-ts-key 2>/dev/null || true
 rm -f /var/log/magicbridge-ram/* 2>/dev/null || true
 
-# 9. Restart the services whose per-unit secrets we just regenerated. CRITICAL
-#    on a FRESH FLASH: the image ships with NO ssh host keys and NO TLS cert
-#    (both stripped when arming), so sshd + nginx FAIL to start early in boot -
-#    BEFORE this script recreated them - and nothing else restarts them. The
-#    unit then boots "up" (OLED shows its IP) but with NO SSH and NO web UI.
-#    Regenerating the secrets without restarting the services was the bug.
-info "restarting services with the freshly generated keys/cert/config"
+# 9. Restart ONLY the EARLY services whose per-unit secrets we just regenerated.
+#    On a FRESH FLASH the image ships with NO ssh host keys and NO TLS cert (both
+#    stripped when arming), so sshd + nginx - which start EARLY, before this
+#    first-boot script - fail and stay down: the unit boots "up" (OLED shows its
+#    IP) but with no SSH and no web UI. Restarting them here fixes that; neither
+#    is ordered after mb-firstboot, so the restart returns immediately.
+#
+#    Do NOT restart magicbridge / stealth-dashboard here. They are ordered AFTER
+#    mb-firstboot (this very script runs inside mb-firstboot, which declares
+#    Before=magicbridge.service), so `systemctl restart` on them BLOCKS waiting
+#    for mb-firstboot to finish - which is waiting on this line - a first-boot
+#    DEADLOCK that hangs before WiFi provisioning (no hotspot, no OLED progress).
+#    They have not started yet on a fresh flash, so they come up cleanly on their
+#    own once mb-firstboot exits - no restart is needed or wanted.
+info "restarting the early services (ssh, nginx) with the regenerated keys/cert"
 systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
-for s in nginx magicbridge stealth-dashboard; do
-    systemctl restart "$s" 2>/dev/null || true
-done
+systemctl restart nginx 2>/dev/null || true
 
 info "done"
 exit 0
