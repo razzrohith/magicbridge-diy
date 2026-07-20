@@ -195,13 +195,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 if [[ -d "$REPO_DIR/src/core" ]]; then
   info "Refreshing first-boot logic in the image from $REPO_DIR ..."
+  # NOTE: the repo may live on a Windows drive, so strip CRLF on the way in - a
+  # shebang ending in \r makes the Pi fail these scripts at first boot with an
+  # obscure "bad interpreter" and would strand the unit.
   for f in mb-firstboot.sh mb-firstboot-late.sh mb-secret-reset.sh mb-hdmi-init.sh; do
     [[ -f "$REPO_DIR/src/core/$f" ]] || continue
-    install -m 0755 "$REPO_DIR/src/core/$f" "$MNT/usr/local/bin/$f" && ok "  refreshed $f"
+    install -m 0755 "$REPO_DIR/src/core/$f" "$MNT/usr/local/bin/$f"
+    sed -i 's/\r$//' "$MNT/usr/local/bin/$f" && ok "  refreshed $f"
   done
+  # mb-provision.sh (WiFi hotspot flow) also lives in /usr/local/bin.
+  if [[ -f "$REPO_DIR/src/provision/mb-provision.sh" ]]; then
+    install -m 0755 "$REPO_DIR/src/provision/mb-provision.sh" "$MNT/usr/local/bin/mb-provision.sh"
+    sed -i 's/\r$//' "$MNT/usr/local/bin/mb-provision.sh" && ok "  refreshed mb-provision.sh"
+  fi
+  # oled.py (first-boot journey animations) lives in /opt/magicbridge/core.
+  if [[ -f "$REPO_DIR/src/core/oled.py" && -d "$MNT/opt/magicbridge/core" ]]; then
+    install -m 0644 "$REPO_DIR/src/core/oled.py" "$MNT/opt/magicbridge/core/oled.py"
+    sed -i 's/\r$//' "$MNT/opt/magicbridge/core/oled.py" && ok "  refreshed oled.py"
+  fi
   for s in mb-firstboot.service mb-firstboot-late.service; do
     [[ -f "$REPO_DIR/src/core/$s" ]] || continue
-    install -m 0644 "$REPO_DIR/src/core/$s" "$MNT/etc/systemd/system/$s" && ok "  installed $s"
+    install -m 0644 "$REPO_DIR/src/core/$s" "$MNT/etc/systemd/system/$s"
+    sed -i 's/\r$//' "$MNT/etc/systemd/system/$s" && ok "  installed $s"
   done
 else
   warn "repo not found next to this script - cannot refresh first-boot logic"

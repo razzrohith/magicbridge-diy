@@ -101,6 +101,87 @@ def _draw_update_anim(draw, frame, font, label="Updating"):
     pos = cyc if cyc <= travel else (2 * travel - cyc)       # bounce 0..travel..0
     draw.rectangle((1 + pos, y0 + 2, 1 + pos + seg, H - 3), fill="white")
 
+# ---------------------------------------------------------------------------
+# First-boot journey animations. Each phase writes a marker as line 1 of the
+# status file; the script's remaining lines are the human text. All animation
+# lives HERE (rendered by this separate mb-oled process at ~8fps) so the
+# first-boot shell scripts only ever write a tiny file - they can never block or
+# be slowed by drawing. Markers:
+#   @SETUP        first-time setup / installing  -> filling progress bar
+#   @PERSONALIZE  generating this unit's identity -> scrambling hex + sweep
+#   @WIFI         join the setup hotspot          -> broadcasting wifi icon
+#   @CONNECTING   joining the user's wifi          -> rising signal bars
+#   @READY        connected/finished              -> blinking check
+# ---------------------------------------------------------------------------
+_ANIM_MARKERS = ("@SETUP", "@INSTALL", "@PERSONALIZE", "@WIFI", "@CONNECTING", "@READY")
+
+def _wifi_icon(draw, frame, cx, cy):
+    """Broadcasting Wi-Fi fan: a source dot with arcs radiating out, revealed
+    one at a time per frame so it 'pulses' outward like a beacon."""
+    draw.ellipse((cx - 1, cy - 1, cx + 1, cy + 1), fill="white")
+    show = frame % 4
+    for i, r in enumerate((5, 9, 13)):
+        if i < show:
+            draw.arc((cx - r, cy - r, cx + r, cy + r), 210, 330, fill="white")
+
+def _signal_bars(draw, frame, x0, yb):
+    """Rising signal bars 1..4 cycling - reads as 'connecting'."""
+    n = (frame % 4) + 1
+    for i in range(4):
+        h = 3 + i * 4
+        bx = x0 + i * 6
+        draw.rectangle((bx, yb - h, bx + 4, yb), outline="white",
+                       fill=("white" if i < n else None))
+
+def _check_icon(draw, frame, cx, cy):
+    """A check in a circle that blinks - 'done / ready'."""
+    draw.ellipse((cx - 9, cy - 9, cx + 9, cy + 9), outline="white")
+    if (frame // 3) % 2 == 0:
+        draw.line((cx - 5, cy, cx - 1, cy + 5), fill="white", width=2)
+        draw.line((cx - 1, cy + 5, cx + 6, cy - 5), fill="white", width=2)
+
+def _prog_bar(draw, frame, y0, style="fill"):
+    W = OLED_WIDTH
+    draw.rectangle((0, y0, W - 1, y0 + 5), outline="white")
+    if style == "fill":
+        w = (frame * 4) % (W - 3)
+        draw.rectangle((1, y0 + 2, 1 + w, y0 + 3), fill="white")
+    else:  # bounce
+        seg = 18; travel = max(1, (W - 2) - seg); cyc = (frame * 3) % (2 * travel)
+        pos = cyc if cyc <= travel else (2 * travel - cyc)
+        draw.rectangle((1 + pos, y0 + 2, 1 + pos + seg, y0 + 3), fill="white")
+
+def _scramble(frame, n=6):
+    """Frame-seeded pseudo-random hex - looks like a MAC/key being generated."""
+    h = "0123456789abcdef"
+    return ":".join(h[(frame * 7 + i * 13) % 16] + h[(frame * 5 + i * 11 + 3) % 16]
+                    for i in range(n))
+
+def _draw_phase_anim(draw, frame, font, mk, lines):
+    """Render one first-boot phase: script's text lines + the phase's animation."""
+    W, H = OLED_WIDTH, OLED_HEIGHT
+    info = [str(l) for l in lines[1:4] if str(l).strip()]
+    if mk == "@WIFI":
+        for i, t in enumerate(info[:2]):
+            draw.text((0, i * 11), t[:17], font=font, fill="white")
+        _wifi_icon(draw, frame, W - 13, H - 14)
+    elif mk == "@CONNECTING":
+        for i, t in enumerate(info[:2]):
+            draw.text((0, i * 11), t[:17], font=font, fill="white")
+        _signal_bars(draw, frame, W - 27, H - 3)
+    elif mk == "@READY":
+        for i, t in enumerate(info[:2]):
+            draw.text((0, i * 11), t[:17], font=font, fill="white")
+        _check_icon(draw, frame, W - 12, 11)
+    elif mk == "@PERSONALIZE":
+        draw.text((0, 0), (info[0] if info else "Personalizing")[:21], font=font, fill="white")
+        draw.text((0, 11), _scramble(frame)[:21], font=font, fill="white")
+        _prog_bar(draw, frame, H - 6, "bounce")
+    else:  # @SETUP / @INSTALL / anything else
+        for i, t in enumerate(info[:2]):
+            draw.text((0, i * 11), t[:21], font=font, fill="white")
+        _prog_bar(draw, frame, H - 6, "fill")
+
 # Mirrors magicbridge.py's OLED_DEFAULTS - kept in sync manually since these
 # are two separate processes/files. Reproduces the exact original static
 # layout: "MagicBridge" / IP / "{temp}C up{uptime} {OK/DOWN}/{LIVE/OFF}".
@@ -328,6 +409,7 @@ def main():
         override = _read_status_override()
         if override is not None:
             marker = override[0].strip() if override else ""
+            mk = marker.split()[0] if marker else ""
             try:
                 from luma.core.render import canvas
                 if marker.startswith("@UPDATING"):
@@ -335,6 +417,12 @@ def main():
                     _anim_frame[0] += 1
                     with canvas(device) as draw:
                         _draw_update_anim(draw, _anim_frame[0], font_normal, label)
+                    time.sleep(0.12)      # fast refresh = smooth animation
+                    continue
+                if mk in _ANIM_MARKERS:
+                    _anim_frame[0] += 1
+                    with canvas(device) as draw:
+                        _draw_phase_anim(draw, _anim_frame[0], font_normal, mk, override)
                     time.sleep(0.12)      # fast refresh = smooth animation
                     continue
                 many = len(override) > 3

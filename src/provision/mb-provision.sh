@@ -162,7 +162,7 @@ iptables -t nat -A PREROUTING -i "$AP_IFACE" -p tcp --dport 443 \
          -j DNAT --to-destination "${AP_IP}:${PORTAL_PORT}" 2>/dev/null || true
 
 echo "[$(date)] AP up, SSID '$AP_SSID', IP $AP_IP, portal :$PORTAL_PORT"
-oled "WiFi setup" "Join hotspot:" "$AP_SSID" "then open portal"
+oled "@WIFI" "Join WiFi hotspot:" "$AP_SSID"
 
 # Run captive portal (blocks until user submits)
 # Temporarily disable errexit: if the portal script exits non-zero (crash, kill,
@@ -190,6 +190,7 @@ if [[ -f "$WIFI_FILE" ]]; then
     SSID=$(sed -n '1p' "$WIFI_FILE")
     PASS=$(sed -n '2p' "$WIFI_FILE")
     echo "[$(date)] Connecting to '$SSID'…"
+    oled "@CONNECTING" "Connecting to WiFi:" "$SSID"
     nmcli connection delete "$SSID" 2>/dev/null || true
     if [[ -z "$PASS" ]]; then
         nmcli connection add type wifi con-name "$SSID" ssid "$SSID" \
@@ -201,6 +202,15 @@ if [[ -f "$WIFI_FILE" ]]; then
     fi
     nmcli connection up "$SSID" || true
     rm -f "$WIFI_FILE"
+    # Celebrate + show the IP the user needs, then hand back to the normal
+    # status display. The @READY animation (blinking check) confirms success.
+    for _ in 1 2 3; do
+        MB_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+        [[ -n "$MB_IP" ]] && break
+        sleep 2
+    done
+    oled "@READY" "Connected!" "${MB_IP:-getting IP...}"
+    sleep 6
     clear_oled                      # connected → back to normal status
 fi
 

@@ -32,13 +32,13 @@ if [[ -f "$DONE_FLAG" ]]; then
     exit 0
 fi
 
-oled "MagicBridge" "First setup" "Please wait..."
+oled "@SETUP" "MagicBridge" "First-time setup"
 
 if [[ ! -f /opt/magicbridge/core/magicbridge.py ]]; then
     # NET-INSTALL image: MagicBridge isn't installed yet. Clone + install.
     # Everything (TLS cert, auth, USB serial) is generated fresh here, so this
     # path needs no secret reset - each unit is unique by construction.
-    oled "MagicBridge" "Installing..." "(a few minutes)"
+    oled "@SETUP" "Installing MagicBridge" "(a few minutes)"
     echo "[$(date)] not installed - running installer from $REPO_URL"
     if [[ ! -d "$REPO_DIR/.git" ]]; then
         git clone --depth=1 --branch "$BRANCH" "$REPO_URL" "$REPO_DIR" || {
@@ -57,7 +57,7 @@ else
     # ONLY thing to do is regenerate the per-unit secrets that must never be
     # shared across flashed units (SSH host keys, TLS cert, machine-id, auth,
     # USB serial, saved WiFi, Tailscale state).
-    oled "MagicBridge" "Personalizing" "this device..."
+    oled "@PERSONALIZE" "Creating identity" "keys / MAC / name"
     echo "[$(date)] pre-installed image - running secret reset"
     # SAFETY NET: secret-reset deletes saved WiFi (correct when arming an image).
     # If this ever re-runs on a unit the user ALREADY provisioned, that wipe would
@@ -93,7 +93,7 @@ if nmcli -t -f STATE general 2>/dev/null | grep -q '^connected$'; then
     clear_oled
     echo "[$(date)] network present - normal operation"
 else
-    oled "WiFi setup:" "Join hotspot" "MagicBridge-Setup" "(open network)"
+    oled "@WIFI" "Join WiFi hotspot:" "MagicBridge-Setup"
     echo "[$(date)] no network - showing hotspot prompt"
 fi
 exit 0
