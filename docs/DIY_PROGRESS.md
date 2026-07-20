@@ -186,6 +186,40 @@ only and never programs the chip's I2S output registers. No published fix
 register writes — would risk the working video path. Revisit only if upstream
 fixes it. Audio is a nice-to-have for a KVM; `video.py` runs fine without it.
 
+## Distributable image: zero + shrink + xz, and boot/first-boot hardening (2026-07-19)
+Ported the IDEA (not the code) of the PiKVM sibling's imaging work. **DIY's stack
+is the opposite in the way that matters:** 2 partitions, rw rootfs, and the
+**last partition IS the rootfs** — so shrinking resizes root itself and the
+first-boot re-grow is boot-critical. (The sibling shrinks a trailing media
+partition on a read-only Arch root, and correctly rejects pishrink; pishrink is
+the *right* tool here precisely because DIY is Pi OS and root is last.)
+
+`build-image.sh` is now a four-stage pipeline — `arm` → `--verify` → `--shrink`
+→ `--compress`. It identifies partitions **by content, never by index**,
+**hard-fails on LUKS** (arming an encrypted unit silently stripped nothing and
+shipped a shared key), **zeroes free space on every partition** before shrinking
+(deleting a file doesn't erase its blocks — DIY's de-LUKS left the 64 MB
+container and a plaintext config backup recoverable), and **self-heals the
+first-boot logic from the repo** so a golden unit predating the fixes can't ship
+stale behaviour. `--verify` runs 19 assertions and exits 1 on any failure; it
+genuinely discriminates (it failed the older armed image on exactly the 2 new
+hardening items).
+
+Hardened against every failure the sibling hit on real hardware: `/boot/firmware`
+is now `nofail` (an inconsistent non-essential mount blocked the ENTIRE boot);
+the first-boot done-marker is written, synced and **verified**, and
+`mb-secret-reset` honours `MB_KEEP_WIFI` so a stray re-run can never wipe a
+provisioned unit's WiFi (the endless "join hotspot" loop); and slow/live-device
+work moved to a new **`mb-firstboot-late.sh`** — post-boot, marker-guarded,
+non-blocking — which does an **online** rootfs grow (never unmounts root) and
+gives each unit a **unique EDID serial** (every DIY unit previously shipped an
+identical Dell EDID, cross-linking units). Every late-stage failure path exits 0.
+`mb-rescue.ps1` diagnoses/fixes a unit stuck on its hotspot **offline**, since
+joining that hotspot kills the laptop's internet.
+
+**Still pending: the end-to-end flash test** (blank card → boot → WiFi → prove
+uniqueness vs the golden unit and that root grew to fill the card).
+
 ## Earlier DIY history (V1, condensed)
 Hand-built KVM on bare Pi OS: USB gadget HID (`hid.py`), MS2109 MJPEG capture,
 Python/aiohttp web server. Stealth suite (USB/MAC spoof, typing jitter, HID

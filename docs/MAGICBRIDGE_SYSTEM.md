@@ -215,12 +215,20 @@ blow-by-blow. Full auto-memory history lives in the Cowork memory store.
 
 ---
 
-## 6. Current status (2026-07-18)
+## 6. Current status (2026-07-19)
 
-**DIY:** Video capture WORKS at 1080p50 (auto-configures on boot, portable across
-targets). HID gadget works. OLED works. All services healthy. **Open:** partial
-frames (retest on wall power), I2S audio (upstream bug — parked), Janus/WebRTC
-integration (the low-latency payoff — next big task).
+**DIY:** Video WORKS at 1080p50 with **Janus/WebRTC H.264** (the low-latency
+payoff — done). Capture **auto-detects C790/CSI vs a USB dongle** and defaults to
+the C790; both verified on real hardware with live frames. HID, OLED, all
+services healthy. The **full anonymity model is default-on and deployed**:
+realistic per-unit MAC (persisted at the NetworkManager layer), `DESKTOP-XXXXXXX`
+hostname, Logitech USB identity, Dell EDID — verified from the target laptop's
+side as byte-identical descriptors. A **distributable image pipeline** exists
+(arm → `--verify` → zero+shrink → `xz`), with boot/first-boot hardening ported
+from the PiKVM sibling (nofail mounts, verified done-marker, non-blocking
+post-boot stage doing an online rootfs grow + unique per-unit EDID serial).
+**Open:** end-to-end flash test of the shrunk image; partial frames (retest on
+wall power); I2S audio (upstream bug — parked).
 
 **PiKVM:** Rebrand code committed; **deploy to Pi 209 pending device online**.
 Feature port largely done (UI, stealth, WiFi, WebRTC); see its trackers.
