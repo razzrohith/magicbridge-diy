@@ -193,33 +193,56 @@ attach; mount_root
 # has the verified-marker + keep-WiFi safeguards regardless of the golden unit.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
+# Deploy ALL runtime files from THIS repo into the image, so the shipped base
+# reflects the repo's HEAD regardless of how old the golden snapshot is - not
+# just the first-boot scripts. CRLF is stripped on the way in (the repo may live
+# on a Windows drive; a shebang ending in \r fails at boot with "bad interpreter"
+# and would strand the unit).
 if [[ -d "$REPO_DIR/src/core" ]]; then
-  info "Refreshing first-boot logic in the image from $REPO_DIR ..."
-  # NOTE: the repo may live on a Windows drive, so strip CRLF on the way in - a
-  # shebang ending in \r makes the Pi fail these scripts at first boot with an
-  # obscure "bad interpreter" and would strand the unit.
-  for f in mb-firstboot.sh mb-firstboot-late.sh mb-secret-reset.sh mb-hdmi-init.sh; do
-    [[ -f "$REPO_DIR/src/core/$f" ]] || continue
-    install -m 0755 "$REPO_DIR/src/core/$f" "$MNT/usr/local/bin/$f"
-    sed -i 's/\r$//' "$MNT/usr/local/bin/$f" && ok "  refreshed $f"
+  info "Deploying runtime from $REPO_DIR into the image (base = repo HEAD)..."
+  _put() {  # <src-rel> <dest-abs> [mode]
+    local s="$REPO_DIR/$1" d="$2" m="${3:-0644}"
+    [[ -f "$s" ]] || return 0
+    mkdir -p "$(dirname "$d")" 2>/dev/null
+    install -m "$m" "$s" "$d" 2>/dev/null && sed -i 's/\r$//' "$d" 2>/dev/null && ok "  deployed $1"
+  }
+  # /usr/local/bin scripts (executable) - exist on any Pi OS image.
+  for f in mb-gadget mb-hdmi-init mb-mdns-alias mb-lockdown mb-setup-fan \
+           mb-firstboot mb-firstboot-late mb-secret-reset; do
+    _put "src/core/$f.sh" "$MNT/usr/local/bin/$f.sh" 0755
   done
-  # mb-provision.sh (WiFi hotspot flow) also lives in /usr/local/bin.
-  if [[ -f "$REPO_DIR/src/provision/mb-provision.sh" ]]; then
-    install -m 0755 "$REPO_DIR/src/provision/mb-provision.sh" "$MNT/usr/local/bin/mb-provision.sh"
-    sed -i 's/\r$//' "$MNT/usr/local/bin/mb-provision.sh" && ok "  refreshed mb-provision.sh"
+  _put src/provision/mb-provision.sh "$MNT/usr/local/bin/mb-provision.sh" 0755
+  # systemd units for the two first-boot stages.
+  _put src/core/mb-firstboot.service      "$MNT/etc/systemd/system/mb-firstboot.service"
+  _put src/core/mb-firstboot-late.service "$MNT/etc/systemd/system/mb-firstboot-late.service"
+  # nginx site (only if nginx is present in the image).
+  [[ -d "$MNT/etc/nginx/sites-available" ]] && _put src/nginx/magicbridge.conf "$MNT/etc/nginx/sites-available/magicbridge"
+  # /opt/magicbridge app code - only for an already-installed (clone) image.
+  if [[ -d "$MNT/opt/magicbridge" ]]; then
+    _put src/core/magicbridge.py            "$MNT/opt/magicbridge/core/magicbridge.py"
+    _put src/core/hid.py                    "$MNT/opt/magicbridge/core/hid.py"
+    _put src/core/video.py                  "$MNT/opt/magicbridge/core/video.py"
+    _put src/core/oled.py                   "$MNT/opt/magicbridge/core/oled.py"
+    _put src/dashboard/stealth-dashboard.py "$MNT/opt/magicbridge/dashboard/stealth-dashboard.py"
+    _put src/dashboard/mb_edidconf.py       "$MNT/opt/magicbridge/dashboard/mb_edidconf.py"
+    _put src/web/index.html                 "$MNT/opt/magicbridge/web/index.html"
+    _put src/provision/mb-setup-ui.py       "$MNT/opt/magicbridge/provision/mb-setup-ui.py"
+    _put src/edid/mb-edid-1080p50.hex       "$MNT/opt/magicbridge/edid/mb-edid-1080p50.hex"
   fi
-  # oled.py (first-boot journey animations) lives in /opt/magicbridge/core.
-  if [[ -f "$REPO_DIR/src/core/oled.py" && -d "$MNT/opt/magicbridge/core" ]]; then
-    install -m 0644 "$REPO_DIR/src/core/oled.py" "$MNT/opt/magicbridge/core/oled.py"
-    sed -i 's/\r$//' "$MNT/opt/magicbridge/core/oled.py" && ok "  refreshed oled.py"
+  # Point the image's git clone at origin HEAD too, so a FRESH unit shows
+  # "up to date" (not a 10-commit full-reinstall) and future web updates are
+  # clean incrementals. Best-effort: needs network; the on-device updater
+  # self-heals the origin on first boot if this is skipped.
+  if [[ -d "$MNT/opt/magicbridge-repo/.git" ]]; then
+    if git -c safe.directory='*' -C "$MNT/opt/magicbridge-repo" fetch origin main -q 2>/dev/null \
+       && git -c safe.directory='*' -C "$MNT/opt/magicbridge-repo" reset --hard origin/main -q 2>/dev/null; then
+      ok "  repo clone synced to $(git -c safe.directory='*' -C "$MNT/opt/magicbridge-repo" rev-parse --short HEAD 2>/dev/null)"
+    else
+      warn "  couldn't sync the image's repo clone (no network?) - first web-update will just show 'update available'"
+    fi
   fi
-  for s in mb-firstboot.service mb-firstboot-late.service; do
-    [[ -f "$REPO_DIR/src/core/$s" ]] || continue
-    install -m 0644 "$REPO_DIR/src/core/$s" "$MNT/etc/systemd/system/$s"
-    sed -i 's/\r$//' "$MNT/etc/systemd/system/$s" && ok "  installed $s"
-  done
 else
-  warn "repo not found next to this script - cannot refresh first-boot logic"
+  warn "repo not found next to this script - cannot deploy runtime"
 fi
 
 info "Arming first-boot personalization..."
@@ -243,8 +266,16 @@ rm -f "$MNT"/etc/ssh/ssh_host_* \
 : > "$MNT/etc/machine-id" 2>/dev/null || true
 rm -rf "$MNT/etc/magicbridge/ssl" "$MNT/etc/magicbridge.orig_backup" 2>/dev/null || true
 rm -f "$MNT"/var/log/magicbridge-ram/* "$MNT"/var/log/magicbridge-firstboot.log \
-      "$MNT"/var/log/magicbridge-firstboot-late.log 2>/dev/null || true
+      "$MNT"/var/log/magicbridge-firstboot-late.log "$MNT"/var/log/magicbridge-provision.log 2>/dev/null || true
 rm -f "$MNT"/etc/NetworkManager/conf.d/00-mb-macspoof.conf 2>/dev/null || true
+# Login/reboot history: the golden unit's wtmp/btmp/lastlog leak its usage
+# pattern and cross-link every flashed unit. Truncate them (keep the files so
+# logging still works), and drop any stale boot-partition setup report.
+: > "$MNT/var/log/wtmp"    2>/dev/null || true
+: > "$MNT/var/log/btmp"    2>/dev/null || true
+: > "$MNT/var/log/lastlog" 2>/dev/null || true
+rm -f "$MNT"/boot/firmware/magicbridge-setup-report.txt "$MNT"/boot/magicbridge-setup-report.txt 2>/dev/null || true
+find "$MNT/root" "$MNT/home" -maxdepth 2 -name ".bash_history" -delete 2>/dev/null || true
 if [[ -f "$MNT/etc/magicbridge/config.json" ]] && command -v python3 >/dev/null; then
   python3 - "$MNT/etc/magicbridge/config.json" <<'PY' 2>/dev/null || true
 import json,sys
