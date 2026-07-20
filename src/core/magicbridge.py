@@ -1079,11 +1079,27 @@ async def api_status(request: web.Request) -> web.Response:
         _edid = json.loads(Path(CONFIG_PATH).read_text()).get("edid", {})
     except Exception:
         _edid = {}
-    display = {
-        "name":   _edid.get("product_name") or "DELL P2419H",
-        "mfr":    _edid.get("mfr") or "DEL",
-        "serial": _edid.get("serial") or "",
-    }
+    _dtype = (stream_status or {}).get("device_type")
+    if _dtype == "usb":
+        # A USB HDMI dongle presents its OWN fixed EDID to the target, UPSTREAM
+        # of the Pi - we can neither spoof it nor read it back from here. Report
+        # that honestly rather than falsely claiming the Dell identity, which
+        # only the C790/CSI path (writable TC358743 EDID) can actually enforce.
+        display = {
+            "name":    "USB capture dongle",
+            "mfr":     "",
+            "serial":  "",
+            "spoofed": False,
+            "note":    "USB dongle shows its own fixed EDID to the target - not spoofable. Use the C790/CSI board for the Dell monitor identity.",
+        }
+    else:
+        display = {
+            "name":    _edid.get("product_name") or "DELL P2419H",
+            "mfr":     _edid.get("mfr") or "DEL",
+            "serial":  _edid.get("serial") or "",
+            "spoofed": True,
+            "note":    "",
+        }
 
     return web.json_response({
         "version":    VERSION,

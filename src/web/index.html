@@ -94,6 +94,7 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar{display:none!important}
 #cdot.ok{background:var(--green);box-shadow:0 0 6px #10b98166}
 #cdot.err{background:var(--red)}
 #cdot.info{background:var(--accent);animation:pulse 1.4s infinite}
+#cdot.warn{background:var(--yellow);animation:pulse 1.4s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 #sp{flex:1}
 .stat-chip{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);flex-shrink:0;cursor:default}
@@ -607,6 +608,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="srow"><span class="sk">Uptime</span><span class="sv" id="s-uptime">-</span></div>
           <div class="srow" id="s-audio-row" style="display:none"><span class="sk">Audio</span><span class="sv" id="s-audio">-</span></div>
           <button class="sbtn" onclick="takeScreenshot()" style="margin-top:6px">📷 Screenshot</button>
+          <button class="sbtn" id="rec-btn" onclick="toggleRecord()" style="margin-top:4px">🔴 Record clip</button>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Video Quality</div>
@@ -1079,6 +1081,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="srow"><span class="sk">Monitor</span><span class="sv ac" id="disp-name">-</span></div>
           <div class="srow"><span class="sk">Maker</span><span class="sv" id="disp-mfr">-</span></div>
           <div class="srow"><span class="sk">Serial</span><span class="sv" id="disp-ser" style="font-family:monospace;font-size:11px">-</span></div>
+          <div id="disp-note" class="snote" style="display:none;margin-top:6px;color:var(--yellow)"></div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>USB Device
@@ -1251,20 +1254,30 @@ let _wsAuthFails=0;
 let ws=null, captured=false, _toastT=null;
 const WS_URL=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws';
 
+let _wsBackoff=1000;   // exponential backoff, reset on a clean open
 function connect(){
-  try{ ws=new WebSocket(WS_URL); }catch(e){ setTimeout(connect,3000); return; }
-  ws.onopen=()=>{ dot('ok','Connected'); _wsAuthFails=0; ping(); };
+  try{ ws=new WebSocket(WS_URL); }catch(e){ _scheduleReconnect(); return; }
+  ws.onopen=()=>{ dot('ok','Connected'); _wsAuthFails=0; _wsBackoff=1000; retryStream(); ping(); };
   ws.onclose=(ev)=>{
-    dot('err','Disconnected');
     // A WS handshake rejected for auth (session expired / cookie missing) closes
     // immediately with no open. After a couple of quick failures, stop
     // retrying forever and send the user back to /login instead.
     _wsAuthFails++;
     if(_wsAuthFails>=3){ location.href='/login'; return; }
-    setTimeout(connect,3000);
+    _scheduleReconnect();
   };
   ws.onerror=()=>{};
   ws.onmessage=e=>{ try{ onMsg(JSON.parse(e.data)); }catch(_){} };
+}
+// Exponential backoff (1s→2s→4s… capped 15s) with a visible countdown, instead
+// of hammering a flat 3s. When the socket comes back it also re-kicks the MJPEG
+// stream (retryStream in onopen) so a dropped video feed recovers on its own.
+function _scheduleReconnect(){
+  const wait=_wsBackoff; _wsBackoff=Math.min(_wsBackoff*2,15000);
+  let left=Math.round(wait/1000);
+  dot('warn','Reconnecting… '+left+'s');
+  const iv=setInterval(()=>{ left--; if(left>0) dot('warn','Reconnecting… '+left+'s'); else clearInterval(iv); },1000);
+  setTimeout(()=>{ clearInterval(iv); connect(); }, wait);
 }
 let _pt=0;
 function ping(){ if(ws&&ws.readyState===1){_pt=Date.now();ws.send(JSON.stringify({type:'ping'}));} setTimeout(ping,3000); }
@@ -1988,8 +2001,42 @@ function applyStatus(d){
   if(d.display){
     const g=(id,v)=>{const e=document.getElementById(id); if(e) e.textContent=v||'-';};
     g('disp-name',d.display.name); g('disp-mfr',d.display.mfr); g('disp-ser',d.display.serial||'-');
+    // EDID honesty: on the USB-dongle path the target reads the dongle's own
+    // fixed EDID (not spoofable), so flag it instead of implying the Dell id.
+    const dn=document.getElementById('disp-name'), noteEl=document.getElementById('disp-note');
+    if(dn) dn.classList.toggle('warn', d.display.spoofed===false);
+    if(noteEl){ noteEl.textContent=d.display.note||''; noteEl.style.display=d.display.note?'':'none'; }
   }
   applyPowerHealth(d);
+  healthBanner(d);
+}
+// Always-visible power banner: under-voltage/throttling otherwise only shows
+// buried in a settings tab, but it's the #1 field problem - surface it over the
+// stream. Injected lazily so no HTML structure change is needed. Dismissable,
+// but re-appears if the condition is currently ACTIVE (not just historical).
+let _healthDismissed='';
+function healthBanner(d){
+  const p=d&&d.power||{state:'unknown'};
+  const active=p.uv_now||p.throttled_now||p.temp_limit_now;
+  const historical=!active && (p.state==='was_throttled');
+  let b=document.getElementById('mb-health-banner');
+  if(!active && !historical){ if(b) b.remove(); return; }
+  const key=p.state+(active?'-now':'-hist');
+  if(_healthDismissed===key && !active){ return; }
+  if(!b){
+    b=document.createElement('div'); b.id='mb-health-banner';
+    b.style.cssText='position:relative;z-index:60;display:flex;align-items:center;gap:10px;padding:7px 12px;font-size:13px;font-weight:600;color:#1a1200';
+    document.body.insertBefore(b, document.body.firstChild);
+  }
+  const msg = p.uv_now ? '⚡ Under-voltage NOW - use a 5V/3A supply; video/HID may glitch'
+    : p.throttled_now ? '🔥 CPU throttling NOW - check power + cooling'
+    : p.temp_limit_now ? '🌡 Temperature limit reached - check cooling'
+    : '⚠ Under-voltage/throttling happened since boot - a weak supply causes flaky behavior';
+  b.style.background = active ? 'var(--red)' : 'var(--yellow)';
+  b.innerHTML='<span style="flex:1">'+msg+'</span>'+
+    (d.volts_in!=null?'<span style="opacity:.8;font-weight:400">'+d.volts_in.toFixed(2)+'V</span>':'')+
+    '<button onclick="_healthDismissed=\''+key+'\';this.parentElement.remove()" '+
+    'style="background:rgba(0,0,0,.15);border:0;color:inherit;border-radius:5px;padding:2px 8px;cursor:pointer;font-weight:700">✕</button>';
 }
 
 // Power & Health card (System tab). Reconciles fully from whatever
@@ -2088,6 +2135,49 @@ function takeScreenshot(){
     setTimeout(()=>URL.revokeObjectURL(url), 4000);
     toast('Screenshot saved 📷');
   }, 'image/png');
+}
+
+// Clip recording - MediaRecorder on whichever element is live. WebRTC <video>
+// exposes captureStream() directly; for the MJPEG <img> we paint frames onto a
+// canvas at ~15fps and capture that. Entirely client-side: the .webm is built
+// in the browser and downloaded - no file ever lands on the Pi (RAM-only stays
+// intact). Toggle to start/stop.
+let _rec=null,_recChunks=[],_recTimer=null;
+function toggleRecord(){
+  const btn=document.getElementById('rec-btn');
+  if(_rec){ try{_rec.stop();}catch(e){} return; }
+  if(typeof MediaRecorder==='undefined'){ toast('This browser has no MediaRecorder'); return; }
+  const $v=document.getElementById('webrtc-view'), $i=document.getElementById('stream');
+  const useVideo=$v && $v.style.display!=='none' && $v.videoWidth>0;
+  let stream;
+  if(useVideo && $v.captureStream){ stream=$v.captureStream(); }
+  else{
+    const w=$i.naturalWidth, h=$i.naturalHeight;
+    if(!w||!h){ toast('No video to record yet'); return; }
+    const cv=document.createElement('canvas'); cv.width=w; cv.height=h;
+    const ctx=cv.getContext('2d');
+    _recTimer=setInterval(()=>{ try{ctx.drawImage($i,0,0,w,h);}catch(e){} },66);
+    stream=cv.captureStream ? cv.captureStream(15) : null;
+  }
+  if(!stream){ toast('Recording not supported here'); if(_recTimer)clearInterval(_recTimer); return; }
+  const mime=['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'].find(m=>{try{return MediaRecorder.isTypeSupported(m);}catch(e){return false;}})||'';
+  try{ _rec=new MediaRecorder(stream, mime?{mimeType:mime}:undefined); }
+  catch(e){ toast('Record failed: '+e); if(_recTimer)clearInterval(_recTimer); _recTimer=null; return; }
+  _recChunks=[];
+  _rec.ondataavailable=e=>{ if(e.data&&e.data.size) _recChunks.push(e.data); };
+  _rec.onstop=()=>{
+    if(_recTimer){clearInterval(_recTimer);_recTimer=null;}
+    const blob=new Blob(_recChunks,{type:'video/webm'}), url=URL.createObjectURL(blob);
+    const a=document.createElement('a'), ts=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+    a.href=url; a.download='magicbridge_'+ts+'.webm';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),5000);
+    _rec=null; if(btn){btn.textContent='🔴 Record clip';btn.classList.remove('dan');}
+    toast('Clip saved 🎬');
+  };
+  _rec.start(1000);
+  if(btn){btn.textContent='⏹ Stop recording';btn.classList.add('dan');}
+  toast('Recording… click again to stop',4000);
 }
 
 // Power
