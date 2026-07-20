@@ -94,5 +94,17 @@ rm -f /etc/NetworkManager/conf.d/00-mb-macspoof.conf 2>/dev/null || true
 rm -f /etc/magicbridge/.provision-wifi /tmp/mb-ts-key 2>/dev/null || true
 rm -f /var/log/magicbridge-ram/* 2>/dev/null || true
 
+# 9. Restart the services whose per-unit secrets we just regenerated. CRITICAL
+#    on a FRESH FLASH: the image ships with NO ssh host keys and NO TLS cert
+#    (both stripped when arming), so sshd + nginx FAIL to start early in boot -
+#    BEFORE this script recreated them - and nothing else restarts them. The
+#    unit then boots "up" (OLED shows its IP) but with NO SSH and NO web UI.
+#    Regenerating the secrets without restarting the services was the bug.
+info "restarting services with the freshly generated keys/cert/config"
+systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+for s in nginx magicbridge stealth-dashboard; do
+    systemctl restart "$s" 2>/dev/null || true
+done
+
 info "done"
 exit 0
