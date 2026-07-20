@@ -190,6 +190,36 @@ pkill -F /tmp/mb-hostapd.pid 2>/dev/null || true
 pkill -F /tmp/mb-dnsmasq.pid 2>/dev/null || true
 iptables -t nat -F PREROUTING 2>/dev/null || true
 ip addr flush dev "$AP_IFACE" 2>/dev/null || true
+# Mirror a human-readable report onto the FAT boot partition. THIS IS THE
+# ESCAPE HATCH: a unit that has neither WiFi nor a working hotspot is otherwise
+# unreachable, and its ext4 logs can't be read on Windows/macOS (wsl --mount
+# refuses removable SD readers). /boot/firmware is FAT32, so anyone can pull the
+# card, open it in Explorer/Finder, and read this file.
+mb_boot_report() {
+    local B=/boot/firmware; [ -d "$B" ] || B=/boot; [ -d "$B" ] || return 0
+    {
+      echo "MagicBridge setup report - $(date)"
+      echo "hostname   : $(hostname)"
+      echo "ip         : $(hostname -I 2>/dev/null)"
+      echo "portal_exit: ${PORTAL_EXIT:-n/a}    nginx_was_active: ${NGINX_WAS_ACTIVE:-n/a}"
+      echo "ap_ssid    : $AP_SSID on $AP_IFACE ($AP_IP)"
+      echo "saved wifi : $(ls /etc/NetworkManager/system-connections/ 2>/dev/null | wc -l) profile(s)"
+      echo
+      echo "===== who is listening on :80 (portal needs it) ====="
+      ss -ltnp 2>/dev/null | grep -E ':80\b' || echo "(nothing on :80)"
+      echo
+      echo "===== hostapd / dnsmasq running? ====="
+      pgrep -a hostapd 2>/dev/null || echo "(hostapd NOT running)"
+      pgrep -a dnsmasq 2>/dev/null || echo "(dnsmasq NOT running)"
+      echo
+      echo "===== last 60 lines: provisioning ====="; tail -60 "$LOG" 2>/dev/null
+      echo
+      echo "===== last 40 lines: first boot ====="; tail -40 /var/log/magicbridge-firstboot.log 2>/dev/null
+    } > "$B/magicbridge-setup-report.txt" 2>/dev/null || true
+    sync
+}
+mb_boot_report
+
 # Restore the system dnsmasq we stopped above so the box's normal DNS/DHCP
 # state matches what it was before provisioning (no-op if it wasn't enabled).
 systemctl start dnsmasq 2>/dev/null || true
