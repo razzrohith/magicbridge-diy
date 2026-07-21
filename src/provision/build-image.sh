@@ -107,6 +107,9 @@ if [[ "$MODE" == "verify" ]]; then
   chk "mb-firstboot.service enabled"                 '[ -L "$R/etc/systemd/system/multi-user.target.wants/mb-firstboot.service" ]'
   chk "mb-firstboot-late.service enabled"            '[ -L "$R/etc/systemd/system/multi-user.target.wants/mb-firstboot-late.service" ]'
   chk "MagicBridge installed (/opt/magicbridge)"     '[ -f "$R/opt/magicbridge/core/magicbridge.py" ]'
+  chk "WiFi retry: hotspot re-raised on bad password" 'grep -q "re-raising the setup hotspot" "$R/usr/local/bin/mb-provision.sh"'
+  chk "WiFi retry: provisioning timeout raised"      'grep -q "TimeoutStartSec=1800" "$R/etc/systemd/system/mb-provision.service"'
+  chk "reachable by name (mdns_alias set)"           'python3 -c "import json,sys;sys.exit(0 if json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"mdns_alias\") else 1)"'
   chk "/boot/firmware is nofail (cannot block boot)" 'grep -qE "^[^#].*/boot/firmware.*nofail" "$R/etc/fstab"'
   chk "RAM-log tmpfs is mode=0755 (not 1777)"        '! grep -qE "magicbridge-ram.*mode=1777" "$R/etc/fstab"'
   chk "config: no auth (defaults on first boot)"     'python3 -c "import json,sys;sys.exit(0 if \"auth\" not in json.load(open(\"$R/etc/magicbridge/config.json\")) else 1)"'
@@ -212,9 +215,15 @@ if [[ -d "$REPO_DIR/src/core" ]]; then
     _put "src/core/$f.sh" "$MNT/usr/local/bin/$f.sh" 0755
   done
   _put src/provision/mb-provision.sh "$MNT/usr/local/bin/mb-provision.sh" 0755
-  # systemd units for the two first-boot stages.
-  _put src/core/mb-firstboot.service      "$MNT/etc/systemd/system/mb-firstboot.service"
-  _put src/core/mb-firstboot-late.service "$MNT/etc/systemd/system/mb-firstboot-late.service"
+  # systemd units: deploy EVERY unit file from the repo, not just the first-boot
+  # pair. A stale unit left in the image silently undoes a fix that lives in the
+  # script it launches - exactly how mb-provision.service kept TimeoutStartSec=600
+  # while the retry logic it runs needed 1800.
+  for _u in "$REPO_DIR"/src/core/*.service "$REPO_DIR"/src/provision/*.service \
+            "$REPO_DIR"/src/dashboard/*.service; do
+    [[ -f "$_u" ]] || continue
+    _put "${_u#"$REPO_DIR"/}" "$MNT/etc/systemd/system/$(basename "$_u")"
+  done
   # nginx site (only if nginx is present in the image).
   [[ -d "$MNT/etc/nginx/sites-available" ]] && _put src/nginx/magicbridge.conf "$MNT/etc/nginx/sites-available/magicbridge"
   # /opt/magicbridge app code - only for an already-installed (clone) image.
