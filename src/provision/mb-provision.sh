@@ -251,8 +251,36 @@ if [[ -f "$WIFI_FILE" ]]; then
     fi
     nmcli connection up "$SSID" || true
     rm -f "$WIFI_FILE"
-    # Celebrate + show the IP the user needs, then hand back to the normal
-    # status display. The @READY animation (blinking check) confirms success.
+    # VERIFY it actually connected. A wrong password (or an out-of-range SSID)
+    # makes `nmcli connection up` fail - and the old code still announced
+    # "Connected!", left the AP torn down and exited, stranding the unit with NO
+    # WiFi and NO hotspot until someone power-cycled it. Now: confirm first, and
+    # on failure drop the bad profile and re-raise the setup hotspot so the user
+    # can simply try again with the right password.
+    WIFI_OK=0
+    for _ in $(seq 1 12); do
+        if nmcli -t -f STATE general 2>/dev/null | grep -q "^connected$"; then WIFI_OK=1; break; fi
+        sleep 2
+    done
+    if [[ "$WIFI_OK" != "1" ]]; then
+        echo "[$(date)] WiFi '$SSID' did NOT connect (wrong password / out of range)"
+        nmcli connection delete "$SSID" 2>/dev/null || true   # never keep a bad profile
+        MB_PROV_RETRY="${MB_PROV_RETRY:-0}"
+        if [[ "$MB_PROV_RETRY" -lt 4 ]]; then
+            export MB_PROV_RETRY=$(( MB_PROV_RETRY + 1 ))
+            echo "[$(date)] re-raising the setup hotspot (attempt $MB_PROV_RETRY)"
+            oled "WiFi failed" "Wrong password?" "Rejoin $AP_SSID"
+            sleep 4
+            # Re-exec from the top: the connectivity check finds no network and
+            # brings the AP back up. Exported retry counter survives the exec so
+            # this can't spin forever.
+            exec bash "$0"
+        fi
+        oled "WiFi setup failed" "too many tries" "power-cycle to retry"
+        echo "[$(date)] giving up after $MB_PROV_RETRY attempts"
+        exit 1
+    fi
+    # Connected for real - celebrate + show the IP, then normal display.
     for _ in 1 2 3; do
         MB_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
         [[ -n "$MB_IP" ]] && break

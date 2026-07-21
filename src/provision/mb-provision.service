@@ -11,7 +11,10 @@ Before=magicbridge.service
 Type=oneshot
 ExecStart=/usr/local/bin/mb-provision.sh
 RemainAfterExit=no
-TimeoutStartSec=600
+# Generous: provisioning BLOCKS on a human (join hotspot, type WiFi creds), and
+# a wrong password now re-raises the hotspot for another attempt - 600s could
+# kill it mid-retry and strand the unit again.
+TimeoutStartSec=1800
 StandardOutput=journal
 StandardError=journal
 
