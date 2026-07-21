@@ -27,16 +27,18 @@
 # make the alias name a per-unit config value, or drop the raj.local alias
 # from units other than this one.
 #
-# STEALTH DEFAULT (2026): the branded "magicbridge.local" and personal
-# "raj.local" aliases are LAN-visible NAME TELLS - a router client list or a
-# network scan would surface the product/owner name, breaking the anonymity
-# model. They are now OFF by default. avahi-daemon still auto-publishes
-# <hostname>.local (a realistic "DESKTOP-XXXXXXX.local"), which - together with
-# the IP - is enough to reach the unit without advertising what it is.
+# DEFAULT = "magicbridge" (2026-07): publishes magicbridge.local out of the box
+# so a headless / OLED-less unit is reachable by name without hunting the router
+# for its IP (owner's explicit reachability decision). Set via config.json
+# "mdns_alias"; use any innocuous name (e.g. "office-pc" -> office-pc.local), or
+# empty string "" for FULL stealth (no branded LAN name at all - avahi still
+# auto-publishes the realistic <hostname>.local, e.g. DESKTOP-XXXXXXX.local).
 #
-# Opt in to ONE friendly alias by setting "mdns_alias" in config.json
-# (e.g. "office-pc" -> office-pc.local). Choose an innocuous name; leave it
-# empty for full stealth.
+# TRADE-OFF: a branded "magicbridge.local" is a LAN-visible name tell, and every
+# unit sharing this alias will COLLIDE on one network (avahi renames losers
+# magicbridge-2.local). For a fleet / units shipped to others, give each a unique
+# innocuous name instead. Only visible on the control LAN - the target (USB/HDMI)
+# never sees it.
 set -e
 CONFIG_FILE="/etc/magicbridge/config.json"
 ALIAS=""

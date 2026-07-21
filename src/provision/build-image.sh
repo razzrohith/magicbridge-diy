@@ -286,6 +286,7 @@ c.pop("auth",None); c.pop("tailscale",None); c.pop("duckdns",None)
 if isinstance(c.get("usb"),dict): c["usb"]["serial"]=""
 c["mac_persist"]={}                        # -> unique vendor MAC per unit
 c.setdefault("video",{})["mode"]="auto"    # -> detects C790/CSI or USB per unit
+c["mdns_alias"]="magicbridge"              # -> reachable at magicbridge.local out of the box
 json.dump(c,open(p,"w"),indent=2)
 PY
 fi

@@ -143,11 +143,18 @@ the online grow.
    *Join hotspot MagicBridge-Setup*.
 3. Join `MagicBridge-Setup` (open) from a phone/laptop, complete the captive
    portal WiFi form. The unit reboots/joins your WiFi; OLED shows the IP.
-4. Find the unit's IP: it now uses a realistic `DESKTOP-XXXXXXX` hostname + a
-   spoofed vendor MAC (anonymity), so look for that in your router's client list
-   or read the IP off the OLED. Open `https://<ip>/` and change both default
-   passwords. (`magicbridge.local` is off by default; opt in with config
-   `mdns_alias`.)
+4. Reach it at **`https://magicbridge.local/`** (published by default via the
+   `mdns_alias="magicbridge"` config — works out of the box, ideal for a headless
+   / OLED-less unit). Change both default passwords on first login.
+   - If `.local` won't resolve, it's almost always a **VPN on your client**
+     (NordVPN etc. hijack DNS and block LAN mDNS) — pause it or allow LAN, or use
+     a phone on the same WiFi. You can also find the IP in the router's client
+     list (a `DESKTOP-XXXXXXX` device with a Dell/HP/Samsung MAC) or in
+     `magicbridge-setup-report.txt` on the FAT boot partition.
+   - **Anonymity note:** `magicbridge.local` is a LAN-visible name, and multiple
+     units sharing it COLLIDE on one network. For a fleet / units given to
+     others, set `mdns_alias` to a unique innocuous name per unit, or `""` for
+     full stealth. The target (USB/HDMI) never sees this name either way.
 
 ## Updates (backend → GitHub, code **and** structure)
 The built-in updater (System → Update, i.e. `POST /api/update`) pulls

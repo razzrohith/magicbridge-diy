@@ -284,7 +284,7 @@ if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
   },
   "mac_persist":   {},
   "mac_autospoof": true,
-  "mdns_alias":    "",
+  "mdns_alias":    "magicbridge",
   "duckdns":       {}
 }
 CONF
