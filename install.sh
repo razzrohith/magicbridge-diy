@@ -293,7 +293,67 @@ CONF
     # to "magicbridge" and "stealthbridge". Not written here.
     ok "config.json created (Logitech Unifying Receiver identity, no serial - matches real hardware)"
 else
-    ok "config.json already exists, skipping"
+    # BACKFILL, don't skip. Writing the defaults only when config.json is ABSENT
+    # meant a new default key reached fresh flashes ONLY - never an already
+    # installed unit. Found live: a unit upgraded through the web UI got every
+    # code change but still had no "mdns_alias", so magicbridge.local stayed
+    # dead on exactly the headless units the default was added for. Same hole
+    # would swallow every future default (video.mode, mac_autospoof, ...).
+    #
+    # Add MISSING keys only - never overwrite a value that is already there.
+    # That is what makes it safe and idempotent: a user who deliberately set
+    # mdns_alias:"" for full stealth keeps it (the key exists), auth hashes and
+    # saved settings are untouched, and re-running install.sh changes nothing.
+    info "config.json exists - backfilling any missing defaults..."
+    python3 - "$CONFIG_DIR/config.json" <<'PYBACKFILL' || warn "config backfill skipped (python3 error) - existing config left untouched"
+import json, sys
+
+DEFAULTS = {
+    "usb": {
+        "manufacturer": "Logitech", "product": "USB Receiver", "serial": "",
+        "idVendor": "0x046d", "idProduct": "0xc52b",
+        "has_serial": False, "extra_iface": True,
+    },
+    "video": {
+        "device": "", "resolution": "1920x1080",
+        "fps": 30, "quality": 80, "mode": "auto",
+    },
+    "mac_persist": {},
+    "mac_autospoof": True,
+    "mdns_alias": "magicbridge",
+    "duckdns": {},
+}
+
+path = sys.argv[1]
+with open(path) as fh:
+    cfg = json.load(fh)
+
+added = []
+for key, default in DEFAULTS.items():
+    if key not in cfg:
+        cfg[key] = default
+        added.append(key)
+    elif isinstance(default, dict) and isinstance(cfg[key], dict):
+        # One level deep is enough for this schema, and keeps the merge
+        # predictable - no surprise resurrection of keys a user removed.
+        for sub, subdefault in default.items():
+            if sub not in cfg[key]:
+                cfg[key][sub] = subdefault
+                added.append(f"{key}.{sub}")
+
+if added:
+    # Write via a temp file + replace so an interrupted upgrade can never leave
+    # a truncated config.json behind (that would brick the backend on restart).
+    tmp = path + ".new"
+    with open(tmp, "w") as fh:
+        json.dump(cfg, fh, indent=2)
+    import os
+    os.replace(tmp, path)
+    print("  backfilled: " + ", ".join(added))
+else:
+    print("  nothing missing")
+PYBACKFILL
+    ok "config.json defaults reconciled"
 fi
 
 chmod 600 "$CONFIG_DIR/config.json"
