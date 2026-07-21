@@ -258,10 +258,86 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
     `install.sh` as structural and re-runs it; if your updater only rsyncs files,
     a config migration will never run at all.
 
+31. **The updater reported "up to date" while running NONE of the update** `[PORT — the worst one]`
+    — a shutdown landed mid-`install.sh`. The `git pull` had already succeeded,
+    so the clone sat at the new commit while **nothing was deployed** — and
+    because the updater compared clone-HEAD to origin, the UI said *"Up to
+    date"* and there was **no way to retry from the web UI at all**. Verified on
+    the live unit: repo at the new SHA, running `index.html` missing its newest
+    code, config missing its newest key. Silently stale, and claiming to be
+    current. Root cause is structural and almost certainly present in any
+    pull-then-install updater: **the pull advances state that the install has not
+    yet applied.** Fix: the installer stamps a `deployed-commit` file as its LAST
+    step, success-only (and the incremental path stamps after its copies), and
+    the updater compares THAT to origin — never HEAD. A missing/garbage stamp
+    must report "deployment unverified → reinstall", so a unit can never be
+    trapped in a fake up-to-date state. CHECK: kill your installer halfway, then
+    ask the UI whether an update is available. If it says no, you have this bug.
+32. **The installer pulls the repo it is RUNNING FROM** `[PORT — subtle, silent]`
+    — `git` replaces a file by rename, so the already-open fd still points at the
+    OLD inode and bash executes the **pre-pull text to the end**. The freshly
+    pulled installer logic never runs, and the script **exits 0**. Concretely:
+    the item-31 stamp landed on disk and was silently skipped; the run "succeeded"
+    while doing the old thing, and the stamp only appeared on a *second* run.
+    Fix: checksum `$0` around the pull and re-exec if it changed, bounded by an
+    env var so it can re-exec exactly once. CHECK any script that updates its own
+    source tree — a green exit code proves nothing here.
+33. **A config-read-once service needs restarting after a config migration**
+    `[PORT]` — the item-30 backfill added the mDNS key long after that oneshot had
+    already run and exited with "no alias configured", so the unit stayed
+    unreachable by name until a reboot. Migrating config is only half the job;
+    restart whatever caches it, and report which way it ended up.
+34. **An expired session made EVERY control silently do nothing** `[PORT — check hard]`
+    — "Shutdown Pi" appeared to work and the Pi stayed up. nginx had the truth:
+    `POST /api/power 401`, twice. Nothing in the UI checked `fetch()` status, so
+    the 401 was invisible and the button toasted "Shutting down…" *before* the
+    request even went out. Every other control shared the blind spot: an expired
+    session left the page looking alive and completely dead. Dangerous here
+    specifically — believing a Pi is off and pulling its power is exactly the
+    SD-corruption the button exists to prevent. Fix: ONE `fetch()` wrapper
+    handling 401 for every call site (toast + bounce to login, once, with the
+    login endpoint excluded so a wrong password can't loop) beats auditing ~40
+    call sites. Same class on the server: `Popen` fire-and-forget returned
+    `ok:True` even when the command failed, so broken sudo looked identical to
+    success — run it, check the return code, report the real error.
+35. **Power actions and update actions knew nothing about each other** `[PORT]`
+    — the UI let a shutdown land in the middle of `install.sh`. Worse, the
+    aftermath *looks* like a hang: a halted Pi keeps the OLED powered but stops
+    driving it, so the panel freezes on "Upgrading" forever and invites a power
+    pull on top of an already-interrupted install. Fix: run the upgrade as a
+    **named** unit (not an anonymous transient) so "is an upgrade in flight?" is
+    answerable, have the power endpoint return 409-busy, make the UI raise a
+    second explicit confirm rather than a toast, and keep a `force` override so a
+    wedged upgrade can never permanently trap a unit.
+36. **Update classifier forced a full reinstall for files the Pi never runs**
+    `[PORT — low value, quick]` — classifying real history showed 7 of 25 commits
+    triggering a full reinstall, but 3 were classifier bugs: a **Windows** `.ps1`
+    helper that only ever runs on the operator's laptop, and a newly added Pi-side
+    script nobody had registered. Both hit the "unknown file → full" fallback.
+    Keep that fallback (an unregistered runtime file must reach the installer
+    rather than silently not deploy) but exclude host-only files and register new
+    ones. Worth doing the same audit: classify your last ~25 commits and look at
+    which fulls were genuine.
+
+**Amendment to item 29** (`get_throttled`): the DIY power work established the
+decode that makes it actionable — bits 0–3 are *happening now*, bits 16–19 are
+*has happened since boot* and are **sticky until power-cycle**. So `0x50000` means
+"under-voltage occurred at some point", NOT "under-voltage now"; a Pi can show it
+for hours because of a plug-in inrush transient that recovered in seconds
+(confirmed in dmesg: `Undervoltage detected!` → `Voltage normalised` 8s later).
+Read the two halves separately, and only trust a reading taken on a fresh boot.
+(The DIY power-path A/B results are deliberately NOT ported — different board,
+different power design.)
+
 ---
 
 ## Session commits (DIY repo `magicbridge-diy`, for reference)
 ```
+77f739f fix(install): re-exec after self-pull; restart mdns after backfill       (items 32,33)
+b81108c fix(update): track what is DEPLOYED, not what the repo clone is at       (item 31)
+c68363c fix(power): refuse to halt while a full upgrade is still running         (item 35)
+fe202af fix(ui): expired session made every control silently do nothing          (item 34)
+32b83f7 fix(update): stop forcing a full reinstall for files the Pi never runs   (item 36)
 8b7318f fix(config): backfill missing defaults on upgrade                        (item 30)
 ef76bf1 test(power): option-4 splitter passes clean; get_throttled sticky bits
 b90389a feat(diag): mb-power-test.sh - objective A/B test of power-path wiring
