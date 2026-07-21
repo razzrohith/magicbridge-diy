@@ -23,6 +23,14 @@ set -uo pipefail
 
 LABEL="${1:-unlabelled}"
 DURATION="${2:-120}"
+# LOADMODE:
+#   burn      (default) 4-core busy loop + whatever the stream is doing. This is
+#             deliberately HARSHER than real use - it answers "is there any
+#             headroom at all", not "does normal streaming work".
+#   realistic no artificial CPU load; instead pull the MJPEG stream continuously
+#             so the capture + JPEG-encode + network path runs for real. Use this
+#             to decide whether a supply is merely tight or actually unusable.
+LOADMODE="${3:-burn}"
 LOG=/var/log/magicbridge-powertest.log
 VC=$(command -v vcgencmd || echo /usr/bin/vcgencmd)
 [[ -x "$VC" ]] || { echo "vcgencmd not found — run this on the Pi"; exit 1; }
@@ -64,12 +72,25 @@ say "usb gadget      : $(cat /sys/class/udc/*/state 2>/dev/null | tr '\n' ' ')  
 # Real workload beats stress-ng here: encode + HID + network is the profile that
 # was browning out. Fall back to CPU burn if the stream isn't running.
 say ""
-say "--- applying load ---"
+say "--- applying load (mode: $LOADMODE) ---"
 STREAM_UP=0
 systemctl is-active --quiet magicbridge && STREAM_UP=1
-say "magicbridge.service active : $([[ $STREAM_UP == 1 ]] && echo yes || echo NO - CPU burn only)"
+say "magicbridge.service active : $([[ $STREAM_UP == 1 ]] && echo yes || echo NO)"
 BURN_PIDS=()
-for _ in 1 2 3 4; do ( while :; do :; done ) & BURN_PIDS+=($!); done
+if [[ "$LOADMODE" == "realistic" ]]; then
+    # Consume the MJPEG stream so capture -> JPEG encode -> network actually runs.
+    # Without a consumer the encoder may idle and the test measures nothing.
+    for _ in 1 2; do
+        ( curl -s --max-time "$DURATION" "http://127.0.0.1:8081/stream" >/dev/null 2>&1 ) &
+        BURN_PIDS+=($!)
+    done
+    sleep 3
+    say "stream consumers          : ${#BURN_PIDS[@]} pulling :8081/stream"
+    say "NOTE: no artificial CPU load - this is the real streaming workload."
+else
+    for _ in 1 2 3 4; do ( while :; do :; done ) & BURN_PIDS+=($!); done
+    say "NOTE: 4-core burn - deliberately harsher than real use."
+fi
 trap 'kill "${BURN_PIDS[@]}" 2>/dev/null' EXIT
 
 # --- sample ----------------------------------------------------------------

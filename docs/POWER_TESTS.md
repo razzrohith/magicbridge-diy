@@ -43,6 +43,27 @@ flag that looked like a live fault for the rest of the boot. Every run here
 therefore boots on the wiring under test first, and reports the **live** bits
 separately from the sticky ones.
 
+## Is option 1 good enough for normal use? No — and the near-miss is instructive
+
+The 4-core burn is harsher than real use, so option 1 was retested with **no
+artificial CPU load**, just the real capture → encode → network path:
+
+| option 1, realistic load | live under-voltage | verdict |
+|---|---|---|
+| stream pulled over **loopback** | **0 / 88** | PASS |
+| same, plus real **WiFi transmit** | **66 / 69** | **FAIL** |
+
+The first run says option 1 is fine. It is wrong, and the reason matters: pulling
+the stream over `127.0.0.1` never keys the **WiFi radio**, and WiFi TX is a large
+current draw on a Pi. Add the transmit the product actually does and the board
+browns out within seconds. **Any power test that does not push traffic over the
+real radio flatters the supply.**
+
+Also note `min core voltage` reads 0.8500V in *both* realistic runs — the passing
+one and the failing one. Core voltage tracks DVFS (the SoC clocks down when idle),
+so it is **not** a supply-sag indicator and must not be compared across different
+load modes. The live under-voltage bit is the honest signal.
+
 ## What each result actually means
 
 **Option 4 — splitter, data leg → laptop, power leg → wall charger.** The only
