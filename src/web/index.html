@@ -2245,6 +2245,16 @@ async function piPower(a){
     const r=await fetch('/api/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})});
     if(r.status===401) return;           // the fetch guard is already redirecting
     const d=await r.json().catch(()=>null);
+    if(r.status===409 && d && d.busy==='update'){
+      // Deliberately a second confirm, not a toast: halting mid-upgrade is how
+      // a unit ends up half-installed, so the override has to be a choice.
+      toast('Upgrade still running - NOT shut down',6000);
+      if(confirm('An upgrade is still running.\n\nHalting now can leave the Pi half-updated.\n\nForce it anyway?')){
+        const r2=await fetch('/api/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a,force:true})});
+        if(r2.ok) toast(a==='shutdown'?'Shutting down…':'Rebooting…',6000);
+      }
+      return;
+    }
     if(!r.ok || !d || !d.ok){
       toast('FAILED: '+((d&&d.error)||('HTTP '+r.status))+' - Pi is still running',6000);
     }

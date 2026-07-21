@@ -1471,6 +1471,18 @@ async def api_power(request):
            "reboot":   ["sudo", "reboot"]}.get(action)
     if not cmd:
         return web.json_response({"ok": False, "error": "unknown action"}, status=400)
+    # Refuse to halt/reboot while install.sh is still running. Learned the hard
+    # way: a shutdown landed mid-upgrade, which can leave dpkg half-configured
+    # and the unit half-updated - and the OLED froze on "Upgrading" (a halted Pi
+    # keeps the panel powered but stops driving it), which looks like a hang and
+    # invites a power pull on top of it. Overridable with force:true so a wedged
+    # upgrade can never permanently trap the unit.
+    if _upd_running() and not bool(d.get("force")):
+        return web.json_response({
+            "ok": False, "busy": "update",
+            "error": "An upgrade is still running - halting now can corrupt it. "
+                     "Wait for it to finish, or resend with force to override.",
+        }, status=409)
     # Popen fire-and-forget reported ok:True even when the command failed, so a
     # broken sudo looked exactly like a successful shutdown. systemd returns
     # from `shutdown`/`reboot` as soon as logind accepts the request, so a real
@@ -1935,6 +1947,19 @@ async def api_wifi(request):
 _UPD_INSTALL_DIR = "/opt/magicbridge"
 # repo-relative runtime file -> (live destination, service to restart | None |
 # "nginx-reload"). A change limited to these (or docs/static/build tooling) is an
+# Stable name for the detached full-upgrade unit, so "is an upgrade running?"
+# is answerable by anything that needs to know (api_power refuses to halt).
+_UPD_UNIT = "mb-selfupdate"
+
+def _upd_running():
+    """True while a full upgrade (install.sh) is still in flight."""
+    try:
+        import subprocess as _s
+        return _s.run(["systemctl", "is-active", "--quiet", _UPD_UNIT],
+                      timeout=5).returncode == 0
+    except Exception:
+        return False   # never let a broken probe block a legitimate shutdown
+
 # INCREMENTAL update; anything structural forces a FULL install.sh run.
 _UPD_FILE_MAP = {
     "src/core/magicbridge.py":            (_UPD_INSTALL_DIR + "/core/magicbridge.py", "magicbridge"),
@@ -2120,7 +2145,13 @@ async def api_update(request):
             "sleep 4; rm -f /run/magicbridge/oled-status"
         )
         try:
-            r2 = _sp.run(["systemd-run", "--collect", "--description", "MagicBridge self-update",
+            # Named unit (not an anonymous run-*.service) so OTHER code can ask
+            # "is an upgrade in flight?" - api_power refuses to halt the Pi while
+            # this is active. Halting mid-install.sh can leave dpkg half-configured
+            # and the unit half-updated. --collect reaps it even if it failed, so
+            # the fixed name never blocks a later retry.
+            r2 = _sp.run(["systemd-run", "--collect", "--unit", _UPD_UNIT,
+                          "--description", "MagicBridge self-update",
                           "/bin/bash", "-c", _full_sh], capture_output=True, text=True, timeout=20)
             if r2.returncode != 0:
                 return web.json_response({"ok": False, "restarted": False,
