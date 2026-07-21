@@ -74,13 +74,16 @@ trap 'kill "${BURN_PIDS[@]}" 2>/dev/null' EXIT
 
 # --- sample ----------------------------------------------------------------
 MINV=99; MAXT=0; WORST=0; SAMPLES=0; UV_HITS=0
+# awk, not bc: bc is NOT installed on a stock Pi OS Lite image, and a diagnostic
+# tool must not need a package install on the unit it is diagnosing.
+flt(){ awk -v a="$1" -v b="$3" "BEGIN{exit !(a $2 b)}"; }
 END=$(( $(date +%s) + DURATION ))
 while [[ $(date +%s) -lt $END ]]; do
     T=$("$VC" get_throttled | cut -d= -f2)
     V=$("$VC" measure_volts core | cut -d= -f2 | tr -d 'V')
     C=$("$VC" measure_temp | cut -d= -f2 | tr -d "'C")
-    (( $(echo "$V < $MINV" | bc -l) )) && MINV="$V"
-    (( $(echo "$C > $MAXT" | bc -l) )) && MAXT="$C"
+    flt "$V" "<" "$MINV" && MINV="$V"
+    flt "$C" ">" "$MAXT" && MAXT="$C"
     (( $(( T )) > WORST )) && WORST=$(( T ))
     (( $(( T )) & 0x1 )) && UV_HITS=$(( UV_HITS + 1 ))
     SAMPLES=$(( SAMPLES + 1 ))
