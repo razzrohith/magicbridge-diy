@@ -202,10 +202,53 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
     login/reboot history otherwise ships and cross-links units). Adapt to
     `align_pi.py`.
 
+26. **Wrong WiFi password STRANDED the unit (no wifi, no hotspot)** `[PORT — VERIFY hard]`
+    — found on a real fresh setup, and the nastiest UX bug of the lot. DIY's
+    provisioning did `nmcli connection up "$SSID" || true`, **never checked the
+    result**, announced "Connected!" on the OLED anyway, and had already torn the
+    AP down — so a mistyped password left the unit with **no WiFi and no hotspot,
+    recoverable only by power-cycling**. Fix: (a) VERIFY the connection actually
+    reached NM state `connected` (poll ~24s), (b) on failure DELETE the bad
+    profile so wrong creds are never kept, (c) **re-raise the setup hotspot**
+    (DIY re-execs the provisioning script) so the user just rejoins and retries,
+    (d) cap retries via an exported counter (4) then stop with a clear
+    power-cycle message, (e) raise the unit's `TimeoutStartSec` so a retry can't
+    be killed mid-flow. Check `mb-portal.sh`/kvmd's equivalent: **any** path that
+    tears down the AP before confirming the new connection has this bug.
+27. **Stale unit files in the image silently undo script fixes** `[PORT]` — the
+    26 fix landed in the script, but the built image still carried the OLD
+    `.service` (with the short timeout) because the image builder only deployed
+    the *first-boot* unit files. Half the fix shipped. **Deploy EVERY unit file
+    from the repo when arming**, and add `--verify` assertions for the specific
+    values that matter (DIY now asserts the retry logic is present, the timeout
+    is raised, and the mDNS alias is set) so this fails the build instead of
+    shipping. Caught only by verifying the built artifact, not the commit.
+28. **Headless (no-OLED) units need a name — mDNS default reversed** `[PORT-concept]`
+    — with no screen there is no way to discover the unit's IP, so DIY reversed
+    item 5b and now ships `mdns_alias="magicbridge"` **on by default**
+    (`magicbridge.local`). Trade-off documented rather than hidden: it's a
+    LAN-visible name and multiple units sharing it COLLIDE (avahi renames the
+    losers), so a fleet wants a unique/innocuous name per unit or `""` for full
+    stealth — the target (USB/HDMI) never sees it either way. Also worth knowing:
+    when `.local` "doesn't work" it is almost always a **client-side VPN**
+    (NordVPN etc.) hijacking DNS / blocking LAN mDNS, not the unit.
+29. **USB capture that vanishes is a POWER problem, not software** `[VERIFY]` —
+    a DIY unit powered over USB-C from a laptop port showed "NO CAPTURE DEVICE":
+    `lsusb` listed no capture device and `/dev/video1` was gone, after having
+    worked minutes earlier. Enumerate→work→disappear = insufficient USB power.
+    Before debugging capture code, check `vcgencmd get_throttled` and put the Pi
+    on a real 5V/3A supply. (The same unit also dropped off the network entirely.)
+
 ---
 
 ## Session commits (DIY repo `magicbridge-diy`, for reference)
 ```
+fd5044b fix(image): deploy ALL unit files (stale .service undid the WiFi fix)    (item 27)
+f123533 fix(wifi): wrong password stranded the unit - verify + re-raise hotspot  (item 26)
+30cf625 feat(mdns): magicbridge.local ON by default (headless reachability)      (item 28)
+3d7936c feat(wol): scheduled Wake-on-LAN (cron-backed) + UI
+1aac451 feat(audio): USB-audio adapter as the working WebRTC audio path
+1c01e3d feat(ui): clip recording, health banner, USB-EDID honesty, reconnect
 3195250 feat(image): base = repo HEAD (full deploy + repo sync) + wtmp strip     (item 25)
 b0e7d98 feat(provision): Windows-readable setup report on the FAT boot partition (item 24-iv)
 7f279fe fix(wifi): captive portal never bound :80 - nginx held it, AP torn down  (item 24-iii)
