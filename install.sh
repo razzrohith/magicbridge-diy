@@ -192,8 +192,23 @@ SRC_DIR="/tmp/magicbridge-src"
 
 if [[ -d "/opt/magicbridge-repo/.git" ]]; then
     info "Updating existing clone..."
+    # This pull can replace THIS SCRIPT underneath the running bash. git swaps
+    # the file by rename, so the already-open fd still points at the OLD inode
+    # and bash keeps executing the pre-pull text to the end - the newly pulled
+    # installer logic never runs. Seen for real: the deployed-commit stamp
+    # arrived on disk and was silently skipped, so the run "succeeded" while
+    # doing the old thing. Re-exec ourselves if we changed. MB_INSTALL_REEXEC
+    # bounds it to exactly one re-exec, so a checksum that keeps differing can
+    # never loop.
+    _SELF_BEFORE=$(sha256sum "$0" 2>/dev/null | cut -d' ' -f1 || true)
     git -C /opt/magicbridge-repo pull origin "$BRANCH" --ff-only || true
     SRC_DIR="/opt/magicbridge-repo"
+    _SELF_AFTER=$(sha256sum "$0" 2>/dev/null | cut -d' ' -f1 || true)
+    if [[ -n "$_SELF_BEFORE" && "$_SELF_BEFORE" != "$_SELF_AFTER" && -z "${MB_INSTALL_REEXEC:-}" ]]; then
+        info "Installer updated itself - restarting with the new version..."
+        export MB_INSTALL_REEXEC=1
+        exec bash "$0" "$@"
+    fi
 elif [[ -d "$(dirname "$0")/src" ]]; then
     # Running from a local clone
     SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -560,6 +575,18 @@ systemctl unmask avahi-daemon.socket 2>/dev/null || true
 systemctl enable avahi-daemon
 systemctl restart avahi-daemon
 ok "Hostname '$HOSTNAME_NEW.local' active (blends in as an ordinary PC)"
+
+# mb-mdns-alias reads "mdns_alias" from config ONCE, at start. On an upgrade the
+# config backfill can add that key long after the service already ran and exited
+# with "no alias configured", so without this restart magicbridge.local silently
+# stays dead until the next reboot - which is exactly what happened on the first
+# unit to get the backfill. Restart it so a config change takes effect now.
+systemctl restart mb-mdns-alias 2>/dev/null || true
+if systemctl is-active --quiet mb-mdns-alias; then
+    ok "mDNS alias published (reachable by name)"
+else
+    info "mDNS alias not published (mdns_alias empty = full stealth)"
+fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 12. TAILSCALE (optional)
