@@ -648,6 +648,19 @@ echo -e "  Open ${BOLD}https://magicbridge.local/${NC} on any device on the same
 echo -e "  Change both default passwords on first login."
 echo ""
 echo -e "  ${BOLD}Verify anytime:${NC}  sudo bash install.sh --check   (read-only status)"
+
+# ── Stamp WHAT IS NOW DEPLOYED. Must be the last thing that runs, and only on
+# the success path: the web updater pulls the repo BEFORE running this script,
+# so if the install dies partway (a shutdown landed mid-run once) the clone is
+# already advanced while nothing is deployed. Comparing the clone to origin then
+# reports "Up to date" forever with no way to retry. The updater compares THIS
+# file to origin instead, so an unfinished install still shows as pending.
+if _SHA=$(git -C "$SRC_DIR" rev-parse HEAD 2>/dev/null); then
+    mkdir -p "$CONFIG_DIR" 2>/dev/null
+    printf '%s\n' "$_SHA" > "$CONFIG_DIR/.deployed-commit.new" \
+      && mv -f "$CONFIG_DIR/.deployed-commit.new" "$CONFIG_DIR/.deployed-commit" \
+      && ok "Deployed commit recorded: ${_SHA:0:7}"
+fi
 echo -e "  ${BOLD}Advanced (optional, manual):${NC} LUKS at-rest encryption of"
 echo -e "  /etc/magicbridge is NOT auto-applied — a botched setup can lock out"
 echo -e "  config. See MAGICBRIDGE_SYSTEM.md §2. The rest of the anonymity model"

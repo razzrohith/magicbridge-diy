@@ -1951,6 +1951,33 @@ _UPD_INSTALL_DIR = "/opt/magicbridge"
 # is answerable by anything that needs to know (api_power refuses to halt).
 _UPD_UNIT = "mb-selfupdate"
 
+# What is actually DEPLOYED, which is not the same as what the repo clone is at.
+# `git pull` runs BEFORE install.sh, so an installer that fails or is interrupted
+# leaves the clone advanced and nothing deployed - and comparing HEAD to origin
+# then reports "Up to date" forever, with no way to retry from the UI. Seen for
+# real: a shutdown landed mid-install.sh, the clone sat at the new commit, and
+# the running code had none of it. install.sh stamps this file as its LAST step
+# (success only); the incremental path stamps it after copying. Compare THIS to
+# origin, never HEAD.
+_DEPLOYED_FILE = "/etc/magicbridge/.deployed-commit"
+
+def _deployed_commit():
+    try:
+        with open(_DEPLOYED_FILE) as fh:
+            return fh.read().strip()
+    except Exception:
+        return ""
+
+def _set_deployed(sha):
+    try:
+        os.makedirs(os.path.dirname(_DEPLOYED_FILE), exist_ok=True)
+        tmp = _DEPLOYED_FILE + ".new"
+        with open(tmp, "w") as fh:
+            fh.write((sha or "").strip() + "\n")
+        os.replace(tmp, _DEPLOYED_FILE)
+    except Exception as e:
+        log.error("could not stamp deployed commit: %s", e)
+
 def _upd_running():
     """True while a full upgrade (install.sh) is still in flight."""
     try:
@@ -2081,11 +2108,19 @@ async def api_update(request):
         # gives an unambiguous yes/no instead of parsing git's raw fetch text.
         _sp.run(["git", "-C", REPO_DIR, "fetch", "--quiet"],
                capture_output=True, text=True, timeout=20)
-        local_hash  = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "HEAD"],
-                             capture_output=True, text=True, timeout=10).stdout.strip()
         remote_hash = _sp.run(["git", "-C", REPO_DIR, "rev-parse", f"origin/{BRANCH}"],
                              capture_output=True, text=True, timeout=10).stdout.strip()
-        behind = _sp.run(["git", "-C", REPO_DIR, "rev-list", "--count", f"HEAD..origin/{BRANCH}"],
+        # Baseline is what is DEPLOYED, not what the clone is at (see
+        # _DEPLOYED_FILE). Fall back to HEAD only if the stamp is missing or
+        # names a commit this clone doesn't have (e.g. after a force-push).
+        local_hash = _deployed_commit()
+        deploy_unknown = False
+        if not local_hash or _sp.run(["git", "-C", REPO_DIR, "cat-file", "-e", local_hash + "^{commit}"],
+                                     capture_output=True, timeout=10).returncode != 0:
+            deploy_unknown = True
+            local_hash = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "HEAD"],
+                                 capture_output=True, text=True, timeout=10).stdout.strip()
+        behind = _sp.run(["git", "-C", REPO_DIR, "rev-list", "--count", f"{local_hash}..origin/{BRANCH}"],
                         capture_output=True, text=True, timeout=10)
         try:
             commits_behind = int(behind.stdout.strip() or 0)
@@ -2096,9 +2131,20 @@ async def api_update(request):
         changed = []
         if update_available:
             _diff = _sp.run(["git", "-C", REPO_DIR, "diff", "--name-only",
-                             f"HEAD..origin/{BRANCH}"], capture_output=True, text=True, timeout=10)
+                             f"{local_hash}..origin/{BRANCH}"], capture_output=True, text=True, timeout=10)
             changed = [x for x in _diff.stdout.split("\n") if x.strip()]
         mode = _upd_classify(changed) if update_available else "none"
+        # Clone already at origin but nothing recorded as deployed = a previous
+        # install died after the pull. "Up to date" would be a lie and would
+        # leave no way to retry, so offer the reinstall that actually fixes it.
+        if deploy_unknown and not update_available:
+            update_available, mode = True, "full"
+            out = "Deployment unverified - reinstall to be sure the code is live"
+        else:
+            out = ("Up to date" if not update_available else
+                   (f"Quick update: {commits_behind} commit(s), {len(changed)} file(s)"
+                    if mode == "incremental" else
+                    f"Full upgrade: {commits_behind} commit(s) (structural changes)"))
         return web.json_response({
             "ok": True,
             "version": ver.stdout.strip(),
@@ -2107,23 +2153,32 @@ async def api_update(request):
             "commits_behind": commits_behind,
             "mode": mode,                 # "incremental" | "full" | "none"
             "changed": len(changed),
-            "out": ("Up to date" if not update_available else
-                    (f"Quick update: {commits_behind} commit(s), {len(changed)} file(s)"
-                     if mode == "incremental" else
-                     f"Full upgrade: {commits_behind} commit(s) (structural changes)")),
+            "deploy_unknown": deploy_unknown,
+            "out": out,
         })
 
     # action == "update"
     # Fetch so origin reflects GitHub, see what changed, and size the update.
     _sp.run(["git", "-C", REPO_DIR, "fetch", "--quiet"], capture_output=True, text=True, timeout=25)
-    _diff = _sp.run(["git", "-C", REPO_DIR, "diff", "--name-only", f"HEAD..origin/{BRANCH}"],
+    # Diff from what is DEPLOYED, not from HEAD - otherwise an install that died
+    # after the pull looks like "Already up to date" and can never be retried.
+    _base = _deployed_commit()
+    _deploy_unknown = not _base or _sp.run(
+        ["git", "-C", REPO_DIR, "cat-file", "-e", _base + "^{commit}"],
+        capture_output=True, timeout=10).returncode != 0
+    if _deploy_unknown:
+        _base = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "HEAD"],
+                        capture_output=True, text=True, timeout=10).stdout.strip()
+    _diff = _sp.run(["git", "-C", REPO_DIR, "diff", "--name-only", f"{_base}..origin/{BRANCH}"],
                     capture_output=True, text=True, timeout=10)
     changed = [x for x in _diff.stdout.split("\n") if x.strip()]
-    if not changed:
+    if not changed and not _deploy_unknown:
         return web.json_response({"ok": True, "out": "Already up to date", "restarted": False})
 
     forced = str(d.get("mode", "")).strip().lower()
-    mode = forced if forced in ("full", "incremental") else _upd_classify(changed)
+    # Nothing recorded as deployed -> we cannot know what is live, so reinstall.
+    mode = (forced if forced in ("full", "incremental")
+            else ("full" if _deploy_unknown else _upd_classify(changed)))
 
     # Pull to latest (the source tree for both paths).
     r = _sp.run(["git", "-C", REPO_DIR, "pull", "--ff-only"], capture_output=True, text=True, timeout=60)
@@ -2173,6 +2228,10 @@ async def api_update(request):
     except Exception as e:
         return web.json_response({"ok": False, "restarted": False,
             "out": out + "\nincremental copy failed: " + str(e)})
+    # Copies succeeded -> this commit really is deployed. Stamp it, or the next
+    # status check falls back to HEAD and the "unverified" prompt never clears.
+    _set_deployed(_sp.run(["git", "-C", REPO_DIR, "rev-parse", "HEAD"],
+                          capture_output=True, text=True, timeout=10).stdout.strip())
     cmds = []
     if reload_nginx: cmds.append("nginx -t && systemctl reload nginx")
     for svc in ("stealth-dashboard", "mb-oled", "magicbridge"):
