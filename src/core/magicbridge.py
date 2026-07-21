@@ -1467,13 +1467,28 @@ async def api_power(request):
     except Exception:
         return web.json_response({"ok": False}, status=400)
     action = str(d.get("action", ""))
-    if action == "shutdown":
-        subprocess.Popen(["sudo", "shutdown", "-h", "now"])
-        return web.json_response({"ok": True, "action": "shutdown"})
-    if action == "reboot":
-        subprocess.Popen(["sudo", "reboot"])
-        return web.json_response({"ok": True, "action": "reboot"})
-    return web.json_response({"ok": False, "error": "unknown action"}, status=400)
+    cmd = {"shutdown": ["sudo", "shutdown", "-h", "now"],
+           "reboot":   ["sudo", "reboot"]}.get(action)
+    if not cmd:
+        return web.json_response({"ok": False, "error": "unknown action"}, status=400)
+    # Popen fire-and-forget reported ok:True even when the command failed, so a
+    # broken sudo looked exactly like a successful shutdown. systemd returns
+    # from `shutdown`/`reboot` as soon as logind accepts the request, so a real
+    # run() is cheap - and if the box goes down first the client just loses the
+    # connection, which the UI already treats as the expected success path.
+    log.info("power: %s requested", action)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    except subprocess.TimeoutExpired:
+        return web.json_response({"ok": True, "action": action})   # going down
+    except Exception as e:
+        log.error("power: %s failed to launch: %s", action, e)
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+    if p.returncode != 0:
+        err = (p.stderr or p.stdout or "").strip()[:200] or f"rc={p.returncode}"
+        log.error("power: %s FAILED: %s", action, err)
+        return web.json_response({"ok": False, "error": err}, status=500)
+    return web.json_response({"ok": True, "action": action})
 
 
 

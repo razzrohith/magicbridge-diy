@@ -1689,6 +1689,32 @@ function toast(msg,dur=2800){
   clearTimeout(_toastT);_toastT=setTimeout(()=>el.classList.remove('on'),dur);
 }
 
+// Session-expiry guard. Nothing in this UI checked fetch() status, so once the
+// session expired EVERY control silently did nothing while still showing its
+// success toast - the page looked alive and was completely dead. Found the bad
+// way: "Shutdown Pi" returned 401 twice, the UI said "Shutting down...", and the
+// Pi stayed up. Believing a Pi is off and pulling its power is exactly the
+// SD-card corruption the button exists to avoid.
+// One wrapper fixes every call site at once instead of auditing ~40 of them.
+let _authRedirecting=false;
+(function(){
+  const _fetch=window.fetch;
+  window.fetch=async function(input,init){
+    const r=await _fetch(input,init);
+    try{
+      const url=(typeof input==='string')?input:(input&&input.url)||'';
+      // /login and /logout answer 401 legitimately (bad password) - bouncing
+      // those to /login would loop.
+      if(r.status===401 && url.startsWith('/api/') && !_authRedirecting){
+        _authRedirecting=true;
+        toast('Session expired - sign in again',4000);
+        setTimeout(()=>{location.href='/login';},1200);
+      }
+    }catch(e){}
+    return r;
+  };
+})();
+
 // Fullscreen
 function toggleFS(){
   if(!document.fullscreenElement){ document.documentElement.requestFullscreen().catch(()=>{}); }
@@ -2211,8 +2237,22 @@ function toggleRecord(){
 // Power
 async function piPower(a){
   if(!confirm(a==='shutdown'?'Shut down the Pi?':'Reboot the Pi?')) return;
-  toast(a==='shutdown'?'Shutting down…':'Rebooting…',5000);
-  await fetch('/api/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})});
+  // Only claim it happened once the server says so. The old code toasted
+  // "Shutting down..." BEFORE the request and never looked at the reply, so a
+  // 401 or a failed sudo was indistinguishable from success.
+  toast(a==='shutdown'?'Shutting down…':'Rebooting…',6000);
+  try{
+    const r=await fetch('/api/power',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:a})});
+    if(r.status===401) return;           // the fetch guard is already redirecting
+    const d=await r.json().catch(()=>null);
+    if(!r.ok || !d || !d.ok){
+      toast('FAILED: '+((d&&d.error)||('HTTP '+r.status))+' - Pi is still running',6000);
+    }
+  }catch(e){
+    // A real shutdown kills the connection mid-request, so a network error here
+    // is the EXPECTED success path - don't cry wolf.
+    toast(a==='shutdown'?'Shutting down…':'Rebooting…',6000);
+  }
 }
 
 // Tailscale
