@@ -239,10 +239,32 @@ check PiKVM's own equivalent · **[PORT-concept]** take the idea, not the code.
     Before debugging capture code, check `vcgencmd get_throttled` and put the Pi
     on a real 5V/3A supply. (The same unit also dropped off the network entirely.)
 
+30. **New config defaults NEVER reach already-installed units** `[PORT — check hard]`
+    — the sharpest one of this batch, because it makes a "shipped" fix silently
+    a no-op on the existing fleet. DIY's installer wrote `config.json` only when
+    it was **absent** (`"already exists, skipping"`). So a Pi upgraded through
+    the web UI took every code change — repo HEAD, the item-26 WiFi retry, the
+    item-27 timeout — and STILL had no `mdns_alias`, leaving `magicbridge.local`
+    dead on exactly the headless units item 28 added it for. Every future default
+    had the same hole. Fix: **backfill MISSING keys only**, never overwrite an
+    existing value (so a deliberate `mdns_alias:""` survives, and auth hashes /
+    saved settings are untouched), write via temp+`os.replace` so an interrupted
+    upgrade can't truncate the config and brick the backend, and make it
+    idempotent. CHECK your own installer/updater: does an upgrade reconcile
+    config schema, or only code? Test it the honest way — take a unit installed
+    from an OLD build, upgrade it through the real UI path, and diff its config
+    against the current defaults. A green update log is not evidence.
+    Related trap: DIY only caught this because the update classifier treats
+    `install.sh` as structural and re-runs it; if your updater only rsyncs files,
+    a config migration will never run at all.
+
 ---
 
 ## Session commits (DIY repo `magicbridge-diy`, for reference)
 ```
+8b7318f fix(config): backfill missing defaults on upgrade                        (item 30)
+ef76bf1 test(power): option-4 splitter passes clean; get_throttled sticky bits
+b90389a feat(diag): mb-power-test.sh - objective A/B test of power-path wiring
 fd5044b fix(image): deploy ALL unit files (stale .service undid the WiFi fix)    (item 27)
 f123533 fix(wifi): wrong password stranded the unit - verify + re-raise hotspot  (item 26)
 30cf625 feat(mdns): magicbridge.local ON by default (headless reachability)      (item 28)
