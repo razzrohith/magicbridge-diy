@@ -1935,11 +1935,16 @@ _UPD_FILE_MAP = {
     "src/core/mb-lockdown.sh":            ("/usr/local/bin/mb-lockdown.sh", None),
     "src/core/mb-firstboot.sh":           ("/usr/local/bin/mb-firstboot.sh", None),
     "src/core/mb-secret-reset.sh":        ("/usr/local/bin/mb-secret-reset.sh", None),
+    "src/core/mb-power-test.sh":          ("/usr/local/bin/mb-power-test.sh", None),
     "src/provision/mb-provision.sh":      ("/usr/local/bin/mb-provision.sh", None),
     "src/nginx/magicbridge.conf":         ("/etc/nginx/sites-available/magicbridge", "nginx-reload"),
     "src/edid/mb-edid-1080p50.hex":       (_UPD_INSTALL_DIR + "/edid/mb-edid-1080p50.hex", None),
 }
 # Non-runtime paths: changing only these needs no deploy (docs, build-host tools).
+# NOTE .ps1 is handled separately below - those are Windows helper scripts that
+# run on the OPERATOR'S laptop and never touch the Pi, so letting one fall
+# through to the "unknown file" branch would force a pointless full reinstall
+# here (mb-rescue.ps1 did exactly that).
 _UPD_IGNORE_PREFIXES = ("docs/", "src/provision/build-image.sh")
 _UPD_IGNORE_FILES    = ("README.md", ".gitignore", "LICENSE", "NOTICE", "CLAUDE.md",
                         "MAGICBRIDGE_HANDBOOK.md")
@@ -1955,6 +1960,8 @@ def _upd_classify(changed):
             continue
         if f.startswith(_UPD_IGNORE_PREFIXES) or f in _UPD_IGNORE_FILES:
             continue
+        if f.endswith(".ps1"):
+            continue    # Windows-host helper; nothing to deploy on the Pi
         return "full"   # unknown runtime file - let the installer handle it
     return "incremental"
 

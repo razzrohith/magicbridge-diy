@@ -245,9 +245,11 @@ cp "$SRC_DIR/src/core/mb-setup-fan.sh" /usr/local/bin/mb-setup-fan.sh   # option
 cp "$SRC_DIR/src/core/mb-firstboot.sh"   /usr/local/bin/mb-firstboot.sh   # first-boot install/personalize + OLED guidance
 cp "$SRC_DIR/src/core/mb-firstboot-late.sh" /usr/local/bin/mb-firstboot-late.sh  # post-boot part 2: rootfs grow + unique EDID serial
 cp "$SRC_DIR/src/core/mb-secret-reset.sh" /usr/local/bin/mb-secret-reset.sh # per-unit secret reset (pre-baked images)
+cp "$SRC_DIR/src/core/mb-power-test.sh" /usr/local/bin/mb-power-test.sh # power-path A/B diagnostic (docs/POWER_TESTS.md)
 chmod +x /usr/local/bin/mb-gadget.sh /usr/local/bin/mb-provision.sh /usr/local/bin/mb-lockdown.sh \
          /usr/local/bin/mb-mdns-alias.sh /usr/local/bin/mb-hdmi-init.sh /usr/local/bin/mb-setup-fan.sh \
-         /usr/local/bin/mb-firstboot.sh /usr/local/bin/mb-firstboot-late.sh /usr/local/bin/mb-secret-reset.sh
+         /usr/local/bin/mb-firstboot.sh /usr/local/bin/mb-firstboot-late.sh /usr/local/bin/mb-secret-reset.sh \
+         /usr/local/bin/mb-power-test.sh
 
 # Stage the WebRTC add-on installer so `--with-webrtc` (or a later manual run)
 # can build the Janus H.264 path. It is NOT executed here unless --with-webrtc.
