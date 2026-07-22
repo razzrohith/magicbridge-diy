@@ -235,6 +235,34 @@ class VideoManager:
             pass
         return defaults
 
+    def detect_csi_timings(self, device: str = None):
+        """(width, height, fps) of the LIVE HDMI signal on a CSI capture, or None.
+
+        The TC358743 re-locks its capture format to whatever the source is
+        actually sending, so the driver is the authority - not config.json.
+        Asking ustreamer for a resolution the device is not in produces no
+        frames at all (the UI just says "No Signal"), or torn/garbage frames on
+        the MJPEG path. Seen live: an iPad negotiated 1280x720@60 while config
+        still said 1920x1080@50, and the stream was dead until this matched.
+        """
+        dev = device or self.device or "/dev/video0"
+        try:
+            r = subprocess.run(["v4l2-ctl", "--device", dev, "--query-dv-timings"],
+                               capture_output=True, text=True, timeout=5)
+            w = re.search(r"Active width:\s*(\d+)", r.stdout)
+            h = re.search(r"Active height:\s*(\d+)", r.stdout)
+            f = re.search(r"\(([\d.]+) frames per second\)", r.stdout)
+            if not (w and h):
+                return None
+            width, height = int(w.group(1)), int(h.group(1))
+            if width < 160 or height < 120:      # 0x0 = no signal locked
+                return None
+            fps = int(round(float(f.group(1)))) if f else 0
+            return (width, height, fps)
+        except Exception as e:
+            log.debug("detect_csi_timings failed: %s", e)
+            return None
+
     def get_best_mjpeg_resolution(self, device: str = None) -> str:
         """Return the highest native MJPEG resolution the capture card supports.
 
@@ -316,11 +344,37 @@ class VideoManager:
                 log.info("Auto capture mode: %s is '%s' -> %s mode",
                          self.device, dtype, self.mode)
 
+            # CSI: follow the LIVE signal, never the configured resolution.
+            # The TC358743 re-locks to whatever the source sends, so a config
+            # value of 1920x1080 against a source doing 1280x720 means ustreamer
+            # asks for a format the device is not in -> zero frames -> the UI
+            # says "No Signal" while `--query-dv-timings` clearly shows a signal.
+            # That mismatch was also producing the long-standing torn/green
+            # frames on the MJPEG path, so it is fixed for both.
+            if self.device_type(self.device) == "csi":
+                det = self.detect_csi_timings(self.device)
+                if det:
+                    dw, dh, dfps = det
+                    detected = f"{dw}x{dh}"
+                    if detected != self.resolution:
+                        log.info("CSI signal is %s@%sfps - overriding configured %s "
+                                 "(the device follows the source, so we must too)",
+                                 detected, dfps or "?", self.resolution)
+                        self.resolution = detected
+                    # Never ask for more fps than the source produces; asking for
+                    # fewer is fine (ustreamer just drops frames).
+                    if dfps and dfps < self.fps:
+                        log.info("CSI source is %dfps - capping requested %d", dfps, self.fps)
+                        self.fps = dfps
+                else:
+                    log.warning("CSI device %s reports no locked timings - "
+                                "no HDMI signal? keeping configured %s",
+                                self.device, self.resolution)
+
             # Auto-detect best native MJPEG resolution when not explicitly set.
             # This lets MagicBridge adapt to any laptop/screen resolution automatically:
             # 14" 1080p, 16" 1440p, 4K, etc. Just uses whatever the capture card signals.
-            # Skipped in h264 mode: the C790/CSI path uses whatever resolution is
-            # already configured (typically 1920x1080), not the MJPEG-block scan.
+            # Skipped in h264 mode: CSI resolution is decided above from the live signal.
             if not resolution and self.mode != "h264":
                 best = self.get_best_mjpeg_resolution(self.device)
                 if best and best != self.resolution:
