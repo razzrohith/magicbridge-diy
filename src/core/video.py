@@ -468,6 +468,9 @@ class VideoManager:
             "--host",           STREAM_HOST,
             "--port",           str(self.port),
             "--workers",        "2",
+            # Same buffer-starvation fix as the H.264 path above: keep clearly
+            # more buffers than workers so a frame is never recycled mid-encode.
+            "--buffers",        "6",
             "--persistent",
             # drop-same-frames removed
         ]
@@ -553,6 +556,15 @@ class VideoManager:
             "--format",          "UYVY",
             "--encoder",         "M2M-IMAGE",
             "--workers",          "3",
+            # MORE BUFFERS THAN WORKERS - this is what fixes the torn/green
+            # scanlines. ustreamer defaults to 5 (min(cores,4)+1); with 3
+            # workers that leaves too little slack, so the driver recycles a
+            # buffer while a worker is still encoding it and the JPEG comes out
+            # with bands of mismatched data (which in dark scenes decodes green).
+            # Proven on the unit: raw CSI frames were clean while ustreamer
+            # output was badly banded; --buffers=8 made it pixel-clean with no
+            # other change. ~1.8MB per buffer at 720p, ~4MB at 1080p.
+            "--buffers",          "8",
             "--persistent",
             "--dv-timings",
             "--drop-same-frames", "30",
