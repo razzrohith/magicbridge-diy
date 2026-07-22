@@ -101,6 +101,75 @@ def _is_authed(request: web.Request) -> bool:
     token = request.cookies.get(SESSION_COOKIE, "")
     return bool(token) and _check_token(token, secret)
 
+
+# ── TOTP (RFC 6238) ──────────────────────────────────────────────────────────
+# Hand-rolled rather than adding pyotp: it is ~20 lines of hmac, and every extra
+# dependency is another thing that can be missing on a fresh flash and take the
+# login page down with it. Verified against the RFC 6238 SHA-1 test vectors.
+#
+# ANTI-LOCKOUT is the whole design here - this guards the only way into the
+# device, so every path assumes the user WILL lose their phone:
+#   * 2FA cannot be enabled without first entering a live code, so a mistyped
+#     or mis-scanned secret is caught before it can lock anyone out;
+#   * ten single-use recovery codes are issued at setup;
+#   * `magicbridge.py --disable-2fa` turns it off from an SSH shell;
+#   * a +/-1 step window absorbs ordinary phone/Pi clock drift.
+_B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+def _b32decode(s: str) -> bytes:
+    s = "".join(c for c in s.upper() if c in _B32)
+    bits = "".join(bin(_B32.index(c))[2:].zfill(5) for c in s)
+    return bytes(int(bits[i:i + 8], 2) for i in range(0, len(bits) - 7, 8))
+
+def _totp_at(secret_b32: str, counter: int, digits: int = 6) -> str:
+    key = _b32decode(secret_b32)
+    msg = counter.to_bytes(8, "big")
+    dig = hmac.new(key, msg, hashlib.sha1).digest()
+    off = dig[-1] & 0x0F
+    code = ((dig[off] & 0x7F) << 24 | dig[off + 1] << 16 |
+            dig[off + 2] << 8 | dig[off + 3]) % (10 ** digits)
+    return str(code).zfill(digits)
+
+def _totp_verify(secret_b32: str, code: str, window: int = 1) -> bool:
+    code = "".join(ch for ch in str(code) if ch.isdigit())
+    if not code or not secret_b32:
+        return False
+    counter = int(time.time()) // 30
+    for drift in range(-window, window + 1):
+        if hmac.compare_digest(_totp_at(secret_b32, counter + drift), code):
+            return True
+    return False
+
+def _totp_new_secret() -> str:
+    import secrets as _s
+    return "".join(_s.choice(_B32) for _ in range(32))
+
+def _recovery_hash(code: str) -> str:
+    return hashlib.sha256(code.replace("-", "").upper().encode()).hexdigest()
+
+def _totp_enabled() -> bool:
+    a = _auth_cfg()
+    return bool(a.get("totp_enabled")) and bool(a.get("totp_secret"))
+
+def _totp_check_login(code: str) -> bool:
+    """Accept a live TOTP code OR consume a single-use recovery code."""
+    auth = _auth_cfg()
+    if _totp_verify(auth.get("totp_secret", ""), code):
+        return True
+    h = _recovery_hash(code)
+    remaining = list(auth.get("totp_recovery", []))
+    if h in remaining:
+        remaining.remove(h)                      # single use - burn it
+        try:
+            cfg = json.loads(Path(CONFIG_PATH).read_text())
+            cfg.setdefault("auth", {})["totp_recovery"] = remaining
+            Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+            log.warning("2FA: recovery code used (%d left)", len(remaining))
+        except Exception as e:
+            log.error("2FA: could not burn recovery code: %s", e)
+        return True
+    return False
+
 def _ensure_auth_defaults():
     """Bootstrap auth.main_password_hash/main_secret_key if config.json
     doesn't have them yet (e.g. first boot). These are namespaced under
@@ -337,10 +406,29 @@ __ERROR__
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
   <input type="password" id="pw" name="pw" placeholder="Enter password" autocomplete="current-password" autofocus>
 </div>
+__TOTP__
 <button type="submit">Unlock MagicBridge</button>
 </form>
 <div class="foot">Self-hosted KVM-over-IP · this device only</div>
 </div></main></body></html>"""
+
+
+def _login_page(error: str = "", status: int = 200) -> web.Response:
+    """Render the login page, showing the 2FA field only when 2FA is on."""
+    html = LOGIN_HTML.replace(
+        "__ERROR__", f'<div class="err">{error}</div>' if error else "")
+    if _totp_enabled():
+        html = html.replace("__TOTP__",
+            '<label for="code">2FA code</label>'
+            '<div class="pw-wrap">'
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" '
+            'stroke-linecap="round" stroke-linejoin="round">'
+            '<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>'
+            '<input type="text" id="code" name="code" placeholder="6-digit code (or recovery code)" '
+            'autocomplete="one-time-code" inputmode="text"></div>')
+    else:
+        html = html.replace("__TOTP__", "")
+    return web.Response(text=html, content_type="text/html", status=status)
 
 
 async def login_handler(request: web.Request) -> web.Response:
@@ -352,8 +440,20 @@ async def login_handler(request: web.Request) -> web.Response:
             pw = str(data.get("pw", ""))
         except Exception:
             pw = ""
+        try:
+            code = str(data.get("code", ""))
+        except Exception:
+            code = ""
         auth = _auth_cfg()
         if pw and _check_pw(pw, auth.get("main_password_hash", "")):
+            # Password is right; if 2FA is on it still has to clear the second
+            # factor. Deliberately ONE form rather than a two-step flow with
+            # server-side pending state - a half-authenticated state is exactly
+            # where an auth bug becomes a bypass or a lockout.
+            if _totp_enabled() and not _totp_check_login(code):
+                _record_login_fail(ip)
+                log.info("2FA failed from %s", ip)
+                return _login_page("Incorrect or expired 2FA code.", status=401)
             _record_login_ok(ip)
             secret = auth.get("main_secret_key", "")
             resp = web.HTTPFound("/")
@@ -365,16 +465,110 @@ async def login_handler(request: web.Request) -> web.Response:
             return resp
         _record_login_fail(ip)
         log.info("Failed login from %s (attempt %d)", ip, _login_fails.get(ip, 0))
-        html = LOGIN_HTML.replace("__ERROR__", '<div class="err">Incorrect password.</div>')
-        return web.Response(text=html, content_type="text/html", status=401)
-    html = LOGIN_HTML.replace("__ERROR__", "")
-    return web.Response(text=html, content_type="text/html")
+        return _login_page("Incorrect password.", status=401)
+    return _login_page()
 
 
 async def logout_handler(request: web.Request) -> web.Response:
     resp = web.HTTPFound("/login")
     resp.del_cookie(SESSION_COOKIE, path="/")
     return resp
+
+
+def _save_auth(mutate) -> str:
+    """Read config, mutate cfg['auth'] via callback, write back. '' = ok."""
+    try:
+        cfg = json.loads(Path(CONFIG_PATH).read_text())
+    except Exception:
+        cfg = {}
+    mutate(cfg.setdefault("auth", {}))
+    try:
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        tmp = CONFIG_PATH + ".new"
+        Path(tmp).write_text(json.dumps(cfg, indent=2))
+        os.replace(tmp, CONFIG_PATH)
+        os.chmod(CONFIG_PATH, 0o600)
+        return ""
+    except Exception as e:
+        return str(e)
+
+
+async def api_2fa(request: web.Request) -> web.Response:
+    """GET  -> {enabled, recovery_left}
+    POST action=setup   -> new secret + otpauth URI + recovery codes (NOT enabled yet)
+         action=enable  -> requires a WORKING code for the pending secret
+         action=disable -> requires current password AND a working code
+    """
+    if request.method == "GET":
+        a = _auth_cfg()
+        return web.json_response({"ok": True, "enabled": _totp_enabled(),
+                                  "pending": bool(a.get("totp_pending")),
+                                  "recovery_left": len(a.get("totp_recovery", []))})
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    action = str(d.get("action", ""))
+    auth = _auth_cfg()
+
+    if action == "setup":
+        # Store as PENDING. Nothing about login changes until 'enable' proves a
+        # real code works - so a mis-scanned QR can never lock anyone out.
+        import secrets as _s
+        secret = _totp_new_secret()
+        codes = ["-".join([_s.token_hex(2).upper(), _s.token_hex(2).upper()]) for _ in range(10)]
+        err = _save_auth(lambda a: a.update({
+            "totp_pending": secret,
+            "totp_recovery_pending": [_recovery_hash(c) for c in codes]}))
+        if err:
+            return web.json_response({"ok": False, "error": err}, status=500)
+        label = "MagicBridge"
+        # socket is not imported at module scope; and the hostname is the
+        # spoofed DESKTOP-XXXXXXX one, which is exactly what should appear in
+        # the authenticator app - it must not read "MagicBridge Pi" on a phone.
+        import socket as _sock
+        uri = (f"otpauth://totp/{label}:{_sock.gethostname()}?secret={secret}"
+               f"&issuer={label}&algorithm=SHA1&digits=6&period=30")
+        # Recovery codes are returned ONCE, in the clear, and only their hashes
+        # are stored - same reason password hashes exist.
+        return web.json_response({"ok": True, "secret": secret, "uri": uri,
+                                  "recovery": codes})
+
+    if action == "enable":
+        pending = auth.get("totp_pending", "")
+        if not pending:
+            return web.json_response({"ok": False, "error": "Run setup first"}, status=400)
+        if not _totp_verify(pending, str(d.get("code", ""))):
+            return web.json_response(
+                {"ok": False, "error": "That code doesn't match - 2FA NOT enabled. "
+                                       "Check your phone's clock and try again."}, status=403)
+        err = _save_auth(lambda a: (a.update({
+            "totp_secret": pending, "totp_enabled": True,
+            "totp_recovery": a.get("totp_recovery_pending", [])}),
+            a.pop("totp_pending", None), a.pop("totp_recovery_pending", None)))
+        if err:
+            return web.json_response({"ok": False, "error": err}, status=500)
+        log.warning("2FA ENABLED")
+        return web.json_response({"ok": True, "enabled": True})
+
+    if action == "disable":
+        # Password AND a code: an unattended browser tab must not be able to
+        # silently strip the second factor.
+        if not _check_pw(str(d.get("password", "")), auth.get("main_password_hash", "")):
+            return web.json_response({"ok": False, "error": "Password is incorrect"}, status=403)
+        if _totp_enabled() and not _totp_check_login(str(d.get("code", ""))):
+            return web.json_response({"ok": False, "error": "2FA code is incorrect"}, status=403)
+        err = _save_auth(lambda a: (a.update({"totp_enabled": False}),
+                                    a.pop("totp_secret", None),
+                                    a.pop("totp_recovery", None),
+                                    a.pop("totp_pending", None),
+                                    a.pop("totp_recovery_pending", None)))
+        if err:
+            return web.json_response({"ok": False, "error": err}, status=500)
+        log.warning("2FA disabled")
+        return web.json_response({"ok": True, "enabled": False})
+
+    return web.json_response({"ok": False, "error": "unknown action"}, status=400)
 
 
 async def api_change_password(request: web.Request) -> web.Response:
@@ -2501,6 +2695,8 @@ def build_app() -> web.Application:
     app.router.add_post("/login", login_handler)
     app.router.add_post("/logout", logout_handler)
     app.router.add_post("/api/auth/change-password", api_change_password)
+    app.router.add_get("/api/auth/2fa",  api_2fa)
+    app.router.add_post("/api/auth/2fa", api_2fa)
 
     app.router.add_get("/",                      index_handler)
     app.router.add_get("/ws",                    ws_handler)
@@ -2639,6 +2835,30 @@ async def main():
 
 if __name__ == "__main__":
     import sys as _sys
+    if "--disable-2fa" in _sys.argv:
+        # LOCKOUT ESCAPE HATCH. 2FA guards the only way into this device; if the
+        # phone is lost, wiped, or its clock drifts badly, and the recovery codes
+        # are gone too, this is the way back in. Requires root on the box (it
+        # writes /etc/magicbridge/config.json), which is the right bar: someone
+        # with an SSH shell already owns the device.
+        try:
+            _p = Path(CONFIG_PATH)
+            _cfg = json.loads(_p.read_text()) if _p.exists() else {}
+            _a = _cfg.setdefault("auth", {})
+            _was = bool(_a.get("totp_enabled"))
+            _a["totp_enabled"] = False
+            for _k in ("totp_secret", "totp_recovery", "totp_pending", "totp_recovery_pending"):
+                _a.pop(_k, None)
+            _tmp = CONFIG_PATH + ".new"
+            Path(_tmp).write_text(json.dumps(_cfg, indent=2))
+            os.replace(_tmp, CONFIG_PATH)
+            os.chmod(CONFIG_PATH, 0o600)
+            print("2FA disabled." if _was else "2FA was not enabled; nothing to do.")
+            print("Password login still applies. Restart: systemctl restart magicbridge")
+        except Exception as _e:
+            print("could not disable 2FA:", _e)
+            _sys.exit(1)
+        _sys.exit(0)
     if "--send-wol" in _sys.argv:
         # Entry point for the scheduled-WoL cron job: read the saved target MAC
         # and fire one magic packet, then exit. No server, no event loop.

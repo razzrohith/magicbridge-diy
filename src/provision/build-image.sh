@@ -263,7 +263,11 @@ if [[ -d "$REPO_DIR/src/core" ]]; then
   # nothing would ever write the stamp and EVERY freshly flashed unit would
   # report "deployment unverified - reinstall". The stamp is honest here: the
   # files above were just deployed from exactly this commit.
-  _HEADSHA=$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)
+  # safe.directory='*' like every other git call here: this runs as root against
+  # a repo that usually lives on a Windows mount, and git's dubious-ownership
+  # guard makes rev-parse fail silently otherwise - which is exactly how the
+  # first build of this shipped with no stamp at all (caught by --verify).
+  _HEADSHA=$(git -c safe.directory='*' -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)
   if [[ -n "$_HEADSHA" ]]; then
     mkdir -p "$MNT/etc/magicbridge" 2>/dev/null
     printf '%s\n' "$_HEADSHA" > "$MNT/etc/magicbridge/.deployed-commit"

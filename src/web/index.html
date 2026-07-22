@@ -970,6 +970,32 @@ body:not(.fs) .fs-hud{display:none!important}
           <div id="pw-change-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
         <div class="scard">
+          <div class="scard-title"><span class="dot-yel" style="background:var(--cyan,#39d0ff)"></span>Two-Factor (TOTP)</div>
+          <div class="snote" style="margin-bottom:8px">An authenticator code on top of the password. You must enter a working code before it turns on, so a bad scan can't lock you out.</div>
+          <div class="srow"><span class="sk">Status</span><span class="sv" id="tfa-status">-</span></div>
+          <div id="tfa-off">
+            <button class="sbtn" onclick="tfaSetup()" style="margin-top:6px;width:100%">🔐 Set up 2FA</button>
+          </div>
+          <div id="tfa-setup" style="display:none;margin-top:8px">
+            <div class="snote" style="margin-bottom:6px">1. Add this to your authenticator app:</div>
+            <div id="tfa-uri" style="font-size:9px;word-break:break-all;background:#0b1622;padding:6px;border-radius:4px;margin-bottom:6px"></div>
+            <div class="snote" style="margin-bottom:6px"><b>2. Save these recovery codes now</b> — shown once, each usable once:</div>
+            <div id="tfa-codes" style="font:11px/1.7 monospace;background:#0b1622;padding:6px;border-radius:4px;margin-bottom:8px"></div>
+            <label class="wifi-label" for="tfa-code">3. Enter a code from the app to confirm</label>
+            <input class="sinput wifi-field" type="text" id="tfa-code" placeholder="6-digit code" inputmode="numeric" style="margin-bottom:8px">
+            <button class="sbtn wifi-save-btn" onclick="tfaEnable()" style="width:100%">Turn 2FA on</button>
+          </div>
+          <div id="tfa-on" style="display:none;margin-top:8px">
+            <label class="wifi-label" for="tfa-dis-pw">Password</label>
+            <input class="sinput wifi-field" type="password" id="tfa-dis-pw" placeholder="Current password" style="margin-bottom:6px">
+            <label class="wifi-label" for="tfa-dis-code">2FA or recovery code</label>
+            <input class="sinput wifi-field" type="text" id="tfa-dis-code" placeholder="Code" style="margin-bottom:8px">
+            <button class="sbtn dan" onclick="tfaDisable()" style="width:100%">Turn 2FA off</button>
+            <div class="snote" style="margin-top:8px">Locked out? From an SSH shell on the Pi:<br><code style="font-size:9px">sudo python3 /opt/magicbridge/core/magicbridge.py --disable-2fa</code></div>
+          </div>
+          <div id="tfa-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+        </div>
+        <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>Network Lockdown</div>
           <div class="snote" style="margin-bottom:8px">Limit access to Tailscale only (no LAN or public). Needs Tailscale connected first.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="lockdown-status">-</span></div>
@@ -1237,6 +1263,59 @@ body:not(.fs) .fs-hud{display:none!important}
 <script>
 // Auth
 function mbLogout(){ fetch('/logout',{method:'POST'}).finally(()=>{ location.href='/login'; }); }
+
+// ── Two-factor (TOTP) ───────────────────────────────────────────────────────
+// Deliberately never enables 2FA optimistically: the server refuses unless a
+// live code verifies against the pending secret, and this UI only flips to the
+// "on" state after the server confirms. 2FA guards the only way into the
+// device, so every failure here must fail CLOSED (stay off), never open.
+function tfaMsg(t,ok){const e=document.getElementById('tfa-msg');e.style.display='block';
+  e.textContent=t;e.style.background=ok?'rgba(0,200,120,.15)':'rgba(255,80,80,.15)';
+  e.style.color=ok?'#7fe6b0':'#ff9d9d';}
+async function tfaRefresh(){
+  try{
+    const d=await (await fetch('/api/auth/2fa')).json();
+    const on=!!d.enabled;
+    document.getElementById('tfa-status').textContent=
+      on?('ON · '+(d.recovery_left||0)+' recovery codes left'):'Off';
+    document.getElementById('tfa-off').style.display  = on?'none':'block';
+    document.getElementById('tfa-on').style.display   = on?'block':'none';
+    if(on) document.getElementById('tfa-setup').style.display='none';
+  }catch(e){}
+}
+async function tfaSetup(){
+  const r=await fetch('/api/auth/2fa',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'setup'})});
+  const d=await r.json().catch(()=>null);
+  if(!r.ok||!d||!d.ok){ tfaMsg((d&&d.error)||'Setup failed',false); return; }
+  document.getElementById('tfa-uri').textContent=d.uri;
+  document.getElementById('tfa-codes').innerHTML=(d.recovery||[]).join('<br>');
+  document.getElementById('tfa-setup').style.display='block';
+  document.getElementById('tfa-off').style.display='none';
+  tfaMsg('Not on yet — enter a code from your app to confirm.',true);
+}
+async function tfaEnable(){
+  const code=document.getElementById('tfa-code').value.trim();
+  if(!code){ tfaMsg('Enter the 6-digit code',false); return; }
+  const r=await fetch('/api/auth/2fa',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'enable',code})});
+  const d=await r.json().catch(()=>null);
+  if(!r.ok||!d||!d.ok){ tfaMsg((d&&d.error)||'Could not enable',false); return; }
+  document.getElementById('tfa-code').value='';
+  tfaMsg('2FA is on. Keep those recovery codes somewhere safe.',true);
+  tfaRefresh();
+}
+async function tfaDisable(){
+  const password=document.getElementById('tfa-dis-pw').value;
+  const code=document.getElementById('tfa-dis-code').value.trim();
+  const r=await fetch('/api/auth/2fa',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'disable',password,code})});
+  const d=await r.json().catch(()=>null);
+  if(!r.ok||!d||!d.ok){ tfaMsg((d&&d.error)||'Could not disable',false); return; }
+  document.getElementById('tfa-dis-pw').value='';document.getElementById('tfa-dis-code').value='';
+  tfaMsg('2FA turned off.',true);
+  tfaRefresh();
+}
 
 async function changeMainPassword(){
   const cur=document.getElementById('pw-current').value;
@@ -2633,6 +2712,9 @@ function sysNavShow(cat){
   document.querySelectorAll('.sys-cat').forEach(c=>c.classList.toggle('active',c.dataset.cat===cat));
   const sub=document.getElementById('sys-cat-sub');
   if(sub) sub.textContent=SYS_CAT_LABELS[cat]||cat;
+  // Refresh 2FA state whenever Security is opened, so the panel can't show a
+  // stale "Off" after it was enabled from another tab or reset over SSH.
+  if(cat==='security' && typeof tfaRefresh==='function') tfaRefresh();
 }
 
 // OLED display settings: fetch/populate form, live client-side preview
