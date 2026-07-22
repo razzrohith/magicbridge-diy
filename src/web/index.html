@@ -2002,10 +2002,35 @@ function startWebRTC(){
           },
           onremotetrack: function(track, mid, added){
             if(!added) return;
-            clearTimeout(_webrtcTimeout);
             const vid = document.getElementById('webrtc-view');
             if(vid.srcObject === null) vid.srcObject = new MediaStream();
-            vid.srcObject.addTrack(track.clone());
+            // Attach the REMOTE track directly. The old code added
+            // track.clone(): cloning a remote MediaStreamTrack is legal but
+            // not what any Janus example does, and a clone can end up muted
+            // and never render - a live track with no pixels.
+            vid.srcObject.addTrack(track);
+            if(track.kind === 'video'){
+              // A track ARRIVING is not video PLAYING. The old code cancelled
+              // the fallback timer here, which disarmed the safety net before
+              // it could help: if no frames ever decoded you got a black video
+              // element and NO "WebRTC unavailable" banner, so the UI looked
+              // healthy while showing nothing. Only cancel once the element
+              // actually has pixels (videoWidth > 0).
+              const confirmPlaying = function(){
+                if(vid.videoWidth > 0){
+                  clearTimeout(_webrtcTimeout);
+                  _webrtcTimeout = null;
+                  vid.removeEventListener('playing', confirmPlaying);
+                  vid.removeEventListener('loadeddata', confirmPlaying);
+                }
+              };
+              vid.addEventListener('playing', confirmPlaying);
+              vid.addEventListener('loadeddata', confirmPlaying);
+              // autoplay+muted normally suffices, but some browsers need the
+              // explicit call once srcObject is swapped after page load.
+              const p = vid.play();
+              if(p && p.catch) p.catch(function(e){ console.warn('webrtc play() rejected:', e); });
+            }
             // Audio track only shows up if the C790 has I2S audio wired +
             // Janus's audio block resolved a real ALSA device (see video.py
             // _sync_janus_audio_cfg). Reveal the unmute control only when
