@@ -106,6 +106,17 @@ def _read_config() -> dict:
         return json.loads(p.read_text())
 
 
+async def _run_off_loop(cmd, **kw):
+    """Run a blocking subprocess in a thread so it doesn't freeze the event
+    loop. aiohttp is single-threaded: a long subprocess.run() in a handler
+    (git pull ~60s, tailscale install ~120s) blocks EVERY connected client's
+    keyboard/mouse over /ws and all status polling for its whole duration.
+    The long-running admin commands are routed through here."""
+    import subprocess as _subp
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: _subp.run(cmd, **kw))
+
+
 # Auth helpers
 def _auth_cfg() -> dict:
     try:
@@ -1879,7 +1890,7 @@ async def api_tailscale(request):
     if action == "install":
         if installed:
             return web.json_response({"ok": True, "msg": "already installed"})
-        r = subprocess.run(
+        r = await _run_off_loop(
             ["bash", "-c", "curl -fsSL https://tailscale.com/install.sh | sh"],
             capture_output=True, text=True, timeout=120
         )
@@ -1907,7 +1918,7 @@ async def api_tailscale(request):
         cmd = ["tailscale", "up", "--accept-routes"]
         if authkey:
             cmd += ["--authkey", authkey]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+        r = await _run_off_loop(cmd, capture_output=True, text=True, timeout=20)
         out4 = r.stdout + r.stderr
         m4 = _re3.search(r"https://login\.tailscale\.com/\S+", out4)
         login_url = m4.group(0).rstrip(".") if m4 else ""
@@ -2485,7 +2496,8 @@ async def api_update(request):
 
     # action == "update"
     # Fetch so origin reflects GitHub, see what changed, and size the update.
-    _sp.run(["git", "-C", REPO_DIR, "fetch", "--quiet"], capture_output=True, text=True, timeout=25)
+    # Off-loop: a network fetch/pull would otherwise freeze every client's input.
+    await _run_off_loop(["git", "-C", REPO_DIR, "fetch", "--quiet"], capture_output=True, text=True, timeout=25)
     # Diff from what is DEPLOYED, not from HEAD - otherwise an install that died
     # after the pull looks like "Already up to date" and can never be retried.
     _base = _deployed_commit()
@@ -2506,8 +2518,8 @@ async def api_update(request):
     mode = (forced if forced in ("full", "incremental")
             else ("full" if _deploy_unknown else _upd_classify(changed)))
 
-    # Pull to latest (the source tree for both paths).
-    r = _sp.run(["git", "-C", REPO_DIR, "pull", "--ff-only"], capture_output=True, text=True, timeout=60)
+    # Pull to latest (the source tree for both paths). Off-loop: ~60s worst case.
+    r = await _run_off_loop(["git", "-C", REPO_DIR, "pull", "--ff-only"], capture_output=True, text=True, timeout=60)
     out = (r.stdout + r.stderr).strip()
     if r.returncode != 0:
         return web.json_response({"ok": False, "out": out, "restarted": False})
