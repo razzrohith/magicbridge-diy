@@ -97,6 +97,12 @@ if [[ "$MODE" == "verify" ]]; then
   chk "machine-id blank/absent"                      '[ ! -s "$R/etc/machine-id" ]'
   chk "no saved WiFi profiles"                       '! ls "$R"/etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null | grep -q .'
   chk "no spoofed-MAC conf (unique MAC per unit)"    '[ ! -f "$R/etc/NetworkManager/conf.d/00-mb-macspoof.conf" ]'
+  chk "no DuckDNS token cron (shared credential)"    '[ ! -f "$R/etc/cron.d/mb-duckdns" ]'
+  chk "no DuckDNS IP-history log"                    '[ ! -f "$R/var/log/mb-duckdns.log" ]'
+  chk "no baked-MAC systemd unit (mb-mac.service)"   '[ ! -f "$R/etc/systemd/system/mb-mac.service" ]'
+  chk "no plaintext WiFi PSK (.provision-wifi)"      '[ ! -f "$R/etc/magicbridge/.provision-wifi" ]'
+  chk "dbus machine-id blank (cross-link id)"        '[ ! -s "$R/var/lib/dbus/machine-id" ]'
+  chk "no AI provider keys in config"                'python3 -c "import json,sys;sys.exit(0 if not json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"ai\",{}).get(\"keys\") else 1)"'
   chk "no Tailscale identity"                        '[ ! -f "$R/var/lib/tailscale/tailscaled.state" ]'
   chk "no TLS cert (regenerated per unit)"           '[ ! -d "$R/etc/magicbridge/ssl" ]'
   chk "no plaintext config backup"                   '[ ! -d "$R/etc/magicbridge.orig_backup" ]'
@@ -302,6 +308,22 @@ rm -rf "$MNT/etc/magicbridge/ssl" "$MNT/etc/magicbridge.orig_backup" 2>/dev/null
 rm -f "$MNT"/var/log/magicbridge-ram/* "$MNT"/var/log/magicbridge-firstboot.log \
       "$MNT"/var/log/magicbridge-firstboot-late.log "$MNT"/var/log/magicbridge-provision.log 2>/dev/null || true
 rm -f "$MNT"/etc/NetworkManager/conf.d/00-mb-macspoof.conf 2>/dev/null || true
+# PARITY WITH mb-secret-reset.sh. The armed image is the DISTRIBUTED artifact -
+# first-boot secret-reset only runs AFTER someone flashes and boots it, so any
+# secret left here is readable by anyone who loop-mounts the .img. These were
+# missed and would ship real shared credentials:
+#   - /etc/cron.d/mb-duckdns : the DuckDNS token in cleartext (+ its IP-history log)
+#   - mb-mac.service         : a fixed MAC baked into ExecStart -> every flashed
+#                              unit shares the builder's MAC (breaks anonymity)
+#   - .provision-wifi        : SSID + plaintext WiFi PSK, if a golden unit was
+#                              interrupted mid-provision before it was deleted
+#   - /var/lib/dbus/machine-id : the dbus copy of the cross-linkable machine-id
+#                              (we already blank /etc/machine-id but not this one)
+rm -f "$MNT"/etc/cron.d/mb-duckdns "$MNT"/var/log/mb-duckdns.log 2>/dev/null || true
+rm -f "$MNT"/etc/systemd/system/mb-mac.service \
+      "$MNT"/etc/systemd/system/multi-user.target.wants/mb-mac.service 2>/dev/null || true
+rm -f "$MNT"/etc/magicbridge/.provision-wifi "$MNT"/tmp/mb-ts-key 2>/dev/null || true
+: > "$MNT/var/lib/dbus/machine-id" 2>/dev/null || true
 # Login/reboot history: the golden unit's wtmp/btmp/lastlog leak its usage
 # pattern and cross-link every flashed unit. Truncate them (keep the files so
 # logging still works), and drop any stale boot-partition setup report.
@@ -317,6 +339,7 @@ p=sys.argv[1]
 try: c=json.load(open(p))
 except Exception: c={}
 c.pop("auth",None); c.pop("tailscale",None); c.pop("duckdns",None)
+if isinstance(c.get("ai"),dict): c["ai"].pop("keys",None)   # provider API keys - never ship
 if isinstance(c.get("usb"),dict): c["usb"]["serial"]=""
 c["mac_persist"]={}                        # -> unique vendor MAC per unit
 c.setdefault("video",{})["mode"]="auto"    # -> detects C790/CSI or USB per unit
