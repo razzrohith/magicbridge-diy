@@ -1386,7 +1386,16 @@ function _scheduleReconnect(){
   setTimeout(()=>{ clearInterval(iv); connect(); }, wait);
 }
 let _pt=0;
-function ping(){ if(ws&&ws.readyState===1){_pt=Date.now();ws.send(JSON.stringify({type:'ping'}));} setTimeout(ping,3000); }
+// Single ping loop. ws.onopen used to call ping() on every reconnect and each
+// call chained its own setTimeout, so after N reconnects there were N parallel
+// ping loops clobbering _pt and skewing the latency readout. Guard so only one
+// timer ever runs.
+let _pingTimer = null;
+function ping(){
+  if(ws&&ws.readyState===1){_pt=Date.now();ws.send(JSON.stringify({type:'ping'}));}
+  clearTimeout(_pingTimer);
+  _pingTimer=setTimeout(ping,3000);
+}
 function send(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
 function onMsg(d){
   if(d.type==='pong'){
@@ -1986,12 +1995,20 @@ async function applyVideo(bitrate){
 //      below catch that case and switch the UI back to MJPEG live,
 //      without waiting for a page reload or another status poll.
 let _janus = null, _janusHandle = null, _activeTransport = null, _webrtcTimeout = null;
+// Once WebRTC has failed for this session, don't let the status poll keep
+// re-triggering it. The server honestly reports mode:'h264' (the sink is up)
+// while the client can't do WebRTC (Janus down, janus.js missing), so
+// syncVideoTransport saw 'h264' != 'mjpeg' every poll and re-ran startWebRTC:
+// an 8s black-then-fallback loop with a toast storm that never stabilized.
+// Reset only when the server genuinely leaves h264, or on a manual retry.
+let _webrtcGaveUp = false;
 
 function setVideoTransport(mode){
   _activeTransport = mode;
   const img = document.getElementById('stream');
   const vid = document.getElementById('webrtc-view');
   if(mode === 'h264'){
+    _webrtcGaveUp = false;   // a genuine attempt is starting; give it a fair try
     img.style.display = 'none';
     // CLOSE the MJPEG connection, don't just hide it. display:none does NOT
     // stop an in-flight <img> stream - the browser keeps the HTTP request open
@@ -2018,6 +2035,7 @@ function setVideoTransport(mode){
 // the dropdown so the UI reflects what's actually on screen.
 function _webrtcFallbackToMjpeg(reason){
   console.warn('WebRTC unavailable, falling back to MJPEG:', reason);
+  _webrtcGaveUp = true;         // stop the status poll from re-triggering WebRTC
   clearTimeout(_webrtcTimeout);
   stopWebRTC();
   const sel = document.getElementById('sel-mode');
@@ -2184,7 +2202,16 @@ function toggleAudioMute(){
 // running (video.py may have silently fallen back server-side). Only
 // acts on real changes so this is safe to call on every status poll.
 function syncVideoTransport(mode){
-  if(!mode || mode === _activeTransport) return;
+  if(!mode) return;
+  // Server left h264 (sink genuinely gone) -> allow WebRTC to be retried later.
+  // Checked BEFORE the no-change return: the UI is already on mjpeg after a
+  // fallback, so a server drop-to-mjpeg wouldn't change _activeTransport and
+  // would otherwise never clear the give-up latch.
+  if(mode !== 'h264') _webrtcGaveUp = false;
+  if(mode === _activeTransport) return;
+  // Server still says h264 but we already gave up this session: stay on MJPEG
+  // instead of re-entering the connect/fallback loop every poll.
+  if(mode === 'h264' && _webrtcGaveUp) return;
   const sel = document.getElementById('sel-mode');
   if(sel) sel.value = mode;
   setVideoTransport(mode);
@@ -2220,6 +2247,13 @@ function uaShort(ua){
   else if(/Safari\//.test(ua))br='Safari';
   return (br&&os)?br+' on '+os : (br||os||'device');
 }
+// HTML-escape for values interpolated into innerHTML. v.ip comes from a client
+// header (X-Real-IP passes through the /ws nginx block unescaped) and was
+// injected raw - a reachable stored-XSS sink in the authenticated operator's
+// session. Escape it (and any other server/target-derived text) before render.
+function _escHtml(s){ return String(s==null?'':s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function applyStatus(d){
   if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;}
   if(d.uptime){
@@ -2234,8 +2268,8 @@ function applyStatus(d){
     const list=document.getElementById('ss-viewers');
     if(list){
       list.innerHTML = d.viewers.length
-        ? d.viewers.map(v=>'<div class="vw"><span class="vw-ip">'+v.ip+'</span>'
-            +'<span class="vw-dev">'+uaShort(v.ua)+'</span>'
+        ? d.viewers.map(v=>'<div class="vw"><span class="vw-ip">'+_escHtml(v.ip)+'</span>'
+            +'<span class="vw-dev">'+_escHtml(uaShort(v.ua))+'</span>'
             +'<span class="vw-dur">'+durShort(v.secs)+'</span></div>').join('')
         : '<div class="vw-none">no active connections</div>';
     }
