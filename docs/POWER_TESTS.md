@@ -64,6 +64,37 @@ one and the failing one. Core voltage tracks DVFS (the SoC clocks down when idle
 so it is **not** a supply-sag indicator and must not be compared across different
 load modes. The live under-voltage bit is the honest signal.
 
+## 5.0V vs 5.1V is the whole ballgame (2026-07-21, measured)
+
+A "5V 3A" supply through the option-4 splitter still browned out **constantly**.
+Swapping to a **5.1V 3A** supply — nothing else changed — fixed it outright:
+
+| same load, same splitter, same cable run | 5.0V / 3A | **5.1V / 3A** |
+|---|---|---|
+| `get_throttled` | `0x50005` (live under-voltage **and** live throttling) | **`0x0`** |
+| ARM clock under a 4-core burn | **600 MHz, locked** | **1800 MHz** |
+| undervoltage events since boot | continuous | **0** |
+| temp under full load | - | 47.7 °C |
+
+The Pi 4 was pinned at its throttle floor — **running at a third of its rated
+speed** — and reached full 1800 MHz the moment the supply had headroom.
+
+Why 0.1V matters: the Pi 4 trips below **4.63V at the board**, and the losses
+stack — a USB-C power/data splitter costs 100-300 mV under 2A, and a thin or
+long cable another 200-300 mV. A 5.0V brick starts with no margin and loses.
+The official Raspberry Pi PSU is deliberately 5.1V for exactly this reason.
+
+**Diagnostic note:** 600 MHz alone proves nothing - it is also the Pi's normal
+*idle* clock. The test that settles it is to load all four cores and check
+whether the clock can RISE. If it stays at 600 MHz under full load with bit 2
+set, it is throttled.
+
+**What it did NOT cause:** the green banding (M2M encoder worker contention) and
+the high latency (55 Mbit/s MJPEG saturating WiFi) both had proven, separate
+causes and were fixed before this supply swap. Under-voltage cost CPU headroom
+for H.264 encoding - real, but a different problem. Do not let a live
+under-voltage banner become the explanation for every symptom.
+
 ## What each result actually means
 
 **Option 4 — splitter, data leg → laptop, power leg → wall charger.** The only
