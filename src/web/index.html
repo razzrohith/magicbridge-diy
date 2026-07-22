@@ -1356,7 +1356,14 @@ const WS_URL=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws
 let _wsBackoff=1000;   // exponential backoff, reset on a clean open
 function connect(){
   try{ ws=new WebSocket(WS_URL); }catch(e){ _scheduleReconnect(); return; }
-  ws.onopen=()=>{ dot('ok','Connected'); _wsAuthFails=0; _wsBackoff=1000; retryStream(); ping(); };
+  // Only (re)open the MJPEG stream if MJPEG is actually the active transport.
+  // Unconditionally calling retryStream() here resurrected the hidden <img>
+  // stream on every WebSocket reconnect - and the socket reconnects on any
+  // network blip - which would quietly undo the connection-close in
+  // setVideoTransport() and put MJPEG back on the wire alongside WebRTC.
+  ws.onopen=()=>{ dot('ok','Connected'); _wsAuthFails=0; _wsBackoff=1000;
+    if(_activeTransport !== 'h264') retryStream();
+    ping(); };
   ws.onclose=(ev)=>{
     // A WS handshake rejected for auth (session expired / cookie missing) closes
     // immediately with no open. After a couple of quick failures, stop
@@ -1941,6 +1948,16 @@ function setVideoTransport(mode){
   const vid = document.getElementById('webrtc-view');
   if(mode === 'h264'){
     img.style.display = 'none';
+    // CLOSE the MJPEG connection, don't just hide it. display:none does NOT
+    // stop an in-flight <img> stream - the browser keeps the HTTP request open
+    // and ustreamer keeps encoding and sending. Measured on a live unit while
+    // WebRTC was working: h264 sink had a client AND mjpeg clients was still 1,
+    // so ~50-100 Mbit/s of MJPEG was competing over WiFi with the very stream
+    // it had been replaced by, on a link we already proved MJPEG can saturate.
+    // Dropping the src is what actually ends the request. onErr() already
+    // returns early while _activeTransport is 'h264', so this cannot raise a
+    // spurious "No signal", and the periodic reconnect above is skipped too.
+    img.removeAttribute('src');
     vid.style.display = '';
     startWebRTC();
   } else {
@@ -2023,12 +2040,26 @@ function startWebRTC(){
               // element and NO "WebRTC unavailable" banner, so the UI looked
               // healthy while showing nothing. Only cancel once the element
               // actually has pixels (videoWidth > 0).
+              // POLL for pixels; do not trust media events. Relying on
+              // 'playing'/'loadeddata' alone regressed a working stream into a
+              // permanent MJPEG fallback: those events are not fired reliably
+              // for a srcObject MediaStream, so a perfectly good video never
+              // "confirmed", the timer fired, and the safety net became a false
+              // alarm. videoWidth is the ground truth - if the element has
+              // pixels, video is arriving, whatever the events did.
+              let _confirmTries = 0;
+              const _confirmTimer = setInterval(function(){
+                if(vid.videoWidth > 0){
+                  clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
+                  clearInterval(_confirmTimer);
+                } else if(++_confirmTries > 60){   // ~15s, outlives the 8s timer
+                  clearInterval(_confirmTimer);
+                }
+              }, 250);
               const confirmPlaying = function(){
                 if(vid.videoWidth > 0){
-                  clearTimeout(_webrtcTimeout);
-                  _webrtcTimeout = null;
-                  vid.removeEventListener('playing', confirmPlaying);
-                  vid.removeEventListener('loadeddata', confirmPlaying);
+                  clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
+                  clearInterval(_confirmTimer);
                 }
               };
               vid.addEventListener('playing', confirmPlaying);
