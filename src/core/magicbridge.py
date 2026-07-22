@@ -371,20 +371,47 @@ def _ensure_usb_defaults():
 # the main KVM login gets the same brute-force protection the admin panel
 # has always had. Per-IP, in-memory, resets on a successful login.
 _login_fails: dict = {}
+_login_lock_until: dict = {}   # ip -> monotonic time until which logins are refused
+# Serialize ALL login attempts through one lock. The old per-IP delay used
+# asyncio.sleep, so N concurrent POST /login coroutines all slept in PARALLEL -
+# the "throttle" imposed no real cost and there was no lockout, ever. With a
+# single gate, attempts are processed one at a time and the progressive delay
+# actually applies; a burst of 500 concurrent attempts is serialized, not waved
+# through together. nginx pins X-Real-IP so the key can't be spoofed remotely.
+_LOGIN_GATE = asyncio.Lock()
+_LOGIN_LOCK_THRESHOLD = 8      # consecutive fails before a hard lockout
+_LOGIN_LOCK_SECONDS   = 300    # 5-minute lockout window
 
 def _login_client_ip(request: web.Request) -> str:
     return request.headers.get("X-Real-IP") or request.remote or "?"
 
+def _login_locked(ip: str) -> float:
+    """Seconds remaining on a hard lockout for this IP, else 0."""
+    until = _login_lock_until.get(ip, 0)
+    remain = until - time.monotonic()
+    return remain if remain > 0 else 0
+
 async def _apply_login_delay(ip: str):
-    n = _login_fails.get(ip, 0)
+    # Progressive per-IP delay, but capped and bounded so a huge _login_fails
+    # can't be used to tie up the gate indefinitely.
+    n = min(_login_fails.get(ip, 0), 6)
     if n > 0:
-        await asyncio.sleep(min(n, 10))
+        await asyncio.sleep(n)
 
 def _record_login_fail(ip: str):
-    _login_fails[ip] = _login_fails.get(ip, 0) + 1
+    n = _login_fails.get(ip, 0) + 1
+    _login_fails[ip] = n
+    if n >= _LOGIN_LOCK_THRESHOLD:
+        _login_lock_until[ip] = time.monotonic() + _LOGIN_LOCK_SECONDS
+        log.warning("login locked for %s after %d failures", ip, n)
+    # Bound the dict so an attacker spraying distinct X-Real-IP (only possible if
+    # :8080 is ever reached directly, bypassing nginx) can't grow it unbounded.
+    if len(_login_fails) > 4096:
+        _login_fails.clear(); _login_lock_until.clear()
 
 def _record_login_ok(ip: str):
     _login_fails.pop(ip, None)
+    _login_lock_until.pop(ip, None)
 
 
 LOGIN_HTML = """<!DOCTYPE html>
@@ -509,6 +536,20 @@ def _login_page(error: str = "", status: int = 200) -> web.Response:
 async def login_handler(request: web.Request) -> web.Response:
     if request.method == "POST":
         ip = _login_client_ip(request)
+        locked = _login_locked(ip)
+        if locked:
+            return _login_page(
+                f"Too many attempts. Try again in {int(locked)//60 + 1} min.",
+                status=429)
+        # One attempt at a time: the gate is what makes the delay real against a
+        # concurrent burst. Held for the whole verify so parallel guesses queue.
+        async with _LOGIN_GATE:
+            return await _login_attempt(request, ip)
+    return _login_page()
+
+
+async def _login_attempt(request, ip):
+    if True:
         await _apply_login_delay(ip)
         try:
             data = await request.post()
