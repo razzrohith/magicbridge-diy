@@ -2230,27 +2230,41 @@ def _upd_classify(changed):
 
 def _upd_incremental(changed, repo_dir):
     """Copy just the changed runtime files to their live paths. Returns
-    (copied, services_to_restart, reload_nginx)."""
+    (copied, services_to_restart, reload_nginx, failed)."""
     import shutil as _sh
     copied, restarts, reload_nginx = [], set(), False
+    # Files we were supposed to deploy and could not. A missing source used to
+    # be skipped SILENTLY: the update then reported success and stamped the
+    # deployed commit, so the unit believed it was current while missing a
+    # file. That is the same "reports done, isn't" failure the stamp exists to
+    # prevent - and the stamp would have hidden it.
+    failed = []
     for f in changed:
         if f in _UPD_FILE_MAP:
             dst, svc = _UPD_FILE_MAP[f]
             src = os.path.join(repo_dir, f)
             if os.path.isfile(src):
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                _sh.copyfile(src, dst)
-                if dst.startswith("/usr/local/bin"):
-                    os.chmod(dst, 0o755)
+                try:
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    _sh.copyfile(src, dst)
+                    if dst.startswith("/usr/local/bin"):
+                        os.chmod(dst, 0o755)
+                except Exception as e:
+                    log.error("update: could not deploy %s -> %s: %s", f, dst, e)
+                    failed.append(f)
+                    continue
                 copied.append(f)
                 if svc == "nginx-reload": reload_nginx = True
                 elif svc: restarts.add(svc)
+            else:
+                log.error("update: %s changed upstream but is missing from %s", f, repo_dir)
+                failed.append(f)
         elif f.startswith("src/web/static/"):
             s = os.path.join(repo_dir, "src/web/static")
             if os.path.isdir(s):
                 _sh.copytree(s, _UPD_INSTALL_DIR + "/web/static", dirs_exist_ok=True)
                 if "static/" not in copied: copied.append("static/")
-    return copied, restarts, reload_nginx
+    return copied, restarts, reload_nginx, failed
 
 
 async def api_update(request):
@@ -2420,10 +2434,19 @@ async def api_update(request):
     # affected. Copies run here (fast); restarts run detached (with OLED) so a
     # magicbridge restart doesn't kill this response mid-flight.
     try:
-        copied, restarts, reload_nginx = _upd_incremental(changed, REPO_DIR)
+        copied, restarts, reload_nginx, failed = _upd_incremental(changed, REPO_DIR)
     except Exception as e:
         return web.json_response({"ok": False, "restarted": False,
             "out": out + "\nincremental copy failed: " + str(e)})
+    if failed:
+        # Do NOT stamp: the stamp means "this commit is live", and it is not.
+        # Leaving it un-stamped keeps the update showing as pending so it can
+        # be retried, instead of a green tick over a half-deployed unit.
+        return web.json_response({
+            "ok": False, "restarted": False,
+            "out": out + "\nFAILED to deploy: " + ", ".join(failed) +
+                   "\nNothing was stamped; the update still shows as pending. Retry it.",
+        })
     # Copies succeeded -> this commit really is deployed. Stamp it, or the next
     # status check falls back to HEAD and the "unverified" prompt never clears.
     _set_deployed(_sp.run(["git", "-C", REPO_DIR, "rev-parse", "HEAD"],

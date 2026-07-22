@@ -261,14 +261,52 @@ def _usb_w(rel: str, val: str):
     except Exception:
         pass
 
+def _usb_str(val: str, fallback: str = "") -> str:
+    """Make a string safe to write into a USB string descriptor.
+
+    Anything typed into the stealth panel lands in configfs and then in front
+    of the target's USB stack. A newline, a control character or an
+    over-length value can make the write fail - and because the gadget is
+    UNBOUND while identity is applied (see _rebind), a failure there used to
+    leave the target with no keyboard and no mouse at all. Sanitising here
+    means a careless name is cosmetic, never fatal.
+
+    126 chars is the USB string-descriptor limit; longer is rejected by the
+    kernel rather than truncated.
+    """
+    if val is None:
+        return fallback
+    # Drop CR/LF and any other control characters, keep printable ASCII only:
+    # non-ASCII is legal in USB descriptors but needlessly risks the write, and
+    # a real Logitech receiver never uses it.
+    cleaned = "".join(ch for ch in str(val) if 0x20 <= ord(ch) < 0x7F)
+    cleaned = cleaned.strip()[:126]
+    return cleaned if cleaned else fallback
+
+
 def _rebind(fn):
+    """Apply gadget changes with the UDC detached, then ALWAYS reattach.
+
+    The reattach is in a finally block on purpose: without it, any exception
+    between unbind and rebind left the gadget permanently unbound, i.e. the
+    target silently lost keyboard and mouse until someone re-ran
+    mb-gadget.sh. Restoring HID matters more than the change succeeding.
+    """
     udc = _usb_r("UDC")
     _usb_w("UDC", "")
     time.sleep(0.3)
-    fn()
-    time.sleep(0.3)
-    if udc:
-        _usb_w("UDC", udc)
+    try:
+        fn()
+    finally:
+        time.sleep(0.3)
+        if udc:
+            _usb_w("UDC", udc)
+            # Confirm HID actually came back rather than trusting the write -
+            # a silently-failed rebind is exactly the invisible breakage this
+            # whole function exists to avoid.
+            if _usb_r("UDC") != udc:
+                _al.error("USB gadget did NOT rebind to %s - target may have no "
+                          "keyboard/mouse; run mb-gadget.sh to recover", udc)
 
 def _apply_usb(mfr: str, prod: str, ser: str, vid: str = None, pid: str = None,
                 has_serial: bool = None, extra_iface: bool = None):
@@ -277,6 +315,14 @@ def _apply_usb(mfr: str, prod: str, ser: str, vid: str = None, pid: str = None,
     builds the right structure on next reboot; the serial number itself
     always takes effect live, but interface count can only change when
     the gadget's functions are rebuilt (reboot / mb-gadget.sh re-run)."""
+    # Sanitise BEFORE the gadget is unbound - a bad value must never be the
+    # reason the target loses its keyboard. Falls back to the real Logitech
+    # Unifying Receiver strings rather than writing an empty identity, which
+    # would itself be a stealth tell.
+    mfr  = _usb_str(mfr,  "Logitech")
+    prod = _usb_str(prod, "USB Receiver")
+    ser  = _usb_str(ser,  "")
+
     def _do():
         _usb_w("strings/0x409/manufacturer", mfr)
         _usb_w("strings/0x409/product",      prod)
