@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -59,6 +60,50 @@ logging.basicConfig(
     datefmt = "%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("magicbridge")
+
+
+# ── Atomic, serialized config.json persistence ────────────────────────────────
+# config.json holds the password hash, the session-signing secret, the TOTP
+# secret, USB/MAC/EDID identity, WoL, and video settings. It was written in ~13
+# places with Path(...).write_text(), which TRUNCATES the file to zero before
+# writing. On this portable device (yanked from targets, and the self-update
+# forcibly restarts the service), a power loss or kill in that window leaves the
+# file empty/corrupt - and on next boot _ensure_auth_defaults() would treat an
+# unparseable file as "no config" and rewrite the DEFAULT password with 2FA off,
+# wiping every other section. A single-fault power blip must never reset a
+# stealth device to a public default password.
+#
+# _write_config: temp file + os.replace (atomic rename) + 0600, so a reader ever
+# sees only the old file or the whole new file, never a truncated one. Serialized
+# by _CFG_LOCK so two concurrent settings saves can't lose each other's changes
+# (and a recovery code can't be un-burned by an interposed write).
+_CFG_LOCK = threading.RLock()
+
+def _write_config(cfg: dict) -> None:
+    """Atomically persist the full config dict. Raises on failure so callers
+    can report it rather than silently claim success."""
+    with _CFG_LOCK:
+        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
+        tmp = CONFIG_PATH + ".new"
+        with open(tmp, "w") as fh:
+            json.dump(cfg, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())          # get the bytes on disk before rename
+        os.replace(tmp, CONFIG_PATH)       # atomic on the same filesystem
+        try:
+            os.chmod(CONFIG_PATH, 0o600)   # never leave the signing secret world-readable
+        except OSError:
+            pass
+
+def _read_config() -> dict:
+    """Read config.json under the same lock. Returns {} only if the file is
+    genuinely absent - a PARSE failure re-raises so callers never mistake a
+    corrupt file for an empty one and clobber it."""
+    with _CFG_LOCK:
+        p = Path(CONFIG_PATH)
+        if not p.exists():
+            return {}
+        return json.loads(p.read_text())
 
 
 # Auth helpers
@@ -157,18 +202,26 @@ def _totp_check_login(code: str) -> bool:
     if _totp_verify(auth.get("totp_secret", ""), code):
         return True
     h = _recovery_hash(code)
-    remaining = list(auth.get("totp_recovery", []))
-    if h in remaining:
-        remaining.remove(h)                      # single use - burn it
+    # Burn the code under _CFG_LOCK, re-reading INSIDE the lock. Otherwise a
+    # settings save that read config before this ran could write back the old
+    # (un-burned) recovery list after us, leaving a single-use code valid for
+    # reuse. Read-modify-write must be atomic as a whole, not just the write.
+    with _CFG_LOCK:
         try:
-            cfg = json.loads(Path(CONFIG_PATH).read_text())
-            cfg.setdefault("auth", {})["totp_recovery"] = remaining
-            Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+            cfg = _read_config()
+        except Exception:
+            cfg = {}
+        remaining = list(cfg.get("auth", {}).get("totp_recovery", []))
+        if h not in remaining:
+            return False
+        remaining.remove(h)                      # single use - burn it
+        cfg.setdefault("auth", {})["totp_recovery"] = remaining
+        try:
+            _write_config(cfg)
             log.warning("2FA: recovery code used (%d left)", len(remaining))
         except Exception as e:
             log.error("2FA: could not burn recovery code: %s", e)
         return True
-    return False
 
 def _ensure_auth_defaults():
     """Bootstrap auth.main_password_hash/main_secret_key if config.json
@@ -177,9 +230,31 @@ def _ensure_auth_defaults():
     auth.password_hash/secret_key. The two panels have fully independent
     credentials by design."""
     import secrets as _secrets
-    try:
-        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
-    except Exception:
+    p = Path(CONFIG_PATH)
+    if p.exists():
+        try:
+            cfg = json.loads(p.read_text())
+        except Exception as e:
+            # A file that exists but won't parse is CORRUPT, not absent. Treating
+            # it as {} here is exactly what would reset the password to the
+            # public default and wipe every setting after a torn write. FAIL
+            # CLOSED instead: keep the corrupt file in place (so this same guard
+            # fires on every subsequent boot and the device never silently
+            # reverts to password "magicbridge"), take a best-effort forensic
+            # COPY, and return without bootstrapping. Login stays impossible
+            # until a human restores config or re-runs install.sh over SSH -
+            # the correct posture for a stealth device. The atomic _write_config
+            # makes reaching this path very unlikely in the first place.
+            try:
+                Path(CONFIG_PATH + ".corrupt").write_bytes(Path(CONFIG_PATH).read_bytes())
+            except OSError:
+                pass
+            log.error("config.json is CORRUPT (%s). Copied to %s.corrupt. NOT "
+                      "resetting auth over it - login disabled until restored; "
+                      "fix over SSH (restore backup or re-run install.sh).",
+                      e, CONFIG_PATH)
+            return
+    else:
         cfg = {}
     auth = cfg.setdefault("auth", {})
     changed = False
@@ -195,7 +270,7 @@ def _ensure_auth_defaults():
     if changed:
         try:
             Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-            Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+            _write_config(cfg)
             log.info("Bootstrapped main-page auth defaults in %s", CONFIG_PATH)
         except Exception as e:
             log.warning("Could not write auth defaults: %s", e)
@@ -272,7 +347,7 @@ def _ensure_usb_defaults():
         usb["serial"] = "" if not usb.get("has_serial", True) else _gen_serial(0)
     try:
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        _write_config(cfg)
         log.info("USB identity defaults updated (serial=%r, identity_fix=%s)",
                   usb.get("serial"), needs_identity_fix)
     except Exception as e:
@@ -609,7 +684,7 @@ async def api_change_password(request: web.Request) -> web.Response:
 
     try:
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        _write_config(cfg)
     except Exception as e:
         return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
 
@@ -1363,7 +1438,7 @@ async def api_stream_settings(request: web.Request) -> web.Response:
                     "bitrate": bitrate,
                 }.items() if v is not None
             })
-            Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+            _write_config(cfg)
         except Exception:
             pass
 
@@ -1435,7 +1510,7 @@ async def api_oled_settings(request: web.Request) -> web.Response:
         merged.update(incoming)
         cfg["oled"] = merged
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        _write_config(cfg)
     except Exception as e:
         return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
 
@@ -1447,7 +1522,7 @@ async def api_oled_reset(request: web.Request) -> web.Response:
         cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
         cfg["oled"] = dict(OLED_DEFAULTS)
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        _write_config(cfg)
     except Exception as e:
         return web.json_response({"ok": False, "error": "Could not reset: " + str(e)}, status=500)
     return web.json_response({"ok": True, "config": dict(OLED_DEFAULTS)})
@@ -1525,7 +1600,7 @@ async def api_wol_settings(request: web.Request) -> web.Response:
         merged.update(incoming)
         cfg["wol"] = merged
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        _write_config(cfg)
     except Exception as e:
         return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
 
@@ -1601,7 +1676,7 @@ async def api_wol_schedule(request: web.Request) -> web.Response:
     wol["schedules"] = scheds
     cfg["wol"] = wol
     try:
-        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        _write_config(cfg)
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
     loop = asyncio.get_running_loop()
@@ -1641,7 +1716,7 @@ async def api_keyboard_settings(request: web.Request) -> web.Response:
         if layout:
             kb_cfg["layout"] = layout
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        _write_config(cfg)
     except Exception as e:
         return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
 
@@ -1868,7 +1943,7 @@ async def api_network_lockdown(request):
         cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
         cfg.setdefault("network", {})["tailscale_only"] = enable
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        _write_config(cfg)
     except Exception:
         pass
 
@@ -2538,7 +2613,7 @@ async def api_ai_settings(request: web.Request) -> web.Response:
         merged.update(incoming)
         ai_cfg.update(merged)
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        _write_config(cfg)
     except Exception as e:
         return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
 
@@ -2569,7 +2644,7 @@ async def api_ai_key(request: web.Request) -> web.Response:
         else:
             keys.pop(provider, None)
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+        _write_config(cfg)
     except Exception as e:
         return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
     return web.json_response({"ok": True, "has_key": bool(key)})
