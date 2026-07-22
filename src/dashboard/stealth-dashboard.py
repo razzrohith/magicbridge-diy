@@ -255,11 +255,17 @@ def _usb_r(rel: str) -> str:
     except Exception:
         return ""
 
-def _usb_w(rel: str, val: str):
+def _usb_w(rel: str, val: str) -> bool:
+    """Write one configfs attribute. Returns False on failure instead of
+    swallowing it - a rejected write (bad value, gadget mid-rebuild, EBUSY)
+    used to be invisible, so the panel reported the new USB identity applied
+    while the target still enumerated the old one: a silent stealth mismatch."""
     try:
         Path(f"{USB_DIR}/{rel}").write_text(val + "\n")
-    except Exception:
-        pass
+        return True
+    except Exception as e:
+        _al.warning("configfs write failed: %s = %r (%s)", rel, val, e)
+        return False
 
 def _usb_str(val: str, fallback: str = "") -> str:
     """Make a string safe to write into a USB string descriptor.
@@ -323,13 +329,22 @@ def _apply_usb(mfr: str, prod: str, ser: str, vid: str = None, pid: str = None,
     prod = _usb_str(prod, "USB Receiver")
     ser  = _usb_str(ser,  "")
 
+    _writes = []
     def _do():
-        _usb_w("strings/0x409/manufacturer", mfr)
-        _usb_w("strings/0x409/product",      prod)
-        _usb_w("strings/0x409/serialnumber", ser)
-        if vid: _usb_w("idVendor",  vid)
-        if pid: _usb_w("idProduct", pid)
+        _writes.append(_usb_w("strings/0x409/manufacturer", mfr))
+        _writes.append(_usb_w("strings/0x409/product",      prod))
+        _writes.append(_usb_w("strings/0x409/serialnumber", ser))
+        if vid: _writes.append(_usb_w("idVendor",  vid))
+        if pid: _writes.append(_usb_w("idProduct", pid))
     _rebind(_do)
+    # VERIFY the identity actually took by reading it back, rather than trusting
+    # fire-and-forget writes. A mismatch means the target still sees the old
+    # device while the UI would otherwise claim the new one is live.
+    live_ok = all(_writes) and _usb_r("strings/0x409/manufacturer") == mfr \
+                           and _usb_r("strings/0x409/product") == prod
+    if not live_ok:
+        _al.error("USB identity may NOT have applied live (mfr=%r prod=%r) - "
+                  "target could still show the previous device", mfr, prod)
     # Persist so mb-gadget.sh applies identity on next reboot
     cfg = _load()
     usb = cfg.setdefault("usb", {})
@@ -339,6 +354,7 @@ def _apply_usb(mfr: str, prod: str, ser: str, vid: str = None, pid: str = None,
     if has_serial is not None:  usb["has_serial"]  = has_serial
     if extra_iface is not None: usb["extra_iface"] = extra_iface
     _save(cfg)
+    return live_ok
 
 def _rand_serial(pfx: str = "MB") -> str:
     return pfx + secrets.token_hex(4).upper()
@@ -2190,10 +2206,16 @@ def api_apply():
     cfg = _load()
     try:
         if act == "identity":
-            _apply_usb(d.get("mfr",""), d.get("prod",""), d.get("ser",""),
+            _live = _apply_usb(d.get("mfr",""), d.get("prod",""), d.get("ser",""),
                        d.get("vid"), d.get("pid"))
             _log_sess(f"USB identity: {d.get('mfr')} / {d.get('prod')}")
-            return jsonify({"ok": True})
+            # Report the truth: saved to config either way, but tell the UI if
+            # the LIVE gadget didn't actually accept it (target still shows the
+            # old device until a reboot / mb-gadget.sh rebuild).
+            return jsonify({"ok": True, "applied_live": bool(_live),
+                            "note": "" if _live else
+                            "Saved, but the live USB gadget did not accept it - "
+                            "reboot or re-run mb-gadget.sh to apply."})
 
         elif act == "profile":
             idx = int(d.get("idx", 0))
