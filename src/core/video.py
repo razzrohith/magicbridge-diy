@@ -36,7 +36,12 @@ class VideoManager:
         self.process    = None
         self.device     = None
         self.resolution = "1920x1080"
-        self.fps        = 30
+        # 50, not 30: --h264-boost lifts the encoder ceiling to ~46fps at
+        # 1080p, but only if we actually ASK for more than 25 - desired-fps
+        # is a hard request, not a target. Safe to set high because the CSI
+        # path caps it DOWN to whatever the source really sends, and a USB
+        # dongle simply delivers its native rate.
+        self.fps        = 50
         self.quality    = 90      # MJPEG quality 1-100
         # H.264 target bitrate (kbps) for the WebRTC path. Was hardcoded to
         # 5000 in the ustreamer command, which made the UI's Low/Bal/Sharp

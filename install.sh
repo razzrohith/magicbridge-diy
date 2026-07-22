@@ -295,7 +295,7 @@ if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
   "video": {
     "device":     "",
     "resolution": "1920x1080",
-    "fps":        30,
+    "fps":        50,
     "quality":    80,
     "mode":       "auto"
   },
