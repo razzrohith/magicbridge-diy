@@ -513,6 +513,18 @@ systemctl restart stealth-dashboard && ok "stealth-dashboard started" || warn "s
 # ══════════════════════════════════════════════════════════════════════════════
 info "Configuring firewall (iptables)..."
 
+# PRESERVE an active Tailscale-only lockdown across this rebuild. The web
+# updater re-runs install.sh for any structural change; this section flushes
+# INPUT and rebuilds "allow 80/443 from anywhere", which silently wiped
+# mb-lockdown's rules AND overwrote the persisted rules.v4 without them - so a
+# routine update quietly re-exposed the internal-only web UI + stealth admin
+# panel to the whole LAN. Capture the state before the flush, restore it after.
+WAS_LOCKED=0
+if iptables -C INPUT -p tcp --dport 443 -m comment --comment mb-lockdown -j DROP 2>/dev/null; then
+    WAS_LOCKED=1
+    info "Tailscale-only lockdown is active - will re-apply after firewall rebuild"
+fi
+
 # Default-deny inbound; allow established, SSH, HTTP, HTTPS
 iptables -F INPUT
 iptables -P INPUT DROP
@@ -532,6 +544,15 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     iptables-persistent 2>&1 | grep -E "^(Setting|E:|W:)" || true
 iptables-save > /etc/iptables/rules.v4
 ok "Firewall configured"
+
+# Re-apply the lockdown we found active, so an update can't silently re-expose
+# the admin surface. mb-lockdown.sh re-inserts the Tailscale-only rules at the
+# top of INPUT and re-saves rules.v4 including them.
+if [[ "$WAS_LOCKED" == "1" && -x /usr/local/bin/mb-lockdown.sh ]]; then
+    /usr/local/bin/mb-lockdown.sh on >/dev/null 2>&1 \
+        && ok "Re-applied Tailscale-only lockdown (was active before update)" \
+        || warn "Could not re-apply lockdown - run: sudo mb-lockdown.sh on"
+fi
 
 # ══════════════════════════════════════════════════════════════════════════════
 # 10. SSH
