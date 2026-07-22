@@ -331,8 +331,100 @@ different power design.)
 
 ---
 
+# Audit round (2026-07-22) — FILTERED for the PiKVM stack
+
+A six-pass audit of DIY found ~20 real issues. Most were fixed there. **This
+section lists ONLY the ones that plausibly apply to magicbridge-pikvm**, checked
+against your actual code first (`services/`, `provision/portal.py`, `nginx/`,
+`common/mbcommon.py`) so you aren't sent chasing DIY-specific bugs.
+
+## Applies — evidence found in your tree
+
+37. **Blocking `subprocess.run` inside async aiohttp handlers freezes ALL input**
+    `[APPLIES - confirmed pattern]` — your custom services are aiohttp
+    (`from aiohttp import web`, `async def` handlers in
+    `magicbridge-stealth/app.py`, `magicbridge-net/app.py`) AND they call
+    `subprocess.run` directly via the `sh()` helpers
+    (`magicbridge-net/app.py:47`, `magicbridge-stealth/app.py:89`,
+    `common/mbcommon.py:76`), plus `provision/portal.py`. aiohttp is
+    single-threaded: for the whole duration of any such command, EVERY connected
+    client's keyboard/mouse and all status polling is frozen. DIY measured this
+    as up to a 2-minute stall on a Tailscale install. Fix shape: a
+    `run_in_executor` wrapper for anything that can take more than a few hundred
+    ms (network calls, package installs, `nmcli`/`iptables` batches). Cheap
+    commands can stay inline.
+38. **Corrupt config must not silently reset auth to defaults** `[APPLIES - the
+    load half only]` — your SAVE path is already correct: `mbcommon.py` writes
+    `tmp` then `os.replace` with a `# atomic` comment and chmod 0600, so DIY's
+    truncating-write bug does NOT apply to you. **Check the other half**: when
+    the config fails to PARSE at startup, does your code treat it as "empty" and
+    bootstrap defaults? In DIY that path rewrote the DEFAULT password with 2FA
+    off and wiped every other section - a single unlucky unplug silently
+    reverted a stealth device to a public default password. Fail CLOSED instead:
+    keep the corrupt file, log loudly, refuse to bootstrap over it. (Also worth
+    adding: `fsync` the tmp file before `os.replace` - the rename is atomic but
+    without fsync the contents aren't guaranteed on disk first.)
+39. **Verify USB identity writes actually took; never fire-and-forget**
+    `[APPLIES - shared configfs core]` — you write the gadget identity under
+    `/sys/kernel/config/usb_gadget/kvmd/...`. DIY found that swallowing configfs
+    write errors made the panel report a new identity applied while the target
+    still enumerated the OLD device - a silent stealth mismatch, the exact class
+    this project cares most about. You already read the serial back from configfs
+    as source of truth (good); extend that to the WRITE path: surface failures,
+    read the strings back after the rebind, and tell the operator if the live
+    gadget didn't accept it. Related and worth re-checking: any unbind/rebind of
+    the UDC must reattach in a `finally`, or a failure in between leaves the
+    target with no keyboard/mouse.
+40. **Image/deploy must strip EVERY per-unit secret, and `--verify` must check**
+    `[APPLIES as a class - your secrets differ]` — DIY shipped a distributable
+    image whose scrub was a strict subset of its first-boot secret-reset, so it
+    could ship a DuckDNS token in cleartext, a baked shared MAC unit, a plaintext
+    WiFi PSK, and provider API keys - and verify passed anyway because it never
+    checked for them. Your secret set is different, so don't copy the list:
+    enumerate what YOUR golden unit accumulates (tokens, keys, MAC/identity
+    units, saved WiFi, machine-ids, logs), make the image scrub a superset of
+    your first-boot reset, and add an assertion per item so a leak FAILS the
+    build instead of shipping.
+
+## Worth a one-line check (lower confidence)
+
+41. `[CHECK]` **Is the video stream reachable without a session?** DIY proxied
+    `/stream` and `/snapshot` straight to ustreamer, bypassing auth entirely -
+    anyone on the LAN/tailnet could watch the target's screen. kvmd normally
+    gates its streamer, so this is probably already fine for you, but your
+    `nginx/magicbridge.conf` comment notes `/streamer` is deliberately left
+    reachable for the cockpit - confirm that path still demands a session.
+42. `[CHECK]` **Can re-running the installer drop your lockdown?** Your
+    `MB_LOCKDOWN` dedicated-chain design is BETTER than DIY's (which inserted
+    into INPUT directly and got flushed). But a flush of INPUT still removes the
+    `-j MB_LOCKDOWN` jump even though the chain survives. `magic-install.sh`
+    didn't obviously touch iptables, so this may be a non-issue - just confirm
+    an installer re-run can't leave the jump missing while the chain looks fine.
+43. `[CHECK]` **Login brute-force protection**, only if you have custom auth.
+    DIY's per-IP delay used `asyncio.sleep`, so concurrent attempts all slept in
+    PARALLEL - no real cost, and no lockout ever. If kvmd handles your auth,
+    N/A.
+
+## Explicitly NOT for you — do not spend time on these
+
+- **Stuck keys / Right-Ctrl chord / release-on-focus-loss** — DIY's own
+  hand-rolled key handler. You use PiKVM's mature KVM web UI for key handling.
+- **Video watchdog re-detect, sticky-mjpeg fallback, encoder input clamps** —
+  DIY's `video.py` manages ustreamer itself; kvmd manages yours.
+- **Viewer-IP XSS in the connections list** — DIY's custom viewer widget.
+- **The power-path A/B results and `--h264-boost` framerate work** — different
+  board and power design (though if you ever see the encoder capped at ~25fps
+  on a Pi 4, `--h264-boost` is worth knowing about).
+
+---
+
 ## Session commits (DIY repo `magicbridge-diy`, for reference)
 ```
+270bbb8 fix(stealth): USB identity change verified, not fire-and-forget          (item 39)
+de7fe3d fix(auth): require login for /stream and /snapshot                       (item 41)
+59bd460 perf(api): long admin subprocesses off the event loop                    (item 37)
+bc3c51b fix(config): atomic writes + fail-closed on corrupt                      (item 38)
+aba5dec fix(image): strip DuckDNS token / MAC / WiFi-PSK secrets                 (item 40)
 77f739f fix(install): re-exec after self-pull; restart mdns after backfill       (items 32,33)
 b81108c fix(update): track what is DEPLOYED, not what the repo clone is at       (item 31)
 c68363c fix(power): refuse to halt while a full upgrade is still running         (item 35)
