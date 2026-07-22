@@ -748,6 +748,16 @@ async def api_change_password(request: web.Request) -> web.Response:
     return resp
 
 
+async def api_authcheck(request: web.Request) -> web.Response:
+    """Tiny endpoint for nginx auth_request to gate /stream and /snapshot,
+    which nginx proxies straight to ustreamer and so never pass through this
+    app's auth middleware. If the session is valid the middleware lets this run
+    and it returns 200; if not, the middleware returns 401 - and nginx denies
+    the stream. So the MJPEG stream and snapshots now require a login, like
+    every /api/ endpoint, instead of being viewable by anyone on the LAN."""
+    return web.Response(text="ok")
+
+
 @web.middleware
 async def auth_middleware(request: web.Request, handler):
     if request.path == "/login" or request.path.startswith("/static/"):
@@ -2853,6 +2863,7 @@ def build_app() -> web.Application:
 
     app.router.add_get("/",                      index_handler)
     app.router.add_get("/ws",                    ws_handler)
+    app.router.add_get("/api/authcheck",         api_authcheck)
     app.router.add_get("/api/status",            api_status)
     app.router.add_get("/api/devices",           api_devices)
     app.router.add_get("/api/stream/settings",   api_stream_settings)
