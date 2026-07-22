@@ -555,7 +555,16 @@ class VideoManager:
             "--device",          self.device,
             "--format",          "UYVY",
             "--encoder",         "M2M-IMAGE",
-            "--workers",          "3",
+            # ONE worker on the M2M path. M2M-IMAGE is the Pi's HARDWARE JPEG
+            # encoder - a single physical block - so extra "workers" do not add
+            # throughput, they just contend for it and hand back partially
+            # encoded frames. Measured on the unit, same scene, same 3s window:
+            #   workers=3 -> median frame 239 KB, 49 Mbit/s, heavy banding
+            #   workers=1 -> median frame  73 KB, 25 Mbit/s, body pixel-clean
+            # A clean frame of this scene is ~46 KB, so the extra ~190 KB at
+            # workers=3 was pure corruption entropy - and it was also what
+            # saturated the WiFi link and truncated frames in the browser.
+            "--workers",          "1",
             # MORE BUFFERS THAN WORKERS - this is what fixes the torn/green
             # scanlines. ustreamer defaults to 5 (min(cores,4)+1); with 3
             # workers that leaves too little slack, so the driver recycles a
