@@ -1464,6 +1464,19 @@ setInterval(()=>{
 const $view=document.getElementById('view');
 const $relbar=document.getElementById('relbar');
 let _intentional=false, _escTime=0, _rCtrlDown=0, _rcTimer=null;
+// _rCtrlSent: true once we've flushed a real keydown ControlRight to the target
+// (because a chord key followed). Without it, the keyup handler mis-read a
+// chord's zeroed _rCtrlDown as a 2s "intentional release", ran releaseAll(),
+// and NEVER sent keyup ControlRight - leaving Ctrl physically held on the target
+// after any Right-Ctrl chord (Ctrl+C, Ctrl+V...) and kicking the operator out.
+let _rCtrlSent=false;
+// Every physical key we've told the target is DOWN. releaseAll() and the
+// focus-loss handler walk this to release exactly what's held - the old code
+// released only the four LEFT modifiers, so AltGr / right-Shift/Ctrl / any held
+// letter stayed stuck on the target when the operator alt-tabbed away.
+const _heldKeys=new Set();
+function _sendDown(code){ _heldKeys.add(code); send({type:'keydown',code}); }
+function _sendUp(code){ _heldKeys.delete(code); send({type:'keyup',code}); }
 // Escape = hold-to-exit. A single tap is forwarded to the remote as a normal
 // Escape key; only holding it for ESC_HOLD_MS releases control. Fully
 // JS-controlled in absolute mode (no pointer lock) and in relative mode with
@@ -1585,7 +1598,14 @@ function releaseAll(){
     const ex=document.exitPointerLock||document.mozExitPointerLock||document.webkitExitPointerLock;
     if(ex) ex.call(document);            // → pointerlockchange → _setCaptured(false)
   }
-  ['ShiftLeft','ControlLeft','AltLeft','MetaLeft'].forEach(c=>send({type:'keyup',code:c}));
+  // Release every key we actually told the target was down (not just the four
+  // left modifiers), then belt-and-suspenders the full modifier set in case one
+  // was pressed before capture began and never tracked.
+  _heldKeys.forEach(c=>send({type:'keyup',code:c}));
+  _heldKeys.clear();
+  ['ShiftLeft','ControlLeft','AltLeft','MetaLeft',
+   'ShiftRight','ControlRight','AltRight','MetaRight'].forEach(c=>send({type:'keyup',code:c}));
+  _rCtrlDown=0; _rCtrlSent=false;
 }
 
 // Keyboard
@@ -1609,21 +1629,23 @@ document.addEventListener('keydown',e=>{
     }
     return;
   }
-  // Right Ctrl: track for long-press intentional release
+  // Right Ctrl: defer - we don't yet know if it's a chord or a hold-to-release.
   if(e.code==='ControlRight'){
-    if(!_rCtrlDown) _rCtrlDown=Date.now();
+    if(!_rCtrlDown){ _rCtrlDown=Date.now(); _rCtrlSent=false; }
     e.preventDefault();
     return;
   }
-  // If RCtrl is held and another key comes in, send RCtrl normally and continue
-  if(_rCtrlDown){
-    send({type:'keydown',code:'ControlRight'});
-    _rCtrlDown=0;
+  // Another key arrived while RCtrl is held => it's a chord. Flush a real
+  // keydown ControlRight and mark it sent, but KEEP _rCtrlDown set so the keyup
+  // handler knows the key is physically down and must be released.
+  if(_rCtrlDown && !_rCtrlSent){
+    _sendDown('ControlRight');
+    _rCtrlSent=true;
   }
   if(e.ctrlKey&&e.shiftKey&&e.code==='KeyF'){ releaseAll(); return; }
   if(e.ctrlKey&&e.code==='KeyV'){ sendPaste(); e.preventDefault(); return; }
   e.preventDefault();
-  send({type:'keydown',code:e.code});
+  _sendDown(e.code);
 });
 
 document.addEventListener('keyup',e=>{
@@ -1636,21 +1658,44 @@ document.addEventListener('keyup',e=>{
   }
   if(e.code==='ControlRight'){
     const held=Date.now()-_rCtrlDown;
-    _rCtrlDown=0;
-    if(held>=2000){
+    const wasSent=_rCtrlSent;
+    _rCtrlDown=0; _rCtrlSent=false;
+    if(wasSent){
+      // It was used in a chord (we already sent keydown) - just RELEASE it.
+      // This is the path that was broken: the target keeps Ctrl held otherwise.
+      _sendUp('ControlRight');
+    } else if(held>=2000){
+      // Pressed and held ALONE for >=2s = deliberate "release control".
       toast('Released, click stream to recapture');
       _intentional=true;
       releaseAll();
     } else {
-      // Short press → send as normal key
-      send({type:'keydown',code:'ControlRight'});
-      setTimeout(()=>send({type:'keyup',code:'ControlRight'}),60);
+      // Quick tap alone => forward as a normal Right-Ctrl press.
+      _sendDown('ControlRight');
+      setTimeout(()=>_sendUp('ControlRight'),60);
     }
     e.preventDefault();
     return;
   }
-  send({type:'keyup',code:e.code});
+  _sendUp(e.code);
 });
+
+// Focus loss = release everything held. Without this, alt-tabbing away (or the
+// OS stealing focus) while a key is down strands that key on the TARGET: the
+// browser stops delivering keyup to us, so the target never sees the release.
+// Every real KVM does this; this UI didn't. Covers both window blur and the
+// tab going hidden. Only acts when we're actually in control.
+function _releaseOnFocusLoss(){
+  if(!captured && _heldKeys.size===0) return;
+  _heldKeys.forEach(c=>send({type:'keyup',code:c}));
+  _heldKeys.clear();
+  ['ShiftLeft','ControlLeft','AltLeft','MetaLeft',
+   'ShiftRight','ControlRight','AltRight','MetaRight'].forEach(c=>send({type:'keyup',code:c}));
+  _rCtrlDown=0; _rCtrlSent=false;
+  clearTimeout(_escHoldTimer); _escDown=0;
+}
+window.addEventListener('blur', _releaseOnFocusLoss);
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) _releaseOnFocusLoss(); });
 
 // Mouse
 // Mouse mode: 'relative' (default, pointer-lock + deltas, stealthiest USB
