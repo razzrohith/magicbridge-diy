@@ -2026,6 +2026,25 @@ function startWebRTC(){
               };
               vid.addEventListener('playing', confirmPlaying);
               vid.addEventListener('loadeddata', confirmPlaying);
+              // Shrink the receiver's jitter buffer. WebRTC defaults are tuned
+              // for smooth video calls and will happily hold 100-200ms of
+              // frames to hide network jitter - invisible server-side, and on
+              // a KVM it is pure input lag. For remote control, responsiveness
+              // beats smoothness: we would rather show a frame late than late
+              // AND buffered. Both spellings are feature-detected because
+              // playoutDelayHint is the older Chrome-only name and
+              // jitterBufferTarget is the standardised one; browsers without
+              // either are unaffected.
+              try{
+                const pc = _janusHandle && _janusHandle.webrtcStuff && _janusHandle.webrtcStuff.pc;
+                if(pc && pc.getReceivers){
+                  pc.getReceivers().forEach(function(r){
+                    if(!r.track || r.track.kind !== 'video') return;
+                    if('playoutDelayHint' in r)   r.playoutDelayHint = 0;
+                    if('jitterBufferTarget' in r) r.jitterBufferTarget = 0;
+                  });
+                }
+              }catch(e){ console.warn('could not lower jitter buffer:', e); }
               // autoplay+muted normally suffices, but some browsers need the
               // explicit call once srcObject is swapped after page load.
               const p = vid.play();
