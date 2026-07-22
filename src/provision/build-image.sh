@@ -110,6 +110,14 @@ if [[ "$MODE" == "verify" ]]; then
   chk "WiFi retry: hotspot re-raised on bad password" 'grep -q "re-raising the setup hotspot" "$R/usr/local/bin/mb-provision.sh"'
   chk "WiFi retry: provisioning timeout raised"      'grep -q "TimeoutStartSec=1800" "$R/etc/systemd/system/mb-provision.service"'
   chk "reachable by name (mdns_alias set)"           'python3 -c "import json,sys;sys.exit(0 if json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"mdns_alias\") else 1)"'
+  # Without these three the unit ships looking fine and behaving badly: it would
+  # nag "deployment unverified" forever, silently skip its own installer logic on
+  # the first upgrade, and let a shutdown land mid-install.
+  chk "deployed-commit stamped (no false 'unverified')" '[ -s "$R/etc/magicbridge/.deployed-commit" ]'
+  chk "stamp matches the image's repo clone"         '[ "$(cat "$R/etc/magicbridge/.deployed-commit" 2>/dev/null)" = "$(git -c safe.directory="*" -C "$R/opt/magicbridge-repo" rev-parse HEAD 2>/dev/null)" ]'
+  chk "installer re-execs after self-pull"           'grep -q "MB_INSTALL_REEXEC" "$R/opt/magicbridge-repo/install.sh"'
+  chk "power refuses to halt mid-upgrade"            'grep -q "_upd_running" "$R/opt/magicbridge/core/magicbridge.py"'
+  chk "UI handles expired sessions (401 guard)"      'grep -q "_authRedirecting" "$R/opt/magicbridge/web/index.html"'
   chk "/boot/firmware is nofail (cannot block boot)" 'grep -qE "^[^#].*/boot/firmware.*nofail" "$R/etc/fstab"'
   chk "RAM-log tmpfs is mode=0755 (not 1777)"        '! grep -qE "magicbridge-ram.*mode=1777" "$R/etc/fstab"'
   chk "config: no auth (defaults on first boot)"     'python3 -c "import json,sys;sys.exit(0 if \"auth\" not in json.load(open(\"$R/etc/magicbridge/config.json\")) else 1)"'
@@ -249,6 +257,19 @@ if [[ -d "$REPO_DIR/src/core" ]]; then
     else
       warn "  couldn't sync the image's repo clone (no network?) - first web-update will just show 'update available'"
     fi
+  fi
+  # Stamp what this image has DEPLOYED. A pre-baked image never runs install.sh
+  # (mb-firstboot only re-personalises secrets on that path), so without this
+  # nothing would ever write the stamp and EVERY freshly flashed unit would
+  # report "deployment unverified - reinstall". The stamp is honest here: the
+  # files above were just deployed from exactly this commit.
+  _HEADSHA=$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)
+  if [[ -n "$_HEADSHA" ]]; then
+    mkdir -p "$MNT/etc/magicbridge" 2>/dev/null
+    printf '%s\n' "$_HEADSHA" > "$MNT/etc/magicbridge/.deployed-commit"
+    ok "  deployed-commit stamped: ${_HEADSHA:0:7}"
+  else
+    warn "  no git HEAD for the source repo - image will prompt 'deployment unverified'"
   fi
 else
   warn "repo not found next to this script - cannot deploy runtime"
