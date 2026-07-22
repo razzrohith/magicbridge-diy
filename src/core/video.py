@@ -42,6 +42,7 @@ class VideoManager:
         # path caps it DOWN to whatever the source really sends, and a USB
         # dongle simply delivers its native rate.
         self.fps        = 50
+        self._src_fps   = 0       # last CSI source frame rate; caps the request without overwriting it
         self.quality    = 90      # MJPEG quality 1-100
         # H.264 target bitrate (kbps) for the WebRTC path. Was hardcoded to
         # 5000 in the ustreamer command, which made the UI's Low/Bal/Sharp
@@ -332,11 +333,19 @@ class VideoManager:
                                ustreamer build or device don't support it.
         """
         with self._lock:
+            # Clamp everything the API can set to sane bounds. Unclamped, the
+            # settings endpoint passed these straight through: fps=0 or -5 became
+            # --desired-fps 0 and --h264-gop 0 (invalid GOP breaks SPS/IDR
+            # pairing => WebRTC late-join fails), a huge bitrate reached the
+            # encoder, and a non-numeric value raised inside the executor => 500.
+            def _clampi(v, lo, hi, dflt):
+                try: return max(lo, min(hi, int(v)))
+                except (TypeError, ValueError): return dflt
             if device:              self.device     = device
             if resolution:          self.resolution = resolution
-            if bitrate:             self.bitrate    = int(bitrate)
-            if fps is not None:     self.fps        = int(fps)
-            if quality is not None: self.quality    = int(quality)
+            if bitrate is not None: self.bitrate    = _clampi(bitrate, 100, 20000, self.bitrate)
+            if fps is not None:     self.fps        = _clampi(fps, 1, 60, self.fps)
+            if quality is not None: self.quality    = _clampi(quality, 1, 100, self.quality)
             if mode:                self.mode       = mode
 
             if not self.device:
@@ -373,12 +382,15 @@ class VideoManager:
                                  "(the device follows the source, so we must too)",
                                  detected, dfps or "?", self.resolution)
                         self.resolution = detected
-                    # Never ask for more fps than the source produces; asking for
-                    # fewer is fine (ustreamer just drops frames).
-                    if dfps and dfps < self.fps:
-                        log.info("CSI source is %dfps - capping requested %d", dfps, self.fps)
-                        self.fps = dfps
+                    # Record the source rate to CAP the request in the launcher
+                    # (below), instead of overwriting self.fps. Overwriting it
+                    # ratcheted down permanently: once a 30fps source was seen,
+                    # self.fps stuck at 30 and never recovered when a 50fps
+                    # source returned (30 < 30 is false). self.fps stays the
+                    # user's request; _src_fps is the ceiling.
+                    self._src_fps = dfps or 0
                 else:
+                    self._src_fps = 0
                     log.warning("CSI device %s reports no locked timings - "
                                 "no HDMI signal? keeping configured %s",
                                 self.device, self.resolution)
@@ -412,18 +424,33 @@ class VideoManager:
             self._stop_locked()
 
     def restart(self):
-        with self._lock:
-            self._stop_locked()
-        time.sleep(1)
-        with self._lock:
-            if self.device:
-                if shutil.which("ustreamer"):
-                    if self.mode == "h264":
-                        self._start_ustreamer_h264()
-                    else:
-                        self._start_ustreamer()
-                else:
-                    self._start_ffmpeg()
+        """Re-run the FULL start path, not a relaunch with cached values.
+
+        The old restart() relaunched using self.resolution/self.mode verbatim
+        and dropped the lock across a sleep before an unconditional launch. Two
+        consequences the audit caught:
+          - a source resolution change (1080p50 -> 720p60) left it relaunching
+            at the stale resolution => permanent "No Signal" while a signal is
+            present, never self-correcting (only start() re-runs
+            detect_csi_timings).
+          - dropping the lock then launching without a _stop_locked() first
+            could orphan a ustreamer still holding the capture device, so the
+            new process couldn't open it and the stream stayed dead.
+        start() re-detects the device, follows the live signal, re-resolves
+        mode, and holds the lock across stop+launch - so delegating to it fixes
+        all of the above atomically.
+        """
+        # If the current node vanished (USB re-enumerated to a new /dev/videoN),
+        # forget it so start() re-detects instead of looping on a dead node.
+        if self.device and not os.path.exists(self.device):
+            log.info("capture node %s is gone - re-detecting on restart", self.device)
+            self.device = None
+        # If mode got stuck at mjpeg on a CSI board from an old transient H.264
+        # failure, let auto re-resolve it back to h264.
+        if self.mode == "mjpeg" and self.device and self.device_type(self.device) == "csi":
+            log.info("CSI device stuck in mjpeg mode - re-resolving via auto")
+            self.mode = "auto"
+        self.start()
 
     def update_quality(self, quality: int) -> bool:
         """Change MJPEG quality without full restart (restarts ustreamer)."""
@@ -550,6 +577,24 @@ class VideoManager:
         self._running = False
         sink_name = "magicbridge::h264"
         self.h264_sink = sink_name
+        # Effective fps = the user's request capped by what the source actually
+        # sends (never overwrite self.fps - see _src_fps). Clamp the H.264
+        # resolution to the Pi-4 M2M encoder's 1080p ceiling: detect_csi_timings
+        # follows the source with only a lower bound, so a >1080p source (EDID
+        # cap bypassed) would otherwise hand 1440p/4K to the encoder, which
+        # rejects it -> dead stream.
+        _eff_fps = self.fps
+        if self._src_fps and self._src_fps < _eff_fps:
+            _eff_fps = self._src_fps
+        _eff_fps = max(1, min(60, _eff_fps))
+        try:
+            _w, _h = (int(x) for x in self.resolution.lower().split("x"))
+            if _w > 1920 or _h > 1080:
+                log.warning("source %s exceeds the Pi-4 H.264 encoder's 1080p max - "
+                            "clamping to 1920x1080", self.resolution)
+                self.resolution = "1920x1080"
+        except (ValueError, AttributeError):
+            pass
         # Base capture/encoder flags follow pikvm/ustreamer's documented
         # TC358743-class recipe (README.md "Usage" section) — the C790 is
         # the same class of HDMI-to-CSI2 DV-timings bridge chip. --encoder
@@ -590,7 +635,7 @@ class VideoManager:
             "--dv-timings",
             "--drop-same-frames", "30",
             "--resolution",       self.resolution,
-            "--desired-fps",      str(self.fps),
+            "--desired-fps",      str(_eff_fps),
             "--host",             STREAM_HOST,
             "--port",             str(self.port),
             # THE single biggest latency win found so far. ustreamer documents
@@ -609,7 +654,7 @@ class VideoManager:
             "--h264-sink-mode",   "660",
             "--h264-sink-rm",
             "--h264-bitrate",     str(self.bitrate),
-            "--h264-gop",         str(self.fps),    # ~1s keyframe interval
+            "--h264-gop",         str(max(1, _eff_fps)),  # ~1s keyframe interval; never 0 (invalid GOP)
         ]
         try:
             self.process = subprocess.Popen(
@@ -628,8 +673,7 @@ class VideoManager:
                     self.device, self.resolution,
                 )
                 self.process = None
-                self.mode = "mjpeg"
-                return self._start_ustreamer()
+                return self._fallback_or_fail()
             log.info("ustreamer H.264: %s %s %dfps -> sink=%s (Janus reads this for WebRTC)",
                       self.device, self.resolution, self.fps, sink_name)
             try:
@@ -642,8 +686,25 @@ class VideoManager:
             return False
         except Exception as e:
             log.error("ustreamer H.264 start error: %s", e)
-            self.mode = "mjpeg"
-            return self._start_ustreamer()
+            return self._fallback_or_fail()
+
+    def _fallback_or_fail(self) -> bool:
+        """H.264 launch failed. Fall back to MJPEG ONLY on a device that can
+        actually produce it. A C790/CSI board emits UYVY, not MJPEG, so
+        "falling back" there launched a second doomed process AND stuck
+        self.mode='mjpeg' - after which every watchdog restart retried the
+        broken MJPEG path forever, converting a momentary H.264 hiccup into a
+        permanently dead stream. On CSI: leave mode alone and return False so
+        the next restart retries H.264 once the transient clears."""
+        if self.device_type(self.device) == "csi":
+            self.h264_sink = None
+            log.warning("H.264 start failed on CSI device %s; NOT falling back to "
+                        "MJPEG (the board can't produce it) - will retry H.264",
+                        self.device)
+            return False
+        self.mode = "mjpeg"
+        self.h264_sink = None
+        return self._start_ustreamer()
 
     def _start_ffmpeg(self) -> bool:
         """
