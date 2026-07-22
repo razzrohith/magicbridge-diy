@@ -38,6 +38,11 @@ class VideoManager:
         self.resolution = "1920x1080"
         self.fps        = 30
         self.quality    = 90      # MJPEG quality 1-100
+        # H.264 target bitrate (kbps) for the WebRTC path. Was hardcoded to
+        # 5000 in the ustreamer command, which made the UI's Low/Bal/Sharp
+        # bandwidth presets nearly meaningless over WebRTC: they only moved
+        # resolution (ignored on CSI - we follow the source signal) and fps.
+        self.bitrate    = 5000
         self.mode       = "auto"  # "auto" (detect hardware) -> "h264" (C790/CSI + Janus WebRTC, preferred) | "mjpeg" (MS2109/USB)
         self.port       = STREAM_PORT
         self.h264_sink  = None    # ustreamer memsink name, set when h264 mode starts
@@ -304,7 +309,8 @@ class VideoManager:
     # Stream control
 
     def start(self, device: str = None, resolution: str = None,
-              fps: int = None, quality: int = None, mode: str = None) -> bool:
+              fps: int = None, quality: int = None, mode: str = None,
+              bitrate: int = None) -> bool:
         """Start streaming. Returns True on success. Safe to call repeatedly.
 
         Resolution selection priority:
@@ -323,6 +329,7 @@ class VideoManager:
         with self._lock:
             if device:              self.device     = device
             if resolution:          self.resolution = resolution
+            if bitrate:             self.bitrate    = int(bitrate)
             if fps is not None:     self.fps        = int(fps)
             if quality is not None: self.quality    = int(quality)
             if mode:                self.mode       = mode
@@ -596,7 +603,7 @@ class VideoManager:
             "--h264-sink",        sink_name,
             "--h264-sink-mode",   "660",
             "--h264-sink-rm",
-            "--h264-bitrate",     "5000",
+            "--h264-bitrate",     str(self.bitrate),
             "--h264-gop",         str(self.fps),    # ~1s keyframe interval
         ]
         try:
@@ -812,6 +819,7 @@ class VideoManager:
             "device":     self.device,
             "device_type": self.device_type(self.device) if self.device else None,
             "resolution": self.resolution,
+            "bitrate": self.bitrate,
             "fps":        self.fps,
             "quality":    self.quality,
             "mode":       self.mode,

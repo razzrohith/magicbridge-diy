@@ -1344,11 +1344,12 @@ async def api_stream_settings(request: web.Request) -> web.Response:
     quality    = d.get("quality")
     device     = d.get("device")
     mode       = d.get("mode")
+    bitrate    = d.get("bitrate")
 
     loop = asyncio.get_running_loop()
     ok = await loop.run_in_executor(None, lambda: video.start(
         device=device, resolution=resolution,
-        fps=fps, quality=quality, mode=mode,
+        fps=fps, quality=quality, mode=mode, bitrate=bitrate,
     ))
 
     # Persist settings to config.json
@@ -1359,6 +1360,7 @@ async def api_stream_settings(request: web.Request) -> web.Response:
                 k: v for k, v in {
                     "device": device, "resolution": resolution,
                     "fps": fps, "quality": quality, "mode": mode,
+                    "bitrate": bitrate,
                 }.items() if v is not None
             })
             Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
@@ -2798,6 +2800,11 @@ async def main():
         resolution = vc.get("resolution", "1920x1080"),
         fps        = int(vc.get("fps", 30)),
         quality    = int(vc.get("quality", 80)),
+        # Must be passed here too, not just on the live-settings path. Without
+        # it a bitrate chosen in the UI is written to config.json and then
+        # silently ignored on the next restart, snapping back to the default -
+        # the setting "sticks" in the file and not in reality.
+        bitrate    = int(vc.get("bitrate", 5000)),
         # "auto": video.start() detects the capture hardware and picks the
         # pipeline — C790/CSI -> H.264+WebRTC (preferred), USB dongle -> MJPEG.
         # Falls back to mjpeg on its own if the CSI/Janus path can't start, so

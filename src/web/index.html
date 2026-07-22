@@ -636,9 +636,9 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
           <div class="srow" style="margin-top:6px"><span class="sk">Bandwidth</span>
             <span style="display:flex;gap:4px">
-              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('640x360',15)" title="640x360 @ 15fps - for slow / remote links">Low</button>
-              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('1280x720',25)" title="720p @ 25fps - balanced default">Bal</button>
-              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('1920x1080',30)" title="1080p @ 30fps - LAN / fast link">Sharp</button>
+              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('640x360',15,'low')" title="Low bitrate (1.5 Mbps) - for slow / remote links">Low</button>
+              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('1280x720',25,'bal')" title="Balanced (4 Mbps) - default">Bal</button>
+              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('1920x1080',30,'sharp')" title="Sharp (8 Mbps) - LAN / fast link">Sharp</button>
             </span>
           </div>
           <button class="sbtn pri" style="margin-top:6px" onclick="applyVideo()">▶ Apply</button>
@@ -1884,17 +1884,24 @@ document.getElementById('pinput').addEventListener('keydown',e=>{if(e.key==='Ent
 // One-click bandwidth presets: set the res/fps selects and apply. The measured
 // throughput shows live in the "s-vfps" pill, so you can pick the preset that
 // actually holds up on your link (great for remote-over-Tailscale).
-function setBandwidth(res,fps){
+// Bandwidth presets. These used to move only resolution + fps, which made them
+// nearly inert on the WebRTC path: resolution is ignored for a CSI capture (we
+// must follow the source signal, see video.py detect_csi_timings) and fps alone
+// barely moves the wire. The H.264 bitrate was hardcoded at 5000 kbps, so "Low"
+// did almost nothing for someone on a congested link. Now each preset carries a
+// real bitrate target too.
+const _BW_BITRATE = {low: 1500, bal: 4000, sharp: 8000};
+function setBandwidth(res,fps,tier){
   const r=document.getElementById('sel-res'), f=document.getElementById('sel-fps');
   if(r) r.value=res; if(f) f.value=String(fps);
-  applyVideo();
+  applyVideo(_BW_BITRATE[tier]);
 }
-async function applyVideo(){
+async function applyVideo(bitrate){
   const res=document.getElementById('sel-res').value;
   const fps=parseInt(document.getElementById('sel-fps').value);
   const mode=document.getElementById('sel-mode') ? document.getElementById('sel-mode').value : 'mjpeg';
   try{
-    const r=await fetch('/api/stream/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resolution:res,fps,mode})});
+    const r=await fetch('/api/stream/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(bitrate?{resolution:res,fps,mode,bitrate}:{resolution:res,fps,mode})});
     const d=await r.json();
     if(d.ok){
       toast('Video updated ✓ - reconnecting stream…');
