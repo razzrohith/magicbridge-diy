@@ -369,5 +369,11 @@ echo "    janus headers:            $([[ -e /usr/include/janus ]] && echo yes ||
 echo "    ustreamer (Janus build):  $(command -v /usr/local/bin/ustreamer || echo 'NOT FOUND')"
 echo "    janus plugin installed:   $([[ -n \"$JANUS_PLUGIN_SO\" ]] && echo yes || echo no)"
 echo "    memsink name:             ${MEMSINK_NAME}"
-echo "    janus.js vendored:        $([[ -f \"$VENDOR_DIR/janus.js\" ]] && echo yes || echo no)"
-echo "    adapter.js vendored:      $([[ -f \"$VENDOR_DIR/adapter.js\" ]] && echo yes || echo no)"
+# NOTE: no backslash-escaped quotes inside $( ). Command substitution starts a
+# fresh quoting context, so \" lands as a LITERAL quote character and the test
+# looks for a file whose name begins with '"' - always false. This reported
+# 'janus.js vendored: no' immediately after logging that it had copied it
+# successfully, which is worse than no summary at all: it sends you debugging a
+# working install.
+echo "    janus.js vendored:        $([ -f "$VENDOR_DIR/janus.js" ] && echo yes || echo no)"
+echo "    adapter.js vendored:      $([ -f "$VENDOR_DIR/adapter.js" ] && echo yes || echo no)"
