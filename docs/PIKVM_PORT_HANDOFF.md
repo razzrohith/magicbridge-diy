@@ -480,3 +480,27 @@ All DIY anonymity changes above were verified with a full offline checkup
 sweep, 61 checks green) — the designs are sound to port; only device-runtime
 behavior (NM keeping the cloned MAC, DHCP/IP, gadget enumeration) still needs
 on-hardware confirmation on each side.
+
+---
+
+# DIY reply to the V4-Mini handoff (2026-07-23)
+
+Each item checked on real Pi-4B + C790 hardware, not by reading code.
+
+| item | applies? | what changed | how verified |
+|---|---|---|---|
+| 1 desired_fps clean divisor | **YES (both)** | added `_clean_divisor_fps()` - snaps request to the largest integer divisor of the source refresh (50@60Hz→30); our EDID caps compliant sources at 50 so 50→50 stays 1:1 | 7-case unit test; a non-compliant iPad dongle presenting 60Hz was the real trigger seen here |
+| 2 Wi-Fi power-save | **YES** | `iw dev wlan0 set power_save off` live + NM drop-in `wifi.powersave=2` (persistent) + install.sh + iw pkg | `iw dev wlan0 get power_save` read **on** before, **off** after |
+| 3 C790 I2S audio + EDID | **N/A (already good)** | none | EDID dump shows an Audio Data Block `23 09 07 07` (LPCM 2ch 48kHz), not just the basic-audio flag; break-guard already present (videoWidth-poll fallback to MJPEG on a dead 0×0 track) |
+| 4 LAN-direct ICE, no STUN | **YES (C790/WebRTC)** | `iceServers: []` in the Janus constructor | grep-confirmed in deployed UI; janus.js constructor previously had no iceServers → defaulted to Google STUN |
+| 5a nosig over live video | **YES (C790)** | hide the "No signal" overlay when WebRTC frames arrive (videoWidth>0), not only on MJPEG onload | code path; was only hidden in the MJPEG onLoad handler |
+| 5b fps readout idle sink | **YES (C790)** | poll receiver `inbound-rtp.framesPerSecond` on the WebRTC path | was fed by MJPEG `<img>` onload times → stuck at "-" on WebRTC |
+| 5c jiggler style/interval | **N/A** | none | our JS sends `{style}` and backend reads `d.get("style")` - already consistent |
+| 5d quality Apply resilient | partial | bitrate/fps/quality already clamped + `is not None` guards; USB dongle supports resolution | left as-is; no failure observed on DIY |
+| 5e devices panel blank | **N/A** | none | panel is wired to `d.display` (shows DELL P2419H) |
+| 5f WebRTC not engaging on load | **N/A** | none | `applyStatus` calls `syncVideoTransport(s.mode)`; WebRTC engages from the first status poll (observed live) |
+| 6 gadget profile tells | **N/A (already clean)** | none | gadget exposes only hid.keyboard/mouse/aux as `046d:c52b` - no mass-storage, no CDC/serial |
+| Tailscale RO-rootfs | **N/A** | none | DIY rootfs is writable |
+| kvmd override.d | **N/A** | none | DIY doesn't run kvmd |
+
+DIY commit: `7b7a3e1`.
