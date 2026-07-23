@@ -29,6 +29,25 @@ STREAM_HOST = "127.0.0.1"
 STREAM_PORT = 8081   # nginx proxies /stream → this port
 
 
+def _clean_divisor_fps(req: int, src: int) -> int:
+    """Largest clean-integer-divisor of the source refresh that is <= the
+    requested fps, so ustreamer decimates evenly (source/N) instead of in a
+    ragged keep/drop pattern. Examples: (50,60)->30, (50,50)->50, (30,60)->30,
+    (60,60)->60. Falls back to min(req,src) when the source has no sensible
+    divisor near the request (e.g. an oddball non-standard refresh), rather than
+    crawling down to 1 fps just to be 'clean'."""
+    try:
+        req = int(req)
+    except (TypeError, ValueError):
+        return 30
+    if not src or src <= 0:
+        return req
+    if req >= src:
+        return src                      # can't exceed the source; 1:1 is ideal
+    best = max((d for d in range(1, req + 1) if src % d == 0), default=req)
+    return best if best >= 20 else min(req, src)
+
+
 class VideoManager:
     """Start/stop/restart the MJPEG video stream from a V4L2 capture device."""
 
@@ -583,9 +602,16 @@ class VideoManager:
         # follows the source with only a lower bound, so a >1080p source (EDID
         # cap bypassed) would otherwise hand 1440p/4K to the encoder, which
         # rejects it -> dead stream.
-        _eff_fps = self.fps
-        if self._src_fps and self._src_fps < _eff_fps:
-            _eff_fps = self._src_fps
+        # Effective fps must be a CLEAN INTEGER DIVISOR of the source refresh,
+        # not just <= it. The PiKVM sibling's worst video regression: asking for
+        # 50 fps on a 60 Hz source makes ustreamer decimate 60->50 in an uneven
+        # 6:5 keep/drop pattern -> irregular frame spacing -> the WebRTC jitter
+        # buffer inflates (~500ms) and counts late frames as loss, triggering a
+        # keyframe storm and stutter. Our restricted EDID caps compliant sources
+        # at 50 Hz (so 50->50 is already 1:1), but a non-compliant adapter can
+        # still present 60 (an iPad HDMI dongle did exactly that here), so snap
+        # to the largest divisor of the source that is <= the request.
+        _eff_fps = _clean_divisor_fps(self.fps, self._src_fps)
         _eff_fps = max(1, min(60, _eff_fps))
         try:
             _w, _h = (int(x) for x in self.resolution.lower().split("x"))

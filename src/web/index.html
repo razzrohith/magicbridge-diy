@@ -2002,6 +2002,7 @@ let _janus = null, _janusHandle = null, _activeTransport = null, _webrtcTimeout 
 // an 8s black-then-fallback loop with a toast storm that never stabilized.
 // Reset only when the server genuinely leaves h264, or on a manual retry.
 let _webrtcGaveUp = false;
+let _webrtcFpsTimer = null;   // polls receiver stats for the Video-FPS readout
 
 function setVideoTransport(mode){
   _activeTransport = mode;
@@ -2072,6 +2073,13 @@ function startWebRTC(){
   Janus.init({debug: false, dependencies: Janus.useDefaultDependencies(), callback: function(){
     _janus = new Janus({
       server: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/janus-ws',
+      // LAN-direct only: no external STUN. janus.js defaults to Google's public
+      // STUN (stun.l.google.com), which on a same-LAN connection adds ICE setup
+      // delay, can stall for seconds on an offline/stealth unit (firing our
+      // connect-timeout -> MJPEG fallback), and phones an external server on
+      // every video connect - an anonymity leak. Empty list = host candidates
+      // only, which is all that's needed when the browser and Pi share a LAN.
+      iceServers: [],
       success: function(){
         _janus.attach({
           plugin: 'janus.plugin.ustreamer',
@@ -2110,10 +2118,19 @@ function startWebRTC(){
               // "confirmed", the timer fired, and the safety net became a false
               // alarm. videoWidth is the ground truth - if the element has
               // pixels, video is arriving, whatever the events did.
+              // When real WebRTC frames arrive, hide the "No signal" overlay.
+              // It was only ever hidden on the MJPEG <img> onload path, so on
+              // the WebRTC transport it stayed visible ON TOP of working video.
+              const _confirmed = function(){
+                clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
+                if($ns) $ns.style.display='none';
+                document.getElementById('bd-stream').className='bd ok';
+                const ss=document.getElementById('s-stream'); if(ss){ss.textContent='Live';ss.className='sv ac';}
+              };
               let _confirmTries = 0;
               const _confirmTimer = setInterval(function(){
                 if(vid.videoWidth > 0){
-                  clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
+                  _confirmed();
                   clearInterval(_confirmTimer);
                 } else if(++_confirmTries > 60){   // ~15s, outlives the 8s timer
                   clearInterval(_confirmTimer);
@@ -2121,12 +2138,32 @@ function startWebRTC(){
               }, 250);
               const confirmPlaying = function(){
                 if(vid.videoWidth > 0){
-                  clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
+                  _confirmed();
                   clearInterval(_confirmTimer);
                 }
               };
               vid.addEventListener('playing', confirmPlaying);
               vid.addEventListener('loadeddata', confirmPlaying);
+              // Video-FPS readout for the WebRTC path. The "s-vfps" pill is fed
+              // from MJPEG <img> onload times, which never fire on WebRTC, so it
+              // was stuck at "-". Poll the receiver's inbound-rtp stats instead.
+              try{
+                const pc0 = _janusHandle && _janusHandle.webrtcStuff && _janusHandle.webrtcStuff.pc;
+                if(pc0 && pc0.getStats){
+                  clearInterval(_webrtcFpsTimer);
+                  _webrtcFpsTimer = setInterval(function(){
+                    if(_activeTransport !== 'h264'){ clearInterval(_webrtcFpsTimer); return; }
+                    pc0.getStats(null).then(function(stats){
+                      stats.forEach(function(r){
+                        if(r.type==='inbound-rtp' && r.kind==='video' && r.framesPerSecond!=null){
+                          const el=document.getElementById('s-vfps');
+                          if(el) el.textContent=Math.round(r.framesPerSecond)+' fps';
+                        }
+                      });
+                    }).catch(function(){});
+                  }, 2000);
+                }
+              }catch(e){}
               // Shrink the receiver's jitter buffer. WebRTC defaults are tuned
               // for smooth video calls and will happily hold 100-200ms of
               // frames to hide network jitter - invisible server-side, and on
@@ -2218,6 +2255,8 @@ function syncVideoTransport(mode){
 }
 
 function stopWebRTC(){
+  clearInterval(_webrtcFpsTimer); _webrtcFpsTimer = null;
+  const _vf=document.getElementById('s-vfps'); if(_vf) _vf.textContent='-';
   try{
     if(_janusHandle){ _janusHandle.hangup(); _janusHandle = null; }
     if(_janus){ _janus.destroy(); _janus = null; }

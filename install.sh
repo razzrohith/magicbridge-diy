@@ -135,8 +135,8 @@ APT_PKGS=(
     nginx
     # SSL
     openssl
-    # WiFi / network
-    network-manager wireless-tools wpasupplicant
+    # WiFi / network (iw: read/set 802.11 power-save; wireless-tools for iwconfig)
+    network-manager wireless-tools wpasupplicant iw
     # Provisioning AP
     hostapd dnsmasq
     # mDNS
@@ -552,6 +552,20 @@ if [[ "$WAS_LOCKED" == "1" && -x /usr/local/bin/mb-lockdown.sh ]]; then
     /usr/local/bin/mb-lockdown.sh on >/dev/null 2>&1 \
         && ok "Re-applied Tailscale-only lockdown (was active before update)" \
         || warn "Could not re-apply lockdown - run: sudo mb-lockdown.sh on"
+fi
+
+# ── Disable Wi-Fi power-save (latency jitter) ─────────────────────────────────
+# The Pi's brcmfmac Wi-Fi ships power-save ON: the radio parks between packets
+# and wakes in 100+ ms, so RTT spikes from a few ms to 100-140ms with 0% packet
+# loss - visible video stutter and an inflated WebRTC jitter buffer. (Measured
+# by the PiKVM sibling on the same Wi-Fi silicon.) A NetworkManager drop-in
+# disables it for every Wi-Fi connection, persistently, with no extra package.
+NM_PS="/etc/NetworkManager/conf.d/wifi-powersave-off.conf"
+if [[ ! -f "$NM_PS" ]] || ! grep -q "wifi.powersave = 2" "$NM_PS" 2>/dev/null; then
+    mkdir -p /etc/NetworkManager/conf.d
+    printf '[connection]\nwifi.powersave = 2\n' > "$NM_PS"   # 2 = disable
+    systemctl reload NetworkManager 2>/dev/null || systemctl restart NetworkManager 2>/dev/null || true
+    ok "Wi-Fi power-save disabled (latency jitter fix)"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
