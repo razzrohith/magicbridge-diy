@@ -1170,8 +1170,11 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                         text  = str(d.get("text", ""))
                         delay = float(d.get("delay", 0.013))
                         delay = max(0.003, min(0.15, delay))
+                        # Default to human-paced typing (stealth-first); a client
+                        # can opt into the fast path with {"human": false}.
+                        human = bool(d.get("human", True))
                         if text:
-                            loop.run_in_executor(None, lambda tx=text,dl=delay: keyboard.send_text(tx,dl))
+                            loop.run_in_executor(None, lambda tx=text,dl=delay,hu=human: keyboard.send_text(tx,dl,hu))
 
                 except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                     pass

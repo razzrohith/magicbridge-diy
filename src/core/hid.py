@@ -268,18 +268,34 @@ class HIDKeyboard:
             self.pressed.clear()
             self._write(0, set())
 
-    def send_text(self, text: str, delay: float = 0.012):
+    def send_text(self, text: str, delay: float = 0.012, human: bool = True):
         """
-        Type a string character-by-character (paste feature).
+        Type a string character-by-character (paste / AI-typed text).
         Safe to call from a thread pool executor.
         Skips characters not in CHAR_MAP (non-ASCII, etc.).
 
-        Timing is jittered rather than a fixed interval - a perfectly
-        uniform inter-keystroke delay is an obvious synthetic-input
-        signature. This only affects timing between reports, never what
-        gets typed. Occasional slightly longer pauses after spaces/
-        punctuation mimic natural word-boundary hesitation.
+        STEALTH TIMING. Behavioural endpoint tools (corporate EDR) don't just
+        look at what a HID device IS, they look at how it TYPES: a "keyboard"
+        emitting 500+ WPM in a perfectly even cadence is an obvious synthetic-
+        input signature no matter how well the USB descriptor is spoofed.
+
+        human=True (default) models a real typist:
+          - realistic per-key interval (~110 WPM centre, wide variance), never
+            superhuman - the old default typed at ~527 WPM;
+          - a physical key-hold time (down != up instantaneously);
+          - longer hesitation at word/sentence boundaries;
+          - occasional "thinking" pauses.
+        The passed `delay` is treated as a minimum-speed hint, not the actual
+        rate, so a client asking for 0.003s can't force a robotic burst.
+
+        human=False keeps the old fast path for when speed matters more than
+        blending in (the timing is still jittered, just quick).
+
+        Live typing the operator does on their own keyboard is forwarded
+        keystroke-by-keystroke over the WebSocket and is human BY CONSTRUCTION -
+        this method is only for the synthetic (paste/macro/AI) path.
         """
+        n = 0
         for ch in text:
             entry = CHAR_MAP.get(ch)
             if not entry:
@@ -288,17 +304,40 @@ class HIDKeyboard:
             hid_code = KEY_MAP.get(code)
             if hid_code is None:
                 continue
+            # --- press ---
             with self._lock:
                 saved_mods = self.modifiers
                 mods = saved_mods | (MODIFIER_MAP["ShiftLeft"] if need_shift else 0)
                 self._write(mods, {hid_code})
-            hold = delay * random.uniform(0.55, 1.85)
-            if ch in " .,!?\n" and random.random() < 0.15:
-                hold += random.uniform(0.04, 0.14)
-            time.sleep(hold)
-            with self._lock:
-                self._write(saved_mods, self.pressed)
-            time.sleep(hold * random.uniform(0.35, 0.85))
+
+            if human:
+                # Physical key-hold, then release, then the inter-key gap.
+                key_hold = random.uniform(0.028, 0.085)
+                time.sleep(key_hold)
+                with self._lock:
+                    self._write(saved_mods, self.pressed)
+                # Inter-key interval: Gaussian around ~110 WPM with real spread,
+                # floored so it's never superhuman even if `delay` is tiny.
+                gap = random.gauss(0.105, 0.045)
+                gap = max(0.045, min(0.32, gap))
+                gap = max(gap, delay)                    # honour a slower request
+                if ch in " \n\t":                        # word/line boundary pause
+                    gap += random.uniform(0.03, 0.16)
+                if ch in ".,!?;:":                        # end-of-clause hesitation
+                    gap += random.uniform(0.05, 0.22)
+                n += 1
+                if n % random.randint(14, 40) == 0:      # periodic "thinking" pause
+                    gap += random.uniform(0.25, 0.9)
+                time.sleep(gap)
+            else:
+                # Fast path (jittered but quick) - unchanged behaviour.
+                hold = delay * random.uniform(0.55, 1.85)
+                if ch in " .,!?\n" and random.random() < 0.15:
+                    hold += random.uniform(0.04, 0.14)
+                time.sleep(hold)
+                with self._lock:
+                    self._write(saved_mods, self.pressed)
+                time.sleep(hold * random.uniform(0.35, 0.85))
 
 
 class HIDMouse:
