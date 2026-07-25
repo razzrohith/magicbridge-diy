@@ -1557,6 +1557,9 @@ function _setCaptured(on){
     const r=$view.getBoundingClientRect(); _cx=r.width/2; _cy=r.height/2;
     hideRecapture();
     setSidebarForControl(false);
+    // Clean slate on (re)capture: clears any button left stuck from before -
+    // so re-clicking the stream recovers from an autoscroll-stuck middle button.
+    if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();
   } else {
     // Lost capture. Was it a (browser-forced) Esc exit within the last 3s?
     if(!_intentional && (Date.now()-_escTime)<3000){
@@ -1567,6 +1570,7 @@ function _setCaptured(on){
     _kbUnlockAndMaybeExitFs();
     document.getElementById('cur-dot').style.display='none';
     setSidebarForControl(true);
+    if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();   // don't leave a button held after losing control
   }
 }
 ['pointerlockchange','mozpointerlockchange','webkitpointerlockchange'].forEach(ev=>{
@@ -1615,6 +1619,7 @@ function releaseAll(){
   ['ShiftLeft','ControlLeft','AltLeft','MetaLeft',
    'ShiftRight','ControlRight','AltRight','MetaRight'].forEach(c=>send({type:'keyup',code:c}));
   _rCtrlDown=0; _rCtrlSent=false;
+  if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();   // clear a stuck (e.g. autoscroll) button
 }
 
 // Keyboard
@@ -1695,13 +1700,15 @@ document.addEventListener('keyup',e=>{
 // Every real KVM does this; this UI didn't. Covers both window blur and the
 // tab going hidden. Only acts when we're actually in control.
 function _releaseOnFocusLoss(){
-  if(!captured && _heldKeys.size===0) return;
+  const btnsHeld = (typeof _heldBtns!=='undefined') && _heldBtns.size>0;
+  if(!captured && _heldKeys.size===0 && !btnsHeld) return;
   _heldKeys.forEach(c=>send({type:'keyup',code:c}));
   _heldKeys.clear();
   ['ShiftLeft','ControlLeft','AltLeft','MetaLeft',
    'ShiftRight','ControlRight','AltRight','MetaRight'].forEach(c=>send({type:'keyup',code:c}));
   _rCtrlDown=0; _rCtrlSent=false;
   clearTimeout(_escHoldTimer); _escDown=0;
+  if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();   // stuck mouse button (e.g. autoscroll) on focus loss
 }
 window.addEventListener('blur', _releaseOnFocusLoss);
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) _releaseOnFocusLoss(); });
@@ -1786,8 +1793,21 @@ document.addEventListener('mousemove',e=>{
 // back/forward (3/4) which the 3-button HID has no bit for.
 const _HIDBTN = {0:0, 1:2, 2:1};
 let _lastRightDown = 0;   // for the contextmenu dedup below
-document.addEventListener('mousedown',e=>{ if(!captured) return; const b=_HIDBTN[e.button]; if(b===undefined) return; if(b===1) _lastRightDown=Date.now(); send({type:'mousedown',button:b}); });
-document.addEventListener('mouseup',e=>{ if(!captured) return; const b=_HIDBTN[e.button]; if(b===undefined) return; send({type:'mouseup',button:b}); });
+// Track which mouse buttons we've told the target are DOWN. A stuck button -
+// especially MIDDLE - leaves Windows/browsers in autoscroll mode, so moving the
+// mouse then scrolls the page to the bottom. A button gets stuck whenever a
+// mouseup is missed: released outside the window, or capture dropped (Esc /
+// focus loss) between the down and the up. releaseAll(), capture change and
+// focus loss now all release them - the exact mouse twin of the _heldKeys fix.
+const _heldBtns = new Set();
+function _releaseMouseButtons(){
+  // Release anything we think is held, then belt-and-suspenders all three in
+  // case one was pressed before we started tracking (recovers a stuck button).
+  [0,1,2].forEach(b=>send({type:'mouseup',button:b}));
+  _heldBtns.clear();
+}
+document.addEventListener('mousedown',e=>{ if(!captured) return; const b=_HIDBTN[e.button]; if(b===undefined) return; if(b===1) _lastRightDown=Date.now(); _heldBtns.add(b); send({type:'mousedown',button:b}); });
+document.addEventListener('mouseup',e=>{ if(!captured) return; const b=_HIDBTN[e.button]; if(b===undefined) return; _heldBtns.delete(b); send({type:'mouseup',button:b}); });
 document.addEventListener('wheel',e=>{
   if(!captured) return;
   e.preventDefault();
