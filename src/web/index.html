@@ -1751,20 +1751,75 @@ function _flushMouse(){
   if(_relPending){ send({type:'mousemove',dx:_relDX,dy:_relDY}); _relDX=0; _relDY=0; _relPending=false; }
 }
 function _queueMouse(){ if(!_mvRAF){ _mvRAF=true; requestAnimationFrame(_flushMouse); } }
+// Map a screen position to absolute HID coords (0..32767) over the actual
+// (letterboxed) video area. Returns null if off the video.
+function _absFromXY(cx,cy){
+  const r=_videoRect();
+  if(!(r.width>0 && r.height>0)) return null;
+  const nx=(cx-r.left)/r.width, ny=(cy-r.top)/r.height;
+  if(nx<0||nx>1||ny<0||ny>1) return null;
+  return {x:Math.round(nx*32767), y:Math.round(ny*32767)};
+}
+function _absFromEvent(e){ return _absFromXY(e.clientX,e.clientY); }
+// Pin the pointer to a given position on the wire before a button event, so a
+// click lands exactly under the cursor (absolute moves are coalesced per frame,
+// button events are immediate). No-op in relative mode.
+function _pinXY(cx,cy){
+  if(_mouseMode!=='absolute') return;
+  const p=_absFromXY(cx,cy);
+  if(p){ _absPending=null; send({type:'mousemove_abs',x:p.x,y:p.y}); }
+}
+function _pinAbs(e){ _pinXY(e.clientX,e.clientY); }
+
+// --- Touchpad tap-drag guard (LEFT button, absolute mode) ------------------
+// A laptop touchpad with "tap to click" turns the start of a one-finger GLIDE
+// into a tap that latches the left button DOWN (tap-drag lock). A plain move
+// then reaches the target as a click-DRAG = drag-select that scrolls it to the
+// bottom (confirmed by tracing: one mousedown, 71 held moves, one mouseup).
+// We can't see the touchpad's intent, but timing gives it away: a glide starts
+// MOVING within a few ms of the "down" (finger already gliding); a deliberate
+// press-then-drag has a human pause first. So DEFER the left-down and classify:
+//   released quick, barely moved      -> real CLICK   (send down+up)
+//   big move <FAST_MS after down       -> glide         -> DROP the phantom down
+//   big move >=FAST_MS, or held still  -> deliberate DRAG -> commit the down
+const _TAP_PX=8, _TAP_FAST_MS=55, _TAP_HOLD_MS=250;
+let _lpd=null, _lpdTimer=0;                 // pending left-down {x,y,t}
+function _lpdStart(e){
+  _lpd={x:e.clientX,y:e.clientY,t:performance.now()};
+  clearTimeout(_lpdTimer);
+  _lpdTimer=setTimeout(()=>{ if(_lpd) _lpdArm(); }, _TAP_HOLD_MS);  // held still -> real press-hold
+}
+function _lpdArm(){        // commit the pending down as a real held drag
+  if(!_lpd) return;
+  clearTimeout(_lpdTimer); _lpdTimer=0;
+  const x=_lpd.x,y=_lpd.y; _lpd=null;
+  _pinXY(x,y); _heldBtns.add(0); send({type:'mousedown',button:0});
+}
+function _lpdClick(){      // quick release, little movement -> a click (tap)
+  if(!_lpd) return;
+  clearTimeout(_lpdTimer); _lpdTimer=0;
+  const x=_lpd.x,y=_lpd.y; _lpd=null;
+  _pinXY(x,y); send({type:'mousedown',button:0}); send({type:'mouseup',button:0});
+}
+function _lpdCancel(){     // touchpad glide tap-drag -> phantom down, drop it
+  if(!_lpd) return;
+  clearTimeout(_lpdTimer); _lpdTimer=0; _lpd=null;
+}
+function _lpdClassify(e){  // called on each move while a left-down is pending
+  if(!_lpd) return;
+  if(Math.hypot(e.clientX-_lpd.x, e.clientY-_lpd.y) <= _TAP_PX) return;   // within tap slop, keep waiting
+  if(performance.now()-_lpd.t < _TAP_FAST_MS) _lpdCancel();   // already moving = glide, not a deliberate drag
+  else _lpdArm();                                             // paused then moved = deliberate drag
+}
 
 document.addEventListener('mousemove',e=>{
   if(captured){
     if(_mouseMode==='absolute'){
+      if(_lpd) _lpdClassify(e);              // resolve a deferred left-down (click vs glide vs drag)
       // Map the real cursor over the ACTUAL VIDEO area to 0-32767 (latest
       // position only, flushed once per frame).
-      const r=_videoRect();
-      if(r.width>0 && r.height>0){
-        const nx=(e.clientX-r.left)/r.width, ny=(e.clientY-r.top)/r.height;
-        if(nx>=0 && nx<=1 && ny>=0 && ny<=1){
-          _absPending={x:Math.round(nx*32767),y:Math.round(ny*32767)};
-          _queueMouse();
-        }
-      }
+      const p=_absFromEvent(e);
+      if(p){ _absPending=p; _queueMouse(); }
     } else {
       _relDX+=e.movementX; _relDY+=e.movementY; _relPending=true; _queueMouse();
       if(_showOverlay){
@@ -1800,6 +1855,8 @@ let _lastRightDown = 0;   // for the contextmenu dedup below
 // focus loss now all release them - the exact mouse twin of the _heldKeys fix.
 const _heldBtns = new Set();
 function _releaseMouseButtons(){
+  // Drop any deferred (un-classified) left-down so it can't fire later.
+  if(typeof _lpdCancel==='function') _lpdCancel();
   // Release anything we think is held, then belt-and-suspenders all three in
   // case one was pressed before we started tracking (recovers a stuck button).
   [0,1,2].forEach(b=>send({type:'mouseup',button:b}));
@@ -1818,6 +1875,14 @@ document.addEventListener('mousedown',e=>{
   if(_overUI(e)) return;                   // click on our own controls - don't forward
   const b=_HIDBTN[e.button]; if(b===undefined) return;
   if(b===1) _lastRightDown=Date.now();
+  // LEFT button in absolute mode: don't send it yet - defer & classify so a
+  // touchpad tap-drag glide can't become a screen-wide drag-select.
+  if(b===0 && _mouseMode==='absolute'){
+    if(_heldBtns.has(0)){ _heldBtns.delete(0); send({type:'mouseup',button:0}); }  // self-heal a prior stuck down
+    _lpdStart(e);
+    return;
+  }
+  _pinAbs(e);                              // land the click at the CURRENT cursor, not a stale coalesced one
   if(_heldBtns.has(b)) send({type:'mouseup',button:b});   // self-heal: a prior up was lost, un-stick before re-press
   _heldBtns.add(b); send({type:'mousedown',button:b});
 });
@@ -1829,7 +1894,8 @@ document.addEventListener('mouseup',e=>{
   // UI doesn't emit a lone mouseup to the target.
   if(!captured) return;
   const b=_HIDBTN[e.button]; if(b===undefined) return;
-  if(_heldBtns.has(b)){ _heldBtns.delete(b); send({type:'mouseup',button:b}); }
+  if(b===0 && _lpd){ _lpdClick(); return; }   // released while pending = a real click (little/no move)
+  if(_heldBtns.has(b)){ _pinAbs(e); _heldBtns.delete(b); send({type:'mouseup',button:b}); }
 });
 document.addEventListener('wheel',e=>{
   if(!captured) return;

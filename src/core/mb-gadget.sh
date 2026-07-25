@@ -151,11 +151,16 @@ if [[ "$MOUSE_MODE" == "absolute" ]]; then
     echo "0" > "$GADGET_DIR/functions/hid.mouse/protocol"
     echo "0" > "$GADGET_DIR/functions/hid.mouse/subclass"
     echo "6" > "$GADGET_DIR/functions/hid.mouse/report_length"
-    # Includes PHYSICAL_MIN/MAX (0x36/0x46) alongside LOGICAL_MIN/MAX, matching
-    # the reference absolute-pointer descriptor Windows maps most reliably.
-    printf '\x05\x01\x09\x02\xa1\x01\x09\x01\xa1\x00\x05\x09\x19\x01\x29\x03\x15\x00\x25\x01\x95\x03\x75\x01\x81\x02\x95\x01\x75\x05\x81\x03\x05\x01\x09\x30\x09\x31\x16\x00\x00\x26\xff\x7f\x36\x00\x00\x46\xff\x7f\x75\x10\x95\x02\x81\x02\x09\x38\x15\x81\x25\x7f\x75\x08\x95\x01\x81\x06\xc0\xc0' \
+    # EXACT PiKVM reference absolute-pointer descriptor (no PHYSICAL_MIN/MAX).
+    # Declaring PHYSICAL dimensions (0x36/0x46) made Windows treat this absolute
+    # pointer more like a digitizer/tablet, which auto-pans/scrolls content when
+    # the cursor moves (the documented Wacom/OpenTabletDriver autoscroll class of
+    # bug). Dropping them - matching PiKVM's known-good mouse descriptor - keeps
+    # a plain absolute MOUSE. Report layout is unchanged (buttons + X16 + Y16 +
+    # wheel8 = 6 bytes), so hid.py needs no change.
+    printf '\x05\x01\x09\x02\xa1\x01\x09\x01\xa1\x00\x05\x09\x19\x01\x29\x03\x15\x00\x25\x01\x95\x03\x75\x01\x81\x02\x95\x01\x75\x05\x81\x03\x05\x01\x09\x30\x09\x31\x16\x00\x00\x26\xff\x7f\x75\x10\x95\x02\x81\x02\x05\x01\x09\x38\x15\x81\x25\x7f\x75\x08\x95\x01\x81\x06\xc0\xc0' \
         > "$GADGET_DIR/functions/hid.mouse/report_desc"
-    echo "mb-gadget: mouse mode = ABSOLUTE (6-byte pointer report)"
+    echo "mb-gadget: mouse mode = ABSOLUTE (6-byte pointer report, no physical dims)"
 else
     # Relative boot mouse: 3 buttons + 5 pad + signed X + signed Y + signed
     # wheel = 4-byte report. Matches a real receiver mouse.
