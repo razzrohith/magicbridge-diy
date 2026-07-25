@@ -537,18 +537,10 @@ body:not(.fs) .fs-hud{display:none!important}
 </div>
 
 <!-- FS HUD Top -->
-<div class="fs-hud" id="fs-top">
-  <span style="font-size:13px;font-weight:700;background:var(--brand);-webkit-background-clip:text;-webkit-text-fill-color:transparent">MB</span>
-  <div style="width:6px;height:6px;border-radius:50%;background:var(--green)" id="fs-dot"></div>
-  <div class="fh-sep"></div>
-  <button class="fh-btn" onclick="fhCombo(['ControlLeft','AltLeft','Delete'])">Ctrl+Alt+Del</button>
-  <button class="fh-btn" onclick="fhCombo(['MetaLeft','KeyL'])">⊞+L</button>
-  <button class="fh-btn" onclick="fhCombo(['MetaLeft','KeyD'])">⊞+D</button>
-  <button class="fh-btn" onclick="toggleVKBD()">⌨ KB</button>
-  <button class="fh-btn" id="fh-audio-btn" onclick="toggleAudioMute()" style="display:none">🔇 Audio</button>
-  <div class="fh-sep"></div>
-  <button class="fh-btn" onclick="toggleFS()">⛶ Exit FS</button>
-</div>
+<!-- fs-top HUD removed: it sat under the capture bar (#relbar, z-index 900), so
+     its buttons never received clicks. The capture bar's own controls (RELEASE)
+     work; exit fullscreen with Esc. Combos remain available on the main page's
+     "Combos" dropdown (which works). -->
 
 <!-- FS HUD Bottom -->
 <div class="fs-hud" id="fs-bot">
@@ -1361,14 +1353,22 @@ function connect(){
   // stream on every WebSocket reconnect - and the socket reconnects on any
   // network blip - which would quietly undo the connection-close in
   // setVideoTransport() and put MJPEG back on the wire alongside WebRTC.
-  ws.onopen=()=>{ dot('ok','Connected'); _wsAuthFails=0; _wsBackoff=1000;
+  let _wsOpened=false;
+  ws.onopen=()=>{ _wsOpened=true; dot('ok','Connected'); _wsAuthFails=0; _wsBackoff=1000;
     if(_activeTransport !== 'h264') retryStream();
     ping(); };
   ws.onclose=(ev)=>{
-    // A WS handshake rejected for auth (session expired / cookie missing) closes
-    // immediately with no open. After a couple of quick failures, stop
-    // retrying forever and send the user back to /login instead.
-    _wsAuthFails++;
+    // Distinguish a genuine auth/handshake rejection (closes WITHOUT ever
+    // opening) from a normal mid-session drop (network blip, laptop sleep,
+    // fullscreen transition). The old code counted EVERY close toward the
+    // /login redirect and only reset on open - so a few ordinary drops could
+    // kick a logged-in user to /login, and it never updated the "Connected"
+    // chip on a drop, leaving control silently dead while the (separate) video
+    // connection kept the page LOOKING connected. That is exactly the state
+    // where combos do nothing and you can't clear a target-side autoscroll.
+    if(_wsOpened){ _wsAuthFails=0; }   // a real session dropped -> just reconnect
+    else { _wsAuthFails++; }           // never opened -> likely auth/handshake reject
+    dot('warn','Reconnecting…');       // reflect reality: input is NOT live now
     if(_wsAuthFails>=3){ location.href='/login'; return; }
     _scheduleReconnect();
   };
@@ -1781,8 +1781,7 @@ document.addEventListener('mousemove',e=>{
   }
   if(document.fullscreenElement){
     const h=window.innerHeight;
-    document.getElementById('fs-top').classList.toggle('vis',e.clientY<80);
-    document.getElementById('fs-bot').classList.toggle('vis',e.clientY>h-80);
+    document.getElementById('fs-bot').classList.toggle('vis',e.clientY>h-80);   // fs-top HUD was removed (see markup)
   }
 });
 // Browser e.button and USB-HID button bits use DIFFERENT numbering:
@@ -1806,15 +1805,41 @@ function _releaseMouseButtons(){
   [0,1,2].forEach(b=>send({type:'mouseup',button:b}));
   _heldBtns.clear();
 }
-document.addEventListener('mousedown',e=>{ if(!captured) return; const b=_HIDBTN[e.button]; if(b===undefined) return; if(b===1) _lastRightDown=Date.now(); _heldBtns.add(b); send({type:'mousedown',button:b}); });
-document.addEventListener('mouseup',e=>{ if(!captured) return; const b=_HIDBTN[e.button]; if(b===undefined) return; _heldBtns.delete(b); send({type:'mouseup',button:b}); });
+// True when the event happened ON one of our own control overlays (the release
+// bar, top bar, combos menu, paste HUD, sidebar, recapture screen) rather than
+// on the remote view. We must NOT forward a mousedown/scroll that landed on our
+// own UI to the target - that used to send stray clicks to the remote PC.
+function _overUI(e){
+  const t=e.target;
+  return !!(t && t.closest && t.closest('#relbar,#topbar,#cmenu,#fs-bot,#sidebar,#recapture'));
+}
+document.addEventListener('mousedown',e=>{
+  if(!captured) return;
+  if(_overUI(e)) return;                   // click on our own controls - don't forward
+  const b=_HIDBTN[e.button]; if(b===undefined) return;
+  if(b===1) _lastRightDown=Date.now();
+  if(_heldBtns.has(b)) send({type:'mouseup',button:b});   // self-heal: a prior up was lost, un-stick before re-press
+  _heldBtns.add(b); send({type:'mousedown',button:b});
+});
+document.addEventListener('mouseup',e=>{
+  // ALWAYS release a held button, even if the up landed on a control bar or the
+  // target changed - a swallowed mouseup is exactly what left the button stuck
+  // DOWN and made Windows autoscroll/drag-select while moving. Only forward the
+  // up if we started the down (it's in _heldBtns), so a click that began on our
+  // UI doesn't emit a lone mouseup to the target.
+  if(!captured) return;
+  const b=_HIDBTN[e.button]; if(b===undefined) return;
+  if(_heldBtns.has(b)){ _heldBtns.delete(b); send({type:'mouseup',button:b}); }
+});
 document.addEventListener('wheel',e=>{
   if(!captured) return;
+  if(_overUI(e)) return;                   // let our own panels scroll normally
   e.preventDefault();
   send({type:'scroll',dx:Math.round(e.deltaX/30),dy:Math.round(e.deltaY/30)});
 },{passive:false});
 document.addEventListener('contextmenu',e=>{
   if(!captured) return;
+  if(_overUI(e)) return;                   // right-click on our own controls - ignore
   e.preventDefault();                     // never show the browser's own menu
   // Some touchpads fire ONLY contextmenu on a two-finger tap (no right
   // mousedown), so the remapped mousedown/mouseup above never runs and the
@@ -1932,8 +1957,18 @@ document.addEventListener('fullscreenchange',()=>{
   document.body.classList.toggle('fs',!!document.fullscreenElement);
 });
 
-// FS HUD paste
-function fhCombo(codes){ send({type:'combo',codes}); toast(codes.join('+')); }
+// Control-bar clicks are kept off the target by the _overUI() guard in the
+// mousedown/wheel/contextmenu handlers above (skip-on-our-UI), NOT by
+// stopPropagation - stopping the events used to swallow the matching mouseup
+// too, which left the mouse button stuck DOWN and made the target autoscroll /
+// drag-select while moving. mouseup now always releases a held button.
+
+// A mouse button released OUTSIDE the browser window never fires mouseup here,
+// which is one way a button gets stuck (-> target autoscroll). Releasing when
+// the cursor leaves the document catches that case.
+document.addEventListener('mouseleave', function(){
+  if(typeof _heldBtns!=='undefined' && _heldBtns.size) _releaseMouseButtons();
+});
 async function fhSend(){
   const inp=document.getElementById('fh-input');
   const txt=inp.value; if(!txt) return;
