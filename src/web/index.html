@@ -1745,10 +1745,23 @@ function _videoRect(){
 // absolute keeps only the LATEST position (no stale backlog); relative sums the
 // deltas so nothing is lost, just merged into one report per frame.
 let _absPending=null, _relDX=0, _relDY=0, _relPending=false, _mvRAF=false;
+let _scrollDX=0, _scrollDY=0, _scrollPending=false;
 function _flushMouse(){
   _mvRAF=false;
   if(_absPending){ send({type:'mousemove_abs',x:_absPending.x,y:_absPending.y}); _absPending=null; }
   if(_relPending){ send({type:'mousemove',dx:_relDX,dy:_relDY}); _relDX=0; _relDY=0; _relPending=false; }
+  // Coalesce a burst of wheel events into ONE scroll per frame. A touchpad
+  // fires a flood of wheel events (plus inertial/momentum ones after your
+  // fingers lift); sending each raw built a backlog that played out behind the
+  // user = fast first scroll, then growing lag on sustained up/down scrolling.
+  // Accumulate the raw delta and emit the whole-notch part once per frame,
+  // keeping the sub-notch remainder so nothing is lost and rapid up-then-down
+  // within a frame nets out instead of firing two opposing scrolls.
+  if(_scrollPending){
+    const dx=Math.round(_scrollDX/30), dy=Math.round(_scrollDY/30);
+    if(dx||dy){ send({type:'scroll',dx,dy}); _scrollDX-=dx*30; _scrollDY-=dy*30; }
+    _scrollPending=false;
+  }
 }
 function _queueMouse(){ if(!_mvRAF){ _mvRAF=true; requestAnimationFrame(_flushMouse); } }
 // Map a screen position to absolute HID coords (0..32767) over the actual
@@ -1901,7 +1914,7 @@ document.addEventListener('wheel',e=>{
   if(!captured) return;
   if(_overUI(e)) return;                   // let our own panels scroll normally
   e.preventDefault();
-  send({type:'scroll',dx:Math.round(e.deltaX/30),dy:Math.round(e.deltaY/30)});
+  _scrollDX+=e.deltaX; _scrollDY+=e.deltaY; _scrollPending=true; _queueMouse();   // coalesced in _flushMouse (one send/frame)
 },{passive:false});
 document.addEventListener('contextmenu',e=>{
   if(!captured) return;
