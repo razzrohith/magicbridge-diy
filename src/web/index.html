@@ -1649,6 +1649,11 @@ document.addEventListener('keydown',e=>{
     e.preventDefault();
     return;
   }
+  // Ignore OS key-repeat for normal keys: send ONE keydown and hold it - the
+  // TARGET generates its own key-repeat from the held HID key. Forwarding every
+  // repeat flooded the WS/HID pipe (~30/s per held key) and lagged other input,
+  // the keyboard twin of the wheel/mouse-move coalescing.
+  if(e.repeat){ e.preventDefault(); return; }
   // Another key arrived while RCtrl is held => it's a chord. Flush a real
   // keydown ControlRight and mark it sent, but KEEP _rCtrlDown set so the keyup
   // handler knows the key is physically down and must be released.
@@ -1978,7 +1983,7 @@ $view.addEventListener('touchmove',e=>{
   if(_longT){clearTimeout(_longT);_longT=null;}
   if(e.touches.length===1&&_tp){
     const dx=e.touches[0].clientX-_tp.x,dy=e.touches[0].clientY-_tp.y;
-    if(Math.abs(dx)+Math.abs(dy)>4){_moved=true;send({type:'mousemove',dx,dy});}
+    if(Math.abs(dx)+Math.abs(dy)>4){_moved=true;_relDX+=dx;_relDY+=dy;_relPending=true;_queueMouse();}  // coalesced: one send/frame (touch-drag flood twin of wheel/mouse)
     _tp={x:e.touches[0].clientX,y:e.touches[0].clientY};
   }
 },{passive:true});
