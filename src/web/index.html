@@ -1778,14 +1778,32 @@ document.addEventListener('mousemove',e=>{
     document.getElementById('fs-bot').classList.toggle('vis',e.clientY>h-80);
   }
 });
-document.addEventListener('mousedown',e=>{ if(!captured) return; send({type:'mousedown',button:e.button}); });
-document.addEventListener('mouseup',e=>{ if(!captured) return; send({type:'mouseup',button:e.button}); });
+// Browser e.button and USB-HID button bits use DIFFERENT numbering:
+//   JS  : 0=left, 1=middle, 2=right
+//   HID : 0=left, 1=right,  2=middle   (bit0=L, bit1=R, bit2=M)
+// So the old code sent right-clicks (e.button=2) as HID button 2 = MIDDLE, and
+// middle as right - right-click did nothing on the target. Remap here; drop
+// back/forward (3/4) which the 3-button HID has no bit for.
+const _HIDBTN = {0:0, 1:2, 2:1};
+let _lastRightDown = 0;   // for the contextmenu dedup below
+document.addEventListener('mousedown',e=>{ if(!captured) return; const b=_HIDBTN[e.button]; if(b===undefined) return; if(b===1) _lastRightDown=Date.now(); send({type:'mousedown',button:b}); });
+document.addEventListener('mouseup',e=>{ if(!captured) return; const b=_HIDBTN[e.button]; if(b===undefined) return; send({type:'mouseup',button:b}); });
 document.addEventListener('wheel',e=>{
   if(!captured) return;
   e.preventDefault();
   send({type:'scroll',dx:Math.round(e.deltaX/30),dy:Math.round(e.deltaY/30)});
 },{passive:false});
-document.addEventListener('contextmenu',e=>{ if(captured) e.preventDefault(); });
+document.addEventListener('contextmenu',e=>{
+  if(!captured) return;
+  e.preventDefault();                     // never show the browser's own menu
+  // Some touchpads fire ONLY contextmenu on a two-finger tap (no right
+  // mousedown), so the remapped mousedown/mouseup above never runs and the
+  // target gets no right-click. Synthesize one here - but skip it if a real
+  // right button just fired (mousedown->mouseup->contextmenu), to avoid a
+  // double right-click on a physical mouse.
+  if(Date.now()-_lastRightDown < 120) return;   // a real right button just fired - don't double it
+  send({type:'mousedown',button:1}); send({type:'mouseup',button:1});   // HID right
+});
 
 // Cursor
 let _cursorStyle='default';
@@ -1829,7 +1847,7 @@ let _tp=null,_moved=false,_longT=null,_lastTap=0;
 $view.addEventListener('touchstart',e=>{
   if(e.touches.length===1){
     _tp={x:e.touches[0].clientX,y:e.touches[0].clientY};_moved=false;
-    _longT=setTimeout(()=>{send({type:'mousedown',button:2});send({type:'mouseup',button:2});toast('Right-click');},500);
+    _longT=setTimeout(()=>{send({type:'mousedown',button:1});send({type:'mouseup',button:1});toast('Right-click');},500);  // HID right = 1
   }
 },{passive:true});
 $view.addEventListener('touchmove',e=>{
