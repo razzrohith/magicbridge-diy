@@ -1714,22 +1714,52 @@ document.addEventListener('visibilitychange', ()=>{ if(document.hidden) _release
 // real cursor); in absolute mode the real cursor is visible so it's off.
 let _mouseMode='relative';
 let _cx=0,_cy=0,_showOverlay=true;
+// The video is object-fit:contain inside #view, so a 16:9 stream is LETTERBOXED
+// (black bars) inside a differently-shaped container. Absolute mouse mapping
+// must use the video's ACTUAL displayed rectangle, not the container's - mapping
+// to the container is why the local and remote cursors didn't line up. Compute
+// the real drawn rect from the stream's intrinsic size.
+function _videoRect(){
+  const r=$view.getBoundingClientRect();
+  let iw=0,ih=0;
+  if(_activeTransport==='h264'){ const v=document.getElementById('webrtc-view'); iw=v.videoWidth; ih=v.videoHeight; }
+  else { const im=document.getElementById('stream'); iw=im.naturalWidth; ih=im.naturalHeight; }
+  if(!iw||!ih||!r.width||!r.height) return r;                 // not ready -> container
+  const cAR=r.width/r.height, vAR=iw/ih;
+  let dw,dh;
+  if(vAR>cAR){ dw=r.width; dh=r.width/vAR; }                  // bars top+bottom
+  else       { dh=r.height; dw=r.height*vAR; }               // bars left+right
+  return {left:r.left+(r.width-dw)/2, top:r.top+(r.height-dh)/2, width:dw, height:dh};
+}
+
+// Coalesce mouse motion to ONE send per animation frame (~60/s). Firing a
+// send() on every mousemove event flooded the WebSocket/HID on continuous
+// motion, and the queue grew the longer you moved = rising latency. rAF batches:
+// absolute keeps only the LATEST position (no stale backlog); relative sums the
+// deltas so nothing is lost, just merged into one report per frame.
+let _absPending=null, _relDX=0, _relDY=0, _relPending=false, _mvRAF=false;
+function _flushMouse(){
+  _mvRAF=false;
+  if(_absPending){ send({type:'mousemove_abs',x:_absPending.x,y:_absPending.y}); _absPending=null; }
+  if(_relPending){ send({type:'mousemove',dx:_relDX,dy:_relDY}); _relDX=0; _relDY=0; _relPending=false; }
+}
+function _queueMouse(){ if(!_mvRAF){ _mvRAF=true; requestAnimationFrame(_flushMouse); } }
+
 document.addEventListener('mousemove',e=>{
   if(captured){
     if(_mouseMode==='absolute'){
-      // Map the real cursor position over the video to an absolute 0-32767
-      // coordinate. The remote cursor jumps straight to the matching spot -
-      // no drift, and you see your own cursor the whole time (fixes the
-      // "can't see the mouse moving" problem directly).
-      const r=$view.getBoundingClientRect();
+      // Map the real cursor over the ACTUAL VIDEO area to 0-32767 (latest
+      // position only, flushed once per frame).
+      const r=_videoRect();
       if(r.width>0 && r.height>0){
         const nx=(e.clientX-r.left)/r.width, ny=(e.clientY-r.top)/r.height;
         if(nx>=0 && nx<=1 && ny>=0 && ny<=1){
-          send({type:'mousemove_abs',x:Math.round(nx*32767),y:Math.round(ny*32767)});
+          _absPending={x:Math.round(nx*32767),y:Math.round(ny*32767)};
+          _queueMouse();
         }
       }
     } else {
-      send({type:'mousemove',dx:e.movementX,dy:e.movementY});
+      _relDX+=e.movementX; _relDY+=e.movementY; _relPending=true; _queueMouse();
       if(_showOverlay){
         // Predictive local cursor: pointer lock hides the real one, so show a
         // dot that moves instantly with your hand while the (laggy) remote
