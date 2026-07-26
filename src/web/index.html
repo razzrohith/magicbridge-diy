@@ -607,8 +607,8 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="scard-title"><span class="dot-acc"></span>Video Quality</div>
           <div class="srow"><span class="sk">Transport</span>
             <select class="ssel" id="sel-mode" style="width:auto;margin:0">
-              <option value="h264" selected>WebRTC (C790/CSI) ★</option>
-              <option value="mjpeg">MJPEG (USB dongle)</option>
+              <option value="h264" selected>WebRTC · H.264 (low latency) ★</option>
+              <option value="mjpeg">MJPEG (fallback / compatible)</option>
             </select>
           </div>
           <div class="srow"><span class="sk">Resolution</span>
@@ -1556,7 +1556,7 @@ function _setCaptured(on){
   if(captured){
     const r=$view.getBoundingClientRect(); _cx=r.width/2; _cy=r.height/2;
     hideRecapture();
-    setSidebarForControl(false);
+    setSidebarForControl(true);   // keep the sidebar/layout - control in-window, no zoom; use ⛶ to go big
     // Clean slate on (re)capture: clears any button left stuck from before -
     // so re-clicking the stream recovers from an autoscroll-stuck middle button.
     if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();
