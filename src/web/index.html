@@ -481,6 +481,7 @@ body:not(.fs) .fs-hud{display:none!important}
 <!-- Release bar (shown while captured) -->
 <div id="relbar">
   <span id="rellbl">🔒 Mouse &amp; keyboard captured</span>
+  <button id="relfs" onclick="toggleFS()" title="Toggle fullscreen (enables full key passthrough)">⛶ Fullscreen</button>
   <button id="relbtn" onclick="releaseAll()">✕ RELEASE</button>
 </div>
 
@@ -1513,17 +1514,22 @@ $view.addEventListener('click', e=>{
   if(!captured) capture();
 });
 
-function _enterFsAndKbLock(){
-  if(!document.fullscreenElement && document.documentElement.requestFullscreen){
-    _autoFsFromCapture=true;
-    document.documentElement.requestFullscreen().catch(()=>{_autoFsFromCapture=false;});
-  }
-  if(navigator.keyboard && navigator.keyboard.lock){
-    navigator.keyboard.lock(['Escape']).then(()=>{_kbLockActive=true;}).catch(()=>{_kbLockActive=false;});
+// Keyboard Lock (Esc-hold to exit + passing Alt+Tab / Win / Ctrl+W straight to
+// the target) ONLY works while the tab is fullscreen. So capture no longer
+// forces fullscreen - you control in the normal window - and we engage keyboard
+// lock only when you are BOTH capturing AND fullscreen (enter fullscreen with
+// the ⛶ button on the capture bar). Leaving either state releases the lock.
+function _syncKbLock(){
+  const want = captured && !!document.fullscreenElement;
+  if(want && !_kbLockActive){
+    if(navigator.keyboard && navigator.keyboard.lock)
+      navigator.keyboard.lock(['Escape']).then(()=>{_kbLockActive=true;}).catch(()=>{_kbLockActive=false;});
+  } else if(!want && _kbLockActive){
+    if(navigator.keyboard && navigator.keyboard.unlock){ try{navigator.keyboard.unlock();}catch(e){} }
+    _kbLockActive=false;
   }
 }
 function capture(){
-  _enterFsAndKbLock();
   if(_mouseMode==='absolute'){
     // Absolute mode takes NO pointer lock: the real cursor stays visible and
     // maps 1:1 to the screen. "Captured" here just means input is being
@@ -1537,12 +1543,6 @@ function capture(){
   if(p&&p.catch) p.catch(()=>req.call($view));
 }
 
-function _kbUnlockAndMaybeExitFs(){
-  if(navigator.keyboard && navigator.keyboard.unlock){ try{navigator.keyboard.unlock();}catch(e){} }
-  _kbLockActive=false;
-  if(_autoFsFromCapture && document.fullscreenElement){ document.exitFullscreen().catch(()=>{}); }
-  _autoFsFromCapture=false;
-}
 
 // Shared capture-state transition for BOTH modes. Relative mode drives it from
 // pointerlockchange; absolute mode calls it directly from capture()/releaseAll().
@@ -1560,6 +1560,7 @@ function _setCaptured(on){
     // Clean slate on (re)capture: clears any button left stuck from before -
     // so re-clicking the stream recovers from an autoscroll-stuck middle button.
     if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();
+    _syncKbLock();   // if we're already fullscreen, engage keyboard lock now
   } else {
     // Lost capture. Was it a (browser-forced) Esc exit within the last 3s?
     if(!_intentional && (Date.now()-_escTime)<3000){
@@ -1567,7 +1568,7 @@ function _setCaptured(on){
     }
     clearTimeout(_escHoldTimer); _escDown=0;
     _intentional=false;
-    _kbUnlockAndMaybeExitFs();
+    _syncKbLock();   // released control -> drop keyboard lock (stays in FS if you chose it)
     document.getElementById('cur-dot').style.display='none';
     setSidebarForControl(true);
     if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();   // don't leave a button held after losing control
@@ -1604,7 +1605,7 @@ document.getElementById('recapture').addEventListener('click',()=>{
 function releaseAll(){
   _intentional=true;
   hideRecapture();
-  _kbUnlockAndMaybeExitFs();
+  _syncKbLock();
   if(_mouseMode==='absolute'){
     _setCaptured(false);                 // no pointer lock to exit in this mode
   } else {
@@ -2039,6 +2040,7 @@ function toggleFS(){
 }
 document.addEventListener('fullscreenchange',()=>{
   document.body.classList.toggle('fs',!!document.fullscreenElement);
+  _syncKbLock();   // FS on while controlling -> keyboard lock; FS off -> unlock
 });
 
 // Control-bar clicks are kept off the target by the _overUI() guard in the
@@ -2190,6 +2192,13 @@ let _janus = null, _janusHandle = null, _activeTransport = null, _webrtcTimeout 
 // Reset only when the server genuinely leaves h264, or on a manual retry.
 let _webrtcGaveUp = false;
 let _webrtcFpsTimer = null;   // polls receiver stats for the Video-FPS readout
+// WebRTC auto-recovery. A flaky link shouldn't strand you on slow MJPEG for the
+// whole session (the old behaviour: one drop -> permanent MJPEG until reload).
+// After a fallback we re-arm WebRTC on a cooldown, capped per session, so it
+// climbs back to h264 once the link is good again - without re-entering the
+// 8s-black-then-fallback toast loop when WebRTC genuinely can't run.
+let _webrtcRearmTimer = null, _webrtcRetries = 0;
+const _WEBRTC_MAX_RETRIES = 4, _WEBRTC_REARM_MS = 30000;
 
 function setVideoTransport(mode){
   _activeTransport = mode;
@@ -2223,7 +2232,7 @@ function setVideoTransport(mode){
 // the dropdown so the UI reflects what's actually on screen.
 function _webrtcFallbackToMjpeg(reason){
   console.warn('WebRTC unavailable, falling back to MJPEG:', reason);
-  _webrtcGaveUp = true;         // stop the status poll from re-triggering WebRTC
+  _webrtcGaveUp = true;         // pause the status poll from re-triggering WebRTC…
   clearTimeout(_webrtcTimeout);
   stopWebRTC();
   const sel = document.getElementById('sel-mode');
@@ -2232,7 +2241,20 @@ function _webrtcFallbackToMjpeg(reason){
   document.getElementById('webrtc-view').style.display = 'none';
   document.getElementById('stream').style.display = '';
   retryStream();
-  toast('WebRTC unavailable - using MJPEG');
+  // …but only for a cooldown, then let it retry, so a transient WiFi drop (or
+  // the link recovering, e.g. once you're on the in-room AP) climbs back to
+  // low-latency h264 instead of staying stuck on slow MJPEG. Capped so a truly
+  // dead WebRTC (Janus down) settles on MJPEG rather than flapping forever.
+  clearTimeout(_webrtcRearmTimer);
+  if(_webrtcRetries < _WEBRTC_MAX_RETRIES){
+    _webrtcRearmTimer = setTimeout(function(){
+      _webrtcRetries++;
+      _webrtcGaveUp = false;   // next /api/status poll re-attempts WebRTC
+    }, _WEBRTC_REARM_MS);
+    if(_webrtcRetries === 0) toast('Video dropped to MJPEG — retrying WebRTC…');
+  } else {
+    toast('WebRTC unstable on this link — staying on MJPEG');
+  }
 }
 
 function startWebRTC(){
@@ -2310,6 +2332,7 @@ function startWebRTC(){
               // the WebRTC transport it stayed visible ON TOP of working video.
               const _confirmed = function(){
                 clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
+                _webrtcRetries = 0;   // good connection -> refill the recovery budget
                 if($ns) $ns.style.display='none';
                 document.getElementById('bd-stream').className='bd ok';
                 const ss=document.getElementById('s-stream'); if(ss){ss.textContent='Live';ss.className='sv ac';}
@@ -2386,6 +2409,14 @@ function startWebRTC(){
               document.getElementById('fh-audio-btn').style.display = '';
             }
           },
+          // Mid-session drop handling. A weak link can kill the ICE/WebRTC
+          // connection after minutes of good video; janus.js fires these. Fall
+          // back to MJPEG so video keeps flowing - and because the fallback now
+          // auto-retries WebRTC on a cooldown, it recovers to h264 on its own
+          // instead of stranding you on slow MJPEG for the rest of the session.
+          webrtcState: function(up){ if(!up && _activeTransport === 'h264') _webrtcFallbackToMjpeg('webrtc connection down'); },
+          iceState: function(st){ if(st === 'failed' && _activeTransport === 'h264') _webrtcFallbackToMjpeg('ice '+st); },
+          oncleanup: function(){ if(_activeTransport === 'h264') _webrtcFallbackToMjpeg('session ended'); },
           error: function(err){ _webrtcFallbackToMjpeg('plugin attach error: '+err); }
         });
       },
