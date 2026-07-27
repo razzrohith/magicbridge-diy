@@ -122,10 +122,15 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar{display:none!important}
 #cdot.warn{background:var(--yellow);animation:pulse 1.4s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 #sp{flex:1}
-.stat-chip{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);flex-shrink:0;cursor:default}
+.stat-chip{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);flex-shrink:0;cursor:default;
+  padding:3px 9px;border-radius:20px;background:rgba(255,255,255,.05);border:1px solid transparent}
 .stat-chip span{color:var(--sub);font-variant-numeric:tabular-nums}
-.stat-chip.multi span{color:var(--yellow)}
-.stat-chip.multi{color:var(--yellow)}
+.stat-chip.multi span,.stat-chip.multi{color:var(--yellow)}
+.stat-chip.lv-g,.stat-chip.lv-g span{color:#6ee7b7}.stat-chip.lv-g{background:rgba(52,211,153,.14)}
+.stat-chip.lv-a,.stat-chip.lv-a span{color:#f5c98a}.stat-chip.lv-a{background:rgba(245,180,90,.16)}
+.stat-chip.lv-r,.stat-chip.lv-r span{color:#fca5a5}.stat-chip.lv-r{background:rgba(248,113,113,.16)}
+.spark{display:inline-flex;align-items:flex-end;gap:1px;height:11px;margin-left:3px}
+.spark i{width:2px;background:currentColor;opacity:.85;display:inline-block;border-radius:1px}
 #ss-viewers{margin:2px 0 4px}
 .vw{display:flex;gap:8px;align-items:baseline;font-size:11px;padding:4px 0;border-top:1px solid var(--border)}
 .vw-ip{color:var(--text);font-family:ui-monospace,monospace;min-width:100px}
@@ -218,6 +223,16 @@ body:not(.fs) .fs-hud{display:none!important}
 .snav-btn:hover{color:var(--sub)}
 .snav-btn.active{color:var(--accent-l);border-bottom-color:var(--accent)}
 #sidebody{flex:1;overflow-y:auto}
+/* Rail: a thin always-visible icon rail on the right; clicking an icon expands
+   the settings panel (#sidebar). Replaces the in-panel tab nav (#sidenav). */
+#railnav{flex-shrink:0;width:46px;background:rgba(11,14,23,.82);border-left:1px solid var(--border);
+  display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 0;
+  -webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
+.railbtn{width:34px;height:34px;border-radius:9px;border:1px solid transparent;background:none;
+  color:var(--muted);font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s}
+.railbtn:hover{background:rgba(255,255,255,.06);color:var(--sub)}
+.railbtn.active{background:rgba(92,150,255,.16);color:var(--accent-l);border-color:rgba(92,150,255,.32)}
+#sidenav{display:none}
 .tab{display:none;padding:14px}
 .tab.active{display:block}
 .scard{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
@@ -594,8 +609,8 @@ body:not(.fs) .fs-hud{display:none!important}
   <div id="sp"></div>
   <div class="stat-chip" id="chip-viewers" title="Devices connected / controlling right now">👁 <span id="sv-viewers">-</span></div>
   <div class="stat-chip" id="chip-uptime" title="Device uptime">⏱ <span id="sv-uptime">-</span></div>
-  <div class="stat-chip">🌡 <span id="sv-temp">-</span></div>
-  <div class="stat-chip">⚡ <span id="sv-lat">-</span></div>
+  <div class="stat-chip" id="chip-temp">🌡 <span id="sv-temp">-</span></div>
+  <div class="stat-chip" id="chip-lat">⚡ <span id="sv-lat">-</span><span class="spark" id="lat-spark"></span></div>
   <button class="tbtn icon" onclick="toggleFS()" title="Fullscreen">⛶</button>
   <button class="tbtn" id="set-btn" onclick="toggleSidebar()">⚙</button>
   <button class="tbtn icon" onclick="mbLogout()" title="Sign out">⏏</button>
@@ -1213,6 +1228,12 @@ body:not(.fs) .fs-hud{display:none!important}
 
     </div>
   </aside>
+
+  <nav id="railnav">
+    <button class="railbtn active" data-tab="stream" onclick="railTab('stream')" title="Stream">📹</button>
+    <button class="railbtn" data-tab="network" onclick="railTab('network')" title="Network">📶</button>
+    <button class="railbtn" data-tab="system" onclick="railTab('system')" title="System">⚙</button>
+  </nav>
 </div>
 
 <!-- Bottom bar -->
@@ -1470,8 +1491,20 @@ function onMsg(d){
     const ms=Date.now()-_pt;
     document.getElementById('sv-lat').textContent=ms+'ms';
     document.getElementById('s-lat').textContent=ms+' ms';
+    _railSpark(ms);
   }
   if(d.type==='status') applyStatus(d);
+}
+// Latency pill: threshold color (green/amber/red) + a rolling mini sparkline so
+// jitter is visible at a glance (the Wi-Fi story we chased).
+let _spk=[];
+function _railSpark(ms){
+  _spk.push(ms); if(_spk.length>12) _spk.shift();
+  const chip=document.getElementById('chip-lat');
+  if(chip){ chip.classList.remove('lv-g','lv-a','lv-r'); chip.classList.add('lv-'+(ms>150?'r':ms>80?'a':'g')); }
+  const s=document.getElementById('lat-spark'); if(!s) return;
+  const mx=Math.max(30,..._spk);
+  s.innerHTML=_spk.map(v=>'<i style="height:'+Math.max(2,Math.round(v/mx*11))+'px"></i>').join('');
 }
 function dot(cls,txt){
   document.getElementById('cdot').className=cls;
@@ -1972,7 +2005,7 @@ function _releaseMouseButtons(){
 // own UI to the target - that used to send stray clicks to the remote PC.
 function _overUI(e){
   const t=e.target;
-  return !!(t && t.closest && t.closest('#relbar,#topbar,#cmenu,#fs-bot,#sidebar,#recapture,#fshud,#vkbd'));
+  return !!(t && t.closest && t.closest('#relbar,#topbar,#cmenu,#fs-bot,#sidebar,#recapture,#fshud,#vkbd,#railnav'));
 }
 document.addEventListener('mousedown',e=>{
   if(!captured) return;
@@ -2182,8 +2215,7 @@ document.getElementById('fh-input').addEventListener('keydown',e=>{if(e.key==='E
 // Sidebar
 // On phones/narrow viewports start closed (it's an overlay there and would
 // otherwise cover the video on first load); desktop keeps its old default.
-let _sideOpen=window.matchMedia('(min-width:721px)').matches;
-if(_sideOpen){document.getElementById('sidebar').classList.add('open');document.getElementById('set-btn').classList.add('active');}
+let _sideOpen=false;   // Rail: start collapsed (rail only) so the video is full-width; open via a rail icon or ⚙
 function toggleSidebar(){
   _sideOpen=!_sideOpen;
   document.getElementById('sidebar').classList.toggle('open',_sideOpen);
@@ -2204,10 +2236,19 @@ function showTab(name){
   if(name==='agent') name='stream'; // Agent tab hidden this build - see nav comment above
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.snav-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.railbtn').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
   document.getElementById('panel-'+name).classList.add('active');
   document.getElementById('tab-'+name).classList.add('active');
   if(name==='system'){refreshStatus();refreshJigglerStatus();refreshHidAutoDcStatus();sysCheckVer();refreshOledSettings();identityRefresh();}
   if(name==='network'){wifiRefresh();tsRefresh();}
+}
+// Rail icon click: open the panel to that tab; clicking the already-open tab
+// collapses it back to the rail (video full-width again).
+function railTab(name){
+  const isActive=document.getElementById('tab-'+name).classList.contains('active');
+  if(_sideOpen && isActive){ toggleSidebar(); return; }
+  showTab(name);
+  if(!_sideOpen) toggleSidebar();
 }
 
 // Combos
@@ -2625,7 +2666,8 @@ function _escHtml(s){ return String(s==null?'':s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function applyStatus(d){
-  if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;}
+  if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;
+    const ct=document.getElementById('chip-temp'); if(ct){ct.classList.remove('lv-g','lv-a','lv-r');ct.classList.add('lv-'+(d.temp_c>75?'r':d.temp_c>65?'a':'g'));}}
   if(d.uptime){
     document.getElementById('s-uptime').textContent=d.uptime;
     const uc=document.getElementById('sv-uptime'); if(uc) uc.textContent=d.uptime.trim();
