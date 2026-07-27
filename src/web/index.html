@@ -410,7 +410,7 @@ body:not(.fs) .fs-hud{display:none!important}
   border-radius:var(--r);color:#fff;font-size:12px;font-weight:500;cursor:pointer;flex-shrink:0}
 #psend:hover{background:var(--accent-d)}
 /* Virtual Keyboard */
-#vkbd{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+#vkbd{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);transform-origin:bottom center;
   width:min(720px,98vw);border-radius:16px;padding:0 6px 10px;
   z-index:600;display:none;user-select:none;
   background:rgba(7,7,22,.6);
@@ -432,6 +432,12 @@ body:not(.fs) .fs-hud{display:none!important}
 .vk-style[data-s="neon"]{background:linear-gradient(135deg,#050510,#1a0a40)}
 .vk-style[data-s="ice"]{background:linear-gradient(135deg,rgba(200,220,255,.2),rgba(180,200,255,.35))}
 .vk-style[data-s="dark"]{background:linear-gradient(135deg,#0a0a14,#111125)}
+.vk-style[data-s="glass"]{background:linear-gradient(135deg,rgba(255,255,255,.12),rgba(255,255,255,.42))}
+#vk-size{display:flex;gap:3px}
+.vk-sz{width:22px;height:20px;border-radius:4px;border:1px solid rgba(255,255,255,.15);
+  background:rgba(255,255,255,.05);color:rgba(255,255,255,.6);font-size:14px;line-height:1;
+  cursor:pointer;padding:0;display:flex;align-items:center;justify-content:center}
+.vk-sz:hover{border-color:rgba(255,255,255,.4);color:#fff}
 #vk-close{background:none;border:none;color:rgba(255,255,255,.3);font-size:16px;cursor:pointer;
   padding:0 4px;line-height:1}
 #vk-close:hover{color:rgba(255,255,255,.7)}
@@ -464,6 +470,14 @@ body:not(.fs) .fs-hud{display:none!important}
   border-color:rgba(255,255,255,.07)}
 #vkbd.dark .vk{background:#131320;border-color:#1e1e35;box-shadow:none}
 #vkbd.dark .vk:hover{background:#1a1a2e;border-color:#2a2a45}
+#vkbd.glass{background:rgba(255,255,255,.04);
+  backdrop-filter:blur(30px) saturate(180%);-webkit-backdrop-filter:blur(30px) saturate(180%);
+  border-color:rgba(255,255,255,.2)}
+#vkbd.glass .vk{background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.2);
+  color:rgba(255,255,255,.88);box-shadow:none}
+#vkbd.glass .vk:hover{background:rgba(255,255,255,.16);border-color:rgba(255,255,255,.4)}
+#vkbd.glass .vk:active{background:rgba(255,255,255,.32);color:#fff}
+#vkbd.glass .vk.mod{background:rgba(255,255,255,.03)}
 /* Toast */
 #toast{position:fixed;bottom:64px;left:50%;transform:translateX(-50%);
   background:rgba(22,22,37,.96);backdrop-filter:blur(12px);
@@ -1225,7 +1239,12 @@ body:not(.fs) .fs-hud{display:none!important}
       <div class="vk-style active" data-s="ghost" title="Ghost" onclick="setVKStyle('ghost')"></div>
       <div class="vk-style" data-s="neon"  title="Neon"  onclick="setVKStyle('neon')"></div>
       <div class="vk-style" data-s="ice"   title="Ice"   onclick="setVKStyle('ice')"></div>
+      <div class="vk-style" data-s="glass" title="Glass" onclick="setVKStyle('glass')"></div>
       <div class="vk-style" data-s="dark"  title="Dark"  onclick="setVKStyle('dark')"></div>
+    </div>
+    <div id="vk-size">
+      <button class="vk-sz" title="Smaller keyboard" onclick="setVKScale(-0.1)">−</button>
+      <button class="vk-sz" title="Bigger keyboard" onclick="setVKScale(0.1)">+</button>
     </div>
     <button id="vk-close" onclick="toggleVKBD()">✕</button>
   </div>
@@ -3664,7 +3683,7 @@ let _vkMods={shift:false,ctrl:false,alt:false,win:false,caps:false};
 const $vkbd=document.getElementById('vkbd');
 function toggleVKBD(){$vkbd.classList.toggle('on');document.getElementById('kb-btn').classList.toggle('active',$vkbd.classList.contains('on'));}
 function setVKStyle(s){
-  $vkbd.className=$vkbd.className.replace(/\b(neon|ice|dark)\b/g,'').trim();
+  $vkbd.className=$vkbd.className.replace(/\b(neon|ice|dark|glass)\b/g,'').trim();
   if(s!=='ghost') $vkbd.classList.add(s);
   if($vkbd.classList.contains('on')) $vkbd.classList.add('on');
   document.querySelectorAll('.vk-style').forEach(b=>b.classList.toggle('active',b.dataset.s===s));
@@ -3686,38 +3705,29 @@ function vk(code){
 function vkMod(m){_vkMods[m]=!_vkMods[m];document.getElementById('vk-'+m).classList.toggle('lit',_vkMods[m]);}
 function vkCaps(){_vkMods.caps=!_vkMods.caps;document.getElementById('vk-caps').classList.toggle('lit',_vkMods.caps);}
 
-// Keyboard drag
-let _dragging=false,_dragX=0,_dragY=0;
+// Keyboard drag + resize. Position (drag offset) and size (scale) live in ONE
+// transform so they compose instead of fighting: translate(-50% + offset)
+// scale(N), origin bottom-center. The old code set left/top + transform:none on
+// every drag, which is why the keyboard was not resizable (any transform was
+// wiped). Scale is a ± control in the title bar and persists in localStorage.
+let _dragging=false,_dragSX=0,_dragSY=0,_dragOX=0,_dragOY=0;
+let _vkX=0,_vkY=0,_vkScale=1;
+try{ const s=parseFloat(localStorage.getItem('mb_vk_scale')); if(s) _vkScale=s; }catch(e){}
+function _vkApply(){
+  _vkScale=Math.max(0.6,Math.min(2,_vkScale));
+  $vkbd.style.transform=`translate(calc(-50% + ${_vkX}px), ${_vkY}px) scale(${_vkScale})`;
+}
+function setVKScale(d){ _vkScale+=d; _vkApply(); try{localStorage.setItem('mb_vk_scale',String(_vkScale));}catch(e){} }
+_vkApply();
 const $vkbar=document.getElementById('vk-bar');
-$vkbar.addEventListener('mousedown',e=>{
-  if(e.target.tagName==='BUTTON'||e.target.closest('button')||e.target.closest('#vk-styles')) return;
-  _dragging=true;
-  const r=$vkbd.getBoundingClientRect();
-  _dragX=e.clientX-r.left;_dragY=e.clientY-r.top;
-  $vkbd.style.transition='none';e.preventDefault();
-});
-document.addEventListener('mousemove',e=>{
-  if(!_dragging) return;
-  $vkbd.style.left=(e.clientX-_dragX)+'px';$vkbd.style.top=(e.clientY-_dragY)+'px';
-  $vkbd.style.bottom='auto';$vkbd.style.transform='none';
-});
-document.addEventListener('mouseup',()=>{_dragging=false;$vkbd.style.transition='';});
-// Touch equivalent so the keyboard panel can be repositioned on phones/tablets.
-$vkbar.addEventListener('touchstart',e=>{
-  if(e.target.tagName==='BUTTON'||e.target.closest('button')||e.target.closest('#vk-styles')) return;
-  const t=e.touches[0]; if(!t) return;
-  _dragging=true;
-  const r=$vkbd.getBoundingClientRect();
-  _dragX=t.clientX-r.left;_dragY=t.clientY-r.top;
-  $vkbd.style.transition='none';
-},{passive:true});
-document.addEventListener('touchmove',e=>{
-  if(!_dragging) return;
-  const t=e.touches[0]; if(!t) return;
-  $vkbd.style.left=(t.clientX-_dragX)+'px';$vkbd.style.top=(t.clientY-_dragY)+'px';
-  $vkbd.style.bottom='auto';$vkbd.style.transform='none';
-},{passive:true});
-document.addEventListener('touchend',()=>{_dragging=false;$vkbd.style.transition='';});
+function _vkDragStart(cx,cy){ _dragging=true; _dragSX=cx; _dragSY=cy; _dragOX=_vkX; _dragOY=_vkY; $vkbd.style.transition='none'; }
+function _vkSkip(t){ return t.tagName==='BUTTON'||t.closest('button')||t.closest('#vk-styles')||t.closest('#vk-size'); }
+$vkbar.addEventListener('mousedown',e=>{ if(_vkSkip(e.target)) return; _vkDragStart(e.clientX,e.clientY); e.preventDefault(); });
+document.addEventListener('mousemove',e=>{ if(!_dragging) return; _vkX=_dragOX+(e.clientX-_dragSX); _vkY=_dragOY+(e.clientY-_dragSY); _vkApply(); });
+document.addEventListener('mouseup',()=>{ if(_dragging){ _dragging=false; $vkbd.style.transition=''; } });
+$vkbar.addEventListener('touchstart',e=>{ if(_vkSkip(e.target)) return; const t=e.touches[0]; if(t) _vkDragStart(t.clientX,t.clientY); },{passive:true});
+document.addEventListener('touchmove',e=>{ if(!_dragging) return; const t=e.touches[0]; if(!t) return; _vkX=_dragOX+(t.clientX-_dragSX); _vkY=_dragOY+(t.clientY-_dragSY); _vkApply(); },{passive:true});
+document.addEventListener('touchend',()=>{ if(_dragging){ _dragging=false; $vkbd.style.transition=''; } });
 
 // Init
 connect();
