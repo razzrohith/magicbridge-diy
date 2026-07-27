@@ -101,7 +101,13 @@ if [[ "$MODE" == "verify" ]]; then
   chk "no DuckDNS IP-history log"                    '[ ! -f "$R/var/log/mb-duckdns.log" ]'
   chk "no baked-MAC systemd unit (mb-mac.service)"   '[ ! -f "$R/etc/systemd/system/mb-mac.service" ]'
   chk "no plaintext WiFi PSK (.provision-wifi)"      '[ ! -f "$R/etc/magicbridge/.provision-wifi" ]'
-  chk "dbus machine-id blank (cross-link id)"        '[ ! -s "$R/var/lib/dbus/machine-id" ]'
+  # On Debian/RPi OS /var/lib/dbus/machine-id is an ABSOLUTE symlink to
+  # /etc/machine-id (verified blank just above). A plain `-s` test follows that
+  # symlink and - because we mount the image OFFLINE, not chrooted - resolves it
+  # to the *host's* /etc/machine-id, so it false-failed on a perfectly clean
+  # image. Accept a symlink (its target is the already-checked /etc/machine-id);
+  # only a REAL non-empty file here is an actual cross-link id.
+  chk "dbus machine-id blank (cross-link id)"        '[ -L "$R/var/lib/dbus/machine-id" ] || [ ! -s "$R/var/lib/dbus/machine-id" ]'
   chk "no AI provider keys in config"                'python3 -c "import json,sys;sys.exit(0 if not json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"ai\",{}).get(\"keys\") else 1)"'
   chk "no Tailscale identity"                        '[ ! -f "$R/var/lib/tailscale/tailscaled.state" ]'
   chk "no TLS cert (regenerated per unit)"           '[ ! -d "$R/etc/magicbridge/ssl" ]'
@@ -317,13 +323,21 @@ rm -f "$MNT"/etc/NetworkManager/conf.d/00-mb-macspoof.conf 2>/dev/null || true
 #                              unit shares the builder's MAC (breaks anonymity)
 #   - .provision-wifi        : SSID + plaintext WiFi PSK, if a golden unit was
 #                              interrupted mid-provision before it was deleted
-#   - /var/lib/dbus/machine-id : the dbus copy of the cross-linkable machine-id
-#                              (we already blank /etc/machine-id but not this one)
+#   - /var/lib/dbus/machine-id : the dbus copy of the cross-linkable machine-id.
+#                              On Debian/RPi OS this is a SYMLINK to
+#                              /etc/machine-id (blanked above), so blanking the
+#                              id there covers it - and truncating the symlink
+#                              path here would follow it to the HOST's
+#                              /etc/machine-id (offline mount, not chrooted),
+#                              which we must never touch. Only truncate if it's
+#                              somehow a REAL independent file.
 rm -f "$MNT"/etc/cron.d/mb-duckdns "$MNT"/var/log/mb-duckdns.log 2>/dev/null || true
 rm -f "$MNT"/etc/systemd/system/mb-mac.service \
       "$MNT"/etc/systemd/system/multi-user.target.wants/mb-mac.service 2>/dev/null || true
 rm -f "$MNT"/etc/magicbridge/.provision-wifi "$MNT"/tmp/mb-ts-key 2>/dev/null || true
-: > "$MNT/var/lib/dbus/machine-id" 2>/dev/null || true
+if [[ -f "$MNT/var/lib/dbus/machine-id" && ! -L "$MNT/var/lib/dbus/machine-id" ]]; then
+  : > "$MNT/var/lib/dbus/machine-id"
+fi
 # Login/reboot history: the golden unit's wtmp/btmp/lastlog leak its usage
 # pattern and cross-link every flashed unit. Truncate them (keep the files so
 # logging still works), and drop any stale boot-partition setup report.
