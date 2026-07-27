@@ -58,15 +58,31 @@ button,select,input,textarea{font-family:inherit;color:inherit}
 #rellbl{font-size:11px;color:#fca5a5;font-weight:500}
 #relbtn{height:26px;padding:0 12px;background:#ef444420;border:1px solid #ef444444;
   border-radius:20px;color:#fca5a5;font-size:11px;font-weight:600;cursor:pointer;}
-/* Fullscreen exit affordance: a small ✕ shown ONLY in fullscreen (the full
-   capture bar is retired). Click it or hold Esc 2s to leave the big view. */
-#fsexit{display:none;position:fixed;top:10px;left:50%;transform:translateX(-50%);
-  z-index:1001;width:34px;height:34px;border-radius:50%;
-  border:1px solid rgba(255,255,255,.25);background:rgba(0,0,0,.55);color:#fff;
-  font-size:16px;line-height:1;cursor:pointer;align-items:center;
-  justify-content:center;-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
-#fsexit:hover{background:rgba(0,0,0,.82)}
-body.fs #fsexit{display:flex}
+/* Fullscreen control HUD (top-center). Shown ONLY in fullscreen (body.fs) and
+   revealed via .vis when the cursor nears the top edge. Replaces the old
+   full-width capture bar. */
+#fshud{display:none;position:fixed;top:10px;left:50%;transform:translateX(-50%);
+  z-index:1001;align-items:center;gap:4px;background:rgba(10,12,20,.8);
+  border:1px solid rgba(255,255,255,.15);border-radius:22px;padding:6px 8px;
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+  opacity:0;pointer-events:none;transition:opacity .18s}
+body.fs #fshud{display:flex}
+#fshud.vis{opacity:1;pointer-events:auto}
+#fshud-dot{width:8px;height:8px;border-radius:50%;background:var(--green);margin:0 5px}
+.fshud-cwrap{position:relative}
+.fshud-btn{background:transparent;border:none;color:#e8eefc;font-size:13px;
+  padding:6px 10px;border-radius:16px;cursor:pointer;white-space:nowrap}
+.fshud-btn:hover{background:rgba(255,255,255,.1)}
+.fshud-btn.danger{color:#fca5a5}
+.fshud-sep{width:1px;height:20px;background:rgba(255,255,255,.16);margin:0 3px}
+.fshud-x{display:flex;align-items:center;justify-content:center;width:30px;height:30px;
+  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);color:#fff;
+  border-radius:50%;cursor:pointer;font-size:13px;margin-left:2px}
+.fshud-x:hover{background:rgba(255,255,255,.2)}
+#fshud-combos{display:none;position:absolute;top:calc(100% + 8px);left:0;min-width:212px;
+  background:rgba(14,16,26,.96);border:1px solid rgba(255,255,255,.13);border-radius:10px;
+  padding:5px;-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+#fshud-combos.on{display:block}
 
 /* Recapture overlay */
 #recapture{display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);
@@ -493,9 +509,30 @@ body:not(.fs) .fs-hud{display:none!important}
   <button id="relfs" onclick="toggleFS()" title="Toggle fullscreen (enables full key passthrough)">⛶ Fullscreen</button>
   <button id="relbtn" onclick="releaseAll()">✕ RELEASE</button>
 </div>
-<!-- Small exit-fullscreen button, visible only in fullscreen (body.fs). Leaves
-     the big view; hold Esc 2s does the same and also releases control. -->
-<button id="fsexit" onclick="toggleFS()" title="Exit fullscreen (or hold Esc 2s)">✕</button>
+<!-- Fullscreen control HUD: floating bar at top-center, visible only in
+     fullscreen (body.fs) and revealed when the cursor nears the top edge.
+     Combos + key controls + exit, so the big view stays usable without the old
+     full-width capture bar. Hold Esc 2s also exits. -->
+<div id="fshud">
+  <span id="fshud-dot" title="Live"></span>
+  <div class="fshud-cwrap">
+    <button class="fshud-btn" onclick="toggleFsCombos(event)">⌨ Combos ▾</button>
+    <div id="fshud-combos">
+      <div class="ci" onclick="combo(['ControlLeft','AltLeft','Delete']);toggleFsCombos()">Ctrl+Alt+Del<span class="kbd">⌃⌥⌦</span></div>
+      <div class="ci" onclick="combo(['MetaLeft','KeyL']);toggleFsCombos()">Win+L · Lock<span class="kbd">⊞L</span></div>
+      <div class="ci" onclick="combo(['MetaLeft','KeyD']);toggleFsCombos()">Win+D · Desktop<span class="kbd">⊞D</span></div>
+      <div class="ci" onclick="combo(['MetaLeft','KeyE']);toggleFsCombos()">Win+E · Explorer<span class="kbd">⊞E</span></div>
+      <div class="ci" onclick="combo(['ControlLeft','ShiftLeft','Escape']);toggleFsCombos()">Task Manager<span class="kbd">⌃⇧⎋</span></div>
+      <div class="ci" onclick="combo(['MetaLeft','KeyP']);toggleFsCombos()">Win+P · Display<span class="kbd">⊞P</span></div>
+      <div class="ci" onclick="combo(['MetaLeft','ShiftLeft','KeyS']);toggleFsCombos()">Snip tool<span class="kbd">⊞⇧S</span></div>
+    </div>
+  </div>
+  <button class="fshud-btn" onclick="toggleVKBD()">⌨ Keyboard</button>
+  <button class="fshud-btn" onclick="fsPaste()">📋 Paste</button>
+  <span class="fshud-sep"></span>
+  <button class="fshud-btn danger" onclick="releaseAll()">Release</button>
+  <button class="fshud-x" onclick="toggleFS()" title="Exit fullscreen (or hold Esc 2s)" aria-label="Exit fullscreen">✕</button>
+</div>
 
 <!-- Recapture overlay (shown when Esc exits pointer lock) -->
 <div id="recapture" onclick="capture()">
@@ -1549,9 +1586,9 @@ function _syncKbLock(){
 // overlay + immersive view now appear only when you hit ⛶ (fullscreen).
 function _syncCaptureBars(){
   const fs = !!document.fullscreenElement;
-  // The full-width capture bar is retired. In fullscreen we show only the small
-  // #fsexit ✕ (via body.fs CSS); in the window we keep the top bar + a compact
-  // "✕ Release" button. So never turn the big red bar on.
+  // The full-width capture bar is retired. In fullscreen we show the floating
+  // #fshud (top-center, body.fs CSS + near-top reveal); in the window we keep
+  // the top bar + a compact "✕ Release" button. So never turn the big red bar on.
   if(typeof $relbar!=='undefined' && $relbar) $relbar.classList.remove('on');
   const rt = document.getElementById('reltop');
   if(rt) rt.style.display = (captured && !fs) ? '' : 'none';
@@ -1882,7 +1919,11 @@ document.addEventListener('mousemove',e=>{
   }
   if(document.fullscreenElement){
     const h=window.innerHeight;
-    document.getElementById('fs-bot').classList.toggle('vis',e.clientY>h-80);   // fs-top HUD was removed (see markup)
+    // Reveal the top control HUD when the cursor nears the top edge (or while
+    // its Combos dropdown is open); the bottom paste bar near the bottom edge
+    // (or while pinned open by the Paste button).
+    document.getElementById('fshud').classList.toggle('vis', e.clientY<90 || _fsCombosOpen);
+    document.getElementById('fs-bot').classList.toggle('vis', e.clientY>h-80 || _fsbotPinned);
   }
 });
 // Browser e.button and USB-HID button bits use DIFFERENT numbering:
@@ -1914,7 +1955,7 @@ function _releaseMouseButtons(){
 // own UI to the target - that used to send stray clicks to the remote PC.
 function _overUI(e){
   const t=e.target;
-  return !!(t && t.closest && t.closest('#relbar,#topbar,#cmenu,#fs-bot,#sidebar,#recapture,#fsexit'));
+  return !!(t && t.closest && t.closest('#relbar,#topbar,#cmenu,#fs-bot,#sidebar,#recapture,#fshud'));
 }
 document.addEventListener('mousedown',e=>{
   if(!captured) return;
@@ -2069,7 +2110,34 @@ document.addEventListener('fullscreenchange',()=>{
   document.body.classList.toggle('fs',!!document.fullscreenElement);
   _syncKbLock();   // FS on while controlling -> keyboard lock; FS off -> unlock
   _syncCaptureBars();   // full capture bar only in fullscreen; top-bar Release in the window
+  const _hud=document.getElementById('fshud');
+  if(document.fullscreenElement){
+    // Flash the HUD for a moment on entering fullscreen so the controls are
+    // discoverable, then let it auto-hide (reappears near the top edge).
+    if(_hud){ _hud.classList.add('vis'); clearTimeout(_fshudT); _fshudT=setTimeout(()=>{ if(!_fsCombosOpen) _hud.classList.remove('vis'); }, 2800); }
+  } else {
+    if(_hud) _hud.classList.remove('vis');
+    _fsCombosOpen=false; _fsbotPinned=false;
+    const dd=document.getElementById('fshud-combos'); if(dd) dd.classList.remove('on');
+  }
 });
+// Fullscreen HUD helpers (top-center bar shown only in fullscreen).
+let _fsCombosOpen=false, _fsbotPinned=false, _fshudT=null;
+function toggleFsCombos(e){
+  if(e && e.stopPropagation) e.stopPropagation();
+  _fsCombosOpen=!_fsCombosOpen;
+  document.getElementById('fshud-combos').classList.toggle('on',_fsCombosOpen);
+}
+function fsPaste(){
+  // Reveal + pin the bottom paste bar and focus its input; unpins when the
+  // input loses focus so it can auto-hide again.
+  _fsbotPinned=true;
+  const b=document.getElementById('fs-bot'); if(b) b.classList.add('vis');
+  const i=document.getElementById('fh-input');
+  if(i){ i.focus(); i.onblur=()=>{ _fsbotPinned=false; i.onblur=null; }; }
+}
+// Close the HUD combos dropdown when clicking outside it.
+document.addEventListener('click',e=>{ if(_fsCombosOpen && !e.target.closest('.fshud-cwrap')){ _fsCombosOpen=false; document.getElementById('fshud-combos').classList.remove('on'); } });
 
 // Control-bar clicks are kept off the target by the _overUI() guard in the
 // mousedown/wheel/contextmenu handlers above (skip-on-our-UI), NOT by
