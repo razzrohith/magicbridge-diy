@@ -343,6 +343,7 @@ if isinstance(c.get("ai"),dict): c["ai"].pop("keys",None)   # provider API keys 
 if isinstance(c.get("usb"),dict): c["usb"]["serial"]=""
 c["mac_persist"]={}                        # -> unique vendor MAC per unit
 c.setdefault("video",{})["mode"]="auto"    # -> detects C790/CSI or USB per unit
+c["video"]["fps"]=50                       # -> match a 1080p50 source (every frame; smoothest input). video.py caps to the real source refresh via a clean divisor
 c["mdns_alias"]="magicbridge"              # -> reachable at magicbridge.local out of the box
 json.dump(c,open(p,"w"),indent=2)
 PY
