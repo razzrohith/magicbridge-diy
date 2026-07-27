@@ -479,60 +479,90 @@ class HIDMouse:
 
 
 class HIDWorker:
-    """Serializes fast HID events (keys, mouse move/click/scroll) onto ONE
-    dedicated background thread so the asyncio event loop never blocks on the
-    hidg write() syscall.
+    """Serializes fast HID events onto ONE background thread AND coalesces
+    mouse motion, so input can never build an ever-growing backlog.
 
-    magicbridge.py used to call keyboard/mouse methods directly from the async
-    WebSocket handler, i.e. on the event loop thread. Even a sub-millisecond
-    write, done ~60-125x/s during continuous mouse motion, is loop time not
-    spent servicing the socket. Handing these off to a worker keeps the loop
-    free to read the next input event and pump the stream.
+    Why this matters: hidg write() BLOCKS until the target USB host polls the
+    endpoint (~its bInterval), so writes drain at a fixed device rate. If the
+    browser sends motion faster than that (high-Hz displays send one move per
+    animation frame, i.e. 100-144/s, vs a ~100/s device ceiling), a naive FIFO
+    replays every queued point - so after you stop moving, the remote pointer
+    keeps grinding through a stale trail for seconds ("I did 50 circles, the
+    target is only on 40"). Latency that ACCUMULATES, not a fixed delay.
 
-    A SINGLE FIFO thread is deliberate: it preserves event ORDER exactly
-    (keydown before keyup, move before the click that lands on it) - the one
-    property input fidelity cannot lose. Bulk ops (combo/paste) are NOT routed
-    here; they hold the keyboard for tens of ms and would head-of-line block
-    live input, so they keep running on the executor. Both paths remain safe
-    against each other via the device objects' own locks.
+    The fix is coalescing. Each drain pass collapses runs of pending motion:
+      - absolute moves  -> keep only the NEWEST position in the run (the
+        pointer only needs to end up current; intermediate points are
+        throwaway). A move that precedes a click/scroll/key is preserved,
+        because the discrete event breaks the run - so clicks still land where
+        the pointer was.
+      - relative moves  -> SUM the deltas in the run into one move (net
+        displacement is what matters; the skipped path couldn't be shown in
+        real time under backlog anyway).
+    Keys, buttons, scroll and release are discrete and never dropped/merged,
+    and global order is preserved. Result: the worker always applies the most
+    recent pointer state at the device rate, and the queue self-limits instead
+    of growing. Bulk ops (combo/paste) stay on the executor.
     """
 
     def __init__(self, keyboard: "HIDKeyboard", mouse: "HIDMouse", maxsize: int = 4096):
         self._kb = keyboard
         self._ms = mouse
         self._q: queue.Queue = queue.Queue(maxsize=maxsize)
+        # opcode -> device call. Enqueue tiny (op, args) tuples so the drain
+        # pass can cheaply recognise and coalesce motion by opcode.
+        self._disp = {
+            "kd":  keyboard.key_down,   "ku":  keyboard.key_up,
+            "mv":  mouse.move,          "mab": mouse.move_abs,
+            "bd":  mouse.button_down,   "bu":  mouse.button_up,
+            "sc":  mouse.scroll,
+            "kra": keyboard.release_all, "mra": mouse.release_all,
+        }
         self._t = threading.Thread(target=self._run, name="hid-worker", daemon=True)
         self._t.start()
 
     def _run(self):
+        q = self._q
+        disp = self._disp
         while True:
-            fn, args = self._q.get()
-            try:
-                fn(*args)
-            except Exception as e:                     # never let one bad op kill the thread
-                log.debug("HID worker op failed: %s", e)
+            batch = [q.get()]                       # block for at least one op
+            while True:                             # then grab everything queued right now
+                try:
+                    batch.append(q.get_nowait())
+                except queue.Empty:
+                    break
+            # Collapse consecutive motion of the same kind.
+            merged = []
+            for op in batch:
+                if merged and op[0] == "mab" and merged[-1][0] == "mab":
+                    merged[-1] = op                                   # newest abs position wins
+                elif merged and op[0] == "mv" and merged[-1][0] == "mv":
+                    merged[-1] = ("mv", (merged[-1][1][0] + op[1][0], # sum relative deltas
+                                         merged[-1][1][1] + op[1][1]))
+                else:
+                    merged.append(op)
+            for kind, args in merged:
+                try:
+                    disp[kind](*args)
+                except Exception as e:              # never let one bad op kill the thread
+                    log.debug("HID worker op %s failed: %s", kind, e)
 
-    def _put(self, fn, *args):
-        # Non-blocking enqueue. The worker drains in sub-ms, and the client
-        # already coalesces motion to one event per frame, so this queue never
-        # fills in practice; if it somehow did, dropping the newest event is
-        # preferable to blocking the event loop (a lost mouse-move is invisible;
-        # keys can't back up enough to matter at this depth).
+    def _put(self, kind, args=()):
         try:
-            self._q.put_nowait((fn, args))
+            self._q.put_nowait((kind, args))
         except queue.Full:
             log.warning("HID worker queue full - dropping input event")
 
-    # Fast per-event ops (enqueued in order)
-    def key_down(self, code):     self._put(self._kb.key_down, code)
-    def key_up(self, code):       self._put(self._kb.key_up, code)
-    def move(self, dx, dy):       self._put(self._ms.move, dx, dy)
-    def move_abs(self, x, y):     self._put(self._ms.move_abs, x, y)
-    def button_down(self, b):     self._put(self._ms.button_down, b)
-    def button_up(self, b):       self._put(self._ms.button_up, b)
-    def scroll(self, dy):         self._put(self._ms.scroll, dy)
+    # Fast per-event ops (enqueued; motion coalesced in _run)
+    def key_down(self, code):     self._put("kd",  (code,))
+    def key_up(self, code):       self._put("ku",  (code,))
+    def move(self, dx, dy):       self._put("mv",  (dx, dy))
+    def move_abs(self, x, y):     self._put("mab", (x, y))
+    def button_down(self, b):     self._put("bd",  (b,))
+    def button_up(self, b):       self._put("bu",  (b,))
+    def scroll(self, dy):         self._put("sc",  (dy,))
 
     def release_all(self):
         # Ordered after any pending events so it releases what was actually held.
-        self._put(self._kb.release_all)
-        self._put(self._ms.release_all)
+        self._put("kra")
+        self._put("mra")
