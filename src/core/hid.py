@@ -8,6 +8,7 @@ into raw USB HID reports written to /dev/hidg0 (keyboard) and /dev/hidg1 (mouse)
 Keyboard report (8 bytes): [modifiers, 0x00, key1..key6]
 Mouse report (4 bytes):    [buttons, dx, dy, wheel]
 """
+import os
 import struct
 import threading
 import time
@@ -15,6 +16,40 @@ import random
 import logging
 
 log = logging.getLogger("magicbridge.hid")
+
+
+def _hidg_write(owner, data: bytes):
+    """Persistent-fd write to a /dev/hidgN gadget endpoint.
+
+    Opens the device ONCE and reuses the handle for every report, reopening
+    only after an error. The previous implementation did `with open(dev,'wb')
+    as f: f.write(...)` inside every report - i.e. an open()+write()+close()
+    syscall burst on EVERY keystroke and EVERY mouse-move (which fire
+    ~60-125x/s during continuous motion). Worse, magicbridge.py calls these
+    writes directly on the asyncio event loop, so that per-report open/close
+    stalled the loop on synchronous file I/O and showed up as INPUT lag while
+    the video stream (a separate long-lived socket) stayed smooth.
+
+    A cached fd turns each report into a single os.write() (sub-millisecond).
+    On any OSError - gadget torn down / re-enumerated / node briefly gone - we
+    drop the handle so the next report transparently reopens the (possibly new)
+    device. `owner` supplies .device (path) and ._fd (cached handle); every
+    caller already holds owner._lock, so no additional locking is needed here.
+    Blocking semantics are kept identical to the old code (a connected host is
+    always polling, so writes don't block in practice).
+    """
+    try:
+        if owner._fd is None:
+            owner._fd = os.open(owner.device, os.O_WRONLY)
+        os.write(owner._fd, data)
+    except OSError as e:
+        log.debug("HID write %s: %s", owner.device, e)
+        if owner._fd is not None:
+            try:
+                os.close(owner._fd)
+            except OSError:
+                pass
+            owner._fd = None
 
 # Keyboard scancode table
 # JS event.code → USB HID Usage ID (Keyboard/Keypad Usage Page 0x07)
@@ -206,6 +241,7 @@ class HIDKeyboard:
         self.device    = device
         self.modifiers = 0
         self.pressed: set = set()      # HID keycodes currently held
+        self._fd = None                # cached device handle (see _hidg_write)
         self._lock = threading.Lock()
 
     # Internal
@@ -214,11 +250,7 @@ class HIDKeyboard:
         key_list = sorted(keys)[:6]        # USB HID max 6 simultaneous keys
         key_list += [0] * (6 - len(key_list))
         report = struct.pack("8B", modifiers, 0, *key_list)
-        try:
-            with open(self.device, "wb") as f:
-                f.write(report)
-        except OSError as e:
-            log.debug("HID keyboard write: %s", e)
+        _hidg_write(self, report)
 
     # Public API
 
@@ -357,6 +389,7 @@ class HIDMouse:
         self.absolute = False   # False = relative report, True = absolute report
         self._ax = 0            # last absolute X (0..ABS_MAX), for button/scroll reports
         self._ay = 0            # last absolute Y
+        self._fd = None         # cached device handle (see _hidg_write)
         self._lock    = threading.Lock()
 
     def set_absolute(self, on: bool):
@@ -378,11 +411,7 @@ class HIDMouse:
                         self._sb(dx),
                         self._sb(dy),
                         self._sb(wheel)])
-        try:
-            with open(self.device, "wb") as f:
-                f.write(report)
-        except OSError as e:
-            log.debug("HID mouse write: %s", e)
+        _hidg_write(self, report)
 
     def _write_abs(self, buttons: int, x: int, y: int, wheel: int = 0):
         """6-byte absolute report: [buttons, X_lo, X_hi, Y_lo, Y_hi, wheel].
@@ -394,11 +423,7 @@ class HIDMouse:
                         x & 0xFF, (x >> 8) & 0xFF,
                         y & 0xFF, (y >> 8) & 0xFF,
                         self._sb(wheel)])
-        try:
-            with open(self.device, "wb") as f:
-                f.write(report)
-        except OSError as e:
-            log.debug("HID mouse abs write: %s", e)
+        _hidg_write(self, report)
 
     def move_abs(self, x: int, y: int):
         """Move to an absolute screen position (0..ABS_MAX on each axis).
