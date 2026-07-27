@@ -36,7 +36,7 @@ except ImportError:
 # Local modules (same directory)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import hid
-from hid   import HIDKeyboard, HIDMouse
+from hid   import HIDKeyboard, HIDMouse, HIDWorker
 from video import VideoManager
 
 # Config
@@ -772,6 +772,10 @@ async def auth_middleware(request: web.Request, handler):
 # Global HID + Video instances
 keyboard = HIDKeyboard("/dev/hidg0")
 mouse    = HIDMouse("/dev/hidg1")
+# Fast per-event input (keys, mouse move/click/scroll) is enqueued here so the
+# actual hidg writes happen on a dedicated thread instead of the asyncio event
+# loop. Bulk ops (combo/paste) still run on the executor - see HIDWorker.
+hidq     = HIDWorker(keyboard, mouse)
 video    = VideoManager()
 
 # Apply whatever target-keyboard-layout was saved last time, so a reboot
@@ -1125,14 +1129,13 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                         _last_real_input[0] = time.time()
 
                     if t == "keydown":
-                        keyboard.key_down(d.get("code", ""))
+                        hidq.key_down(d.get("code", ""))
 
                     elif t == "keyup":
-                        keyboard.key_up(d.get("code", ""))
+                        hidq.key_up(d.get("code", ""))
 
                     elif t == "release_all":
-                        keyboard.release_all()
-                        mouse.release_all()
+                        hidq.release_all()
 
                     elif t == "combo":
                         codes = list(d.get("codes", []))
@@ -1143,24 +1146,24 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                         dx = int(d.get("dx", 0))
                         dy = int(d.get("dy", 0))
                         if dx or dy:
-                            mouse.move(dx, dy)
+                            hidq.move(dx, dy)
 
                     elif t == "mousemove_abs":
                         # Absolute pointer: x,y are 0..32767 across the screen.
                         # No-op unless the gadget is in absolute mode (mouse
                         # ignores it), so a stale client can't send garbage.
-                        mouse.move_abs(int(d.get("x", 0)), int(d.get("y", 0)))
+                        hidq.move_abs(int(d.get("x", 0)), int(d.get("y", 0)))
 
                     elif t == "mousedown":
-                        mouse.button_down(int(d.get("button", 0)))
+                        hidq.button_down(int(d.get("button", 0)))
 
                     elif t == "mouseup":
-                        mouse.button_up(int(d.get("button", 0)))
+                        hidq.button_up(int(d.get("button", 0)))
 
                     elif t in ("wheel", "scroll"):
                         # Frontend sends "scroll"; "wheel" kept for compatibility.
                         # (These were mismatched before, so scrolling did nothing.)
-                        mouse.scroll(int(d.get("dy", 0)))
+                        hidq.scroll(int(d.get("dy", 0)))
 
                     elif t == "ping":
                         import json as _j
@@ -1186,8 +1189,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     finally:
         _ws_clients.discard(ws)
         _ws_info.pop(ws, None)
-        keyboard.release_all()
-        mouse.release_all()
+        hidq.release_all()
         dur = int(time.time() - t0)
         log.info("WS disconnect %s  (total: %d, dur: %ds)", ip, len(_ws_clients), dur)
         _sess_log(sid, ip, ua, "disconnect", duration=dur)

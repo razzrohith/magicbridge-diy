@@ -9,6 +9,7 @@ Keyboard report (8 bytes): [modifiers, 0x00, key1..key6]
 Mouse report (4 bytes):    [buttons, dx, dy, wheel]
 """
 import os
+import queue
 import struct
 import threading
 import time
@@ -475,3 +476,63 @@ class HIDMouse:
         with self._lock:
             self.buttons = 0
             self._emit_buttons()
+
+
+class HIDWorker:
+    """Serializes fast HID events (keys, mouse move/click/scroll) onto ONE
+    dedicated background thread so the asyncio event loop never blocks on the
+    hidg write() syscall.
+
+    magicbridge.py used to call keyboard/mouse methods directly from the async
+    WebSocket handler, i.e. on the event loop thread. Even a sub-millisecond
+    write, done ~60-125x/s during continuous mouse motion, is loop time not
+    spent servicing the socket. Handing these off to a worker keeps the loop
+    free to read the next input event and pump the stream.
+
+    A SINGLE FIFO thread is deliberate: it preserves event ORDER exactly
+    (keydown before keyup, move before the click that lands on it) - the one
+    property input fidelity cannot lose. Bulk ops (combo/paste) are NOT routed
+    here; they hold the keyboard for tens of ms and would head-of-line block
+    live input, so they keep running on the executor. Both paths remain safe
+    against each other via the device objects' own locks.
+    """
+
+    def __init__(self, keyboard: "HIDKeyboard", mouse: "HIDMouse", maxsize: int = 4096):
+        self._kb = keyboard
+        self._ms = mouse
+        self._q: queue.Queue = queue.Queue(maxsize=maxsize)
+        self._t = threading.Thread(target=self._run, name="hid-worker", daemon=True)
+        self._t.start()
+
+    def _run(self):
+        while True:
+            fn, args = self._q.get()
+            try:
+                fn(*args)
+            except Exception as e:                     # never let one bad op kill the thread
+                log.debug("HID worker op failed: %s", e)
+
+    def _put(self, fn, *args):
+        # Non-blocking enqueue. The worker drains in sub-ms, and the client
+        # already coalesces motion to one event per frame, so this queue never
+        # fills in practice; if it somehow did, dropping the newest event is
+        # preferable to blocking the event loop (a lost mouse-move is invisible;
+        # keys can't back up enough to matter at this depth).
+        try:
+            self._q.put_nowait((fn, args))
+        except queue.Full:
+            log.warning("HID worker queue full - dropping input event")
+
+    # Fast per-event ops (enqueued in order)
+    def key_down(self, code):     self._put(self._kb.key_down, code)
+    def key_up(self, code):       self._put(self._kb.key_up, code)
+    def move(self, dx, dy):       self._put(self._ms.move, dx, dy)
+    def move_abs(self, x, y):     self._put(self._ms.move_abs, x, y)
+    def button_down(self, b):     self._put(self._ms.button_down, b)
+    def button_up(self, b):       self._put(self._ms.button_up, b)
+    def scroll(self, dy):         self._put(self._ms.scroll, dy)
+
+    def release_all(self):
+        # Ordered after any pending events so it releases what was actually held.
+        self._put(self._kb.release_all)
+        self._put(self._ms.release_all)
