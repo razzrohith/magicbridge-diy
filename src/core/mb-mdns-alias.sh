@@ -49,8 +49,48 @@ if [[ -z "$ALIAS" ]]; then
     echo "mb-mdns-alias: no alias configured (stealth default); nothing to publish"
     exit 0
 fi
-IP=$(hostname -I | awk '{print $1}')
-avahi-publish -a -R "${ALIAS}.local" "$IP" &
-PID1=$!
-trap 'kill "$PID1" 2>/dev/null' TERM INT
-wait "$PID1"
+
+# Pick the REAL LAN IPv4 to advertise. Deliberately skip:
+#   - the provisioning setup-AP range 192.168.73.x: while the setup hotspot is
+#     up the Pi briefly holds 192.168.73.1, and publishing THAT is exactly the
+#     bug that left "${ALIAS}.local -> 192.168.73.1" advertised forever after
+#     setup ended (the AP IP is long dead, so the name never worked again);
+#   - link-local 169.254.x and IPv6.
+pick_ip() {
+    local ip
+    for ip in $(hostname -I); do
+        case "$ip" in
+            *:*)          continue ;;   # IPv6
+            192.168.73.*) continue ;;   # provisioning setup-AP address
+            169.254.*)    continue ;;   # link-local
+        esac
+        printf '%s' "$ip"; return 0
+    done
+    printf ''                            # nothing suitable yet
+}
+
+# Kill any stale publisher for this alias (a previous run, or a
+# provisioning-time invocation that bound the setup-AP IP). Without this a
+# leftover `avahi-publish ... ${ALIAS}.local 192.168.73.1` keeps answering
+# from the network long after the hotspot is gone.
+pkill -f "avahi-publish -a -R ${ALIAS}\.local" 2>/dev/null || true
+
+PUB_PID=""
+CUR_IP=""
+cleanup() { [[ -n "$PUB_PID" ]] && kill "$PUB_PID" 2>/dev/null; exit 0; }
+trap cleanup TERM INT
+
+# Re-publish whenever the LAN IP changes (DHCP reassign / relocation) so
+# ${ALIAS}.local always follows the unit. The old code bound the IP once at
+# startup and went stale on every change - the "breaks all the time" symptom.
+while true; do
+    NEW_IP=$(pick_ip)
+    if [[ -n "$NEW_IP" && "$NEW_IP" != "$CUR_IP" ]]; then
+        [[ -n "$PUB_PID" ]] && kill "$PUB_PID" 2>/dev/null || true
+        avahi-publish -a -R "${ALIAS}.local" "$NEW_IP" &
+        PUB_PID=$!
+        CUR_IP="$NEW_IP"
+        echo "mb-mdns-alias: publishing ${ALIAS}.local -> $CUR_IP"
+    fi
+    sleep 10
+done
