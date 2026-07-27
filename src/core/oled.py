@@ -47,7 +47,14 @@ logging.basicConfig(
 log = logging.getLogger("magicbridge.oled")
 
 OLED_I2C_PORT = 1        # /dev/i2c-1, standard on all Pi models
-OLED_I2C_ADDR = 0x3C     # SSD1306 default; some panels are 0x3D
+OLED_I2C_ADDR = 0x3C     # SSD1306 default; some panels strap 0x3D instead
+# Probe BOTH common SSD1306 addresses at init and use whichever ACKs. Many
+# cheap 0.91"/0.96" clones are wired to 0x3D rather than the "default" 0x3C,
+# and there's no way to know which without asking the bus - so we ask. If a
+# panel is present at all, this finds it without hand-editing OLED_I2C_ADDR.
+# (If the bus scan is empty at BOTH, the panel isn't wired/powered - a
+# hardware issue no address change can fix; init just keeps retrying.)
+OLED_I2C_ADDRS = (0x3C, 0x3D)
 OLED_WIDTH    = 128
 OLED_HEIGHT   = 32       # 0.91" panels are 128x32; set to 64 for 128x64 panels
 RETRY_SEC     = 15       # how often to retry initializing the display if it's not found yet
@@ -357,8 +364,21 @@ def _init_display():
     # not a crash-loop. Same reasoning as the hardware-not-present case.
     from luma.core.interface.serial import i2c
     from luma.oled.device import ssd1306
-    serial = i2c(port=OLED_I2C_PORT, address=OLED_I2C_ADDR)
-    return ssd1306(serial, width=OLED_WIDTH, height=OLED_HEIGHT)
+    # Try each candidate address; luma raises if nothing ACKs at that address,
+    # so a failure here == "panel not at this address" and we fall through to
+    # the next one. The last error propagates if none respond (handled by the
+    # caller's retry-and-log-once path).
+    last_err = None
+    for addr in OLED_I2C_ADDRS:
+        try:
+            serial = i2c(port=OLED_I2C_PORT, address=addr)
+            device = ssd1306(serial, width=OLED_WIDTH, height=OLED_HEIGHT)
+            if addr != OLED_I2C_ADDRS[0]:
+                log.info("OLED found at alternate I2C address 0x%02X", addr)
+            return device
+        except Exception as e:
+            last_err = e
+    raise last_err
 
 
 def main():
@@ -369,8 +389,8 @@ def main():
     last_init_error = None
 
     _maybe_reload_config()
-    log.info("MagicBridge OLED display starting (I2C addr=0x%02X, %dx%d)",
-             OLED_I2C_ADDR, OLED_WIDTH, OLED_HEIGHT)
+    log.info("MagicBridge OLED display starting (I2C addrs=%s, %dx%d)",
+             "/".join("0x%02X" % a for a in OLED_I2C_ADDRS), OLED_WIDTH, OLED_HEIGHT)
     log.info("If luma.oled/Pillow aren't installed yet: pip install luma.oled --break-system-packages")
 
     while True:

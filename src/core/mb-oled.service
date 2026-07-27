@@ -1,7 +1,24 @@
 [Unit]
 Description=MagicBridge OLED status display (SSD1306, I2C)
-After=magicbridge.service
-Wants=magicbridge.service
+# Start as EARLY as possible and INDEPENDENTLY of the KVM stack. Before any
+# network exists the panel's entire job is to show first-boot / WiFi-hotspot
+# guidance ("Join hotspot MagicBridge-Setup"), so it must come up during the
+# no-network phase - not after it.
+#
+# Do NOT order this after magicbridge.service. mb-provision.sh holds the setup
+# hotspot open (a blocking oneshot, up to 1800s) and is ordered Before=
+# magicbridge.service; ordering the panel After=magicbridge.service therefore
+# chained it behind provisioning and kept it dark for the entire hotspot-setup
+# phase - the exact moment it needs to display. This mirrors the sibling PiKVM,
+# whose OLED daemon runs independently of its blocking captive-portal unit
+# (see magicbridge-pikvm mb-portal.service: "Nothing is ordered After= this
+# unit, so an indefinite wait does not block boot").
+#
+# oled.py polls /run/magicbridge/oled-status every loop, so strict ordering
+# against the writers isn't required; Before= just guarantees the panel is
+# already rendering by the time provisioning/first-boot write their guidance.
+After=local-fs.target
+Before=mb-provision.service mb-firstboot.service
 
 [Service]
 Type=simple
