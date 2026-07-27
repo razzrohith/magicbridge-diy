@@ -513,6 +513,7 @@ body:not(.fs) .fs-hud{display:none!important}
     <span id="logo">MagicBridge</span>
   </div>
   <div id="connpill"><div id="cdot" class="info"></div><span id="cdtxt">Connecting…</span></div>
+  <button class="tbtn" id="reltop" onclick="releaseAll()" title="Release control (or hold Esc / Right Ctrl 2s)" style="display:none">✕ Release</button>
   <div id="cwrap">
     <button class="tbtn" onclick="toggleCombos()">⌨ Combos ▾</button>
     <div id="cmenu">
@@ -1529,6 +1530,17 @@ function _syncKbLock(){
     _kbLockActive=false;
   }
 }
+// The full-width capture bar (RELEASE + exit-FS) belongs to the big/fullscreen
+// view ONLY. In the normal window we keep the top bar (logo, Combos, stats, ⛶)
+// visible and just reveal a compact "✕ Release" button in it - so clicking to
+// control doesn't blow away the Combos menu or change the layout. The big
+// overlay + immersive view now appear only when you hit ⛶ (fullscreen).
+function _syncCaptureBars(){
+  const fs = !!document.fullscreenElement;
+  if(typeof $relbar!=='undefined' && $relbar) $relbar.classList.toggle('on', captured && fs);
+  const rt = document.getElementById('reltop');
+  if(rt) rt.style.display = (captured && !fs) ? '' : 'none';
+}
 function capture(){
   if(_mouseMode==='absolute'){
     // Absolute mode takes NO pointer lock: the real cursor stays visible and
@@ -1550,9 +1562,8 @@ function _setCaptured(on){
   const prev=captured;
   if(on===prev) return;
   captured=on;
-  $relbar.classList.toggle('on',captured);
-  document.getElementById('topbar').style.display=captured?'none':'';
   $view.classList.toggle('idle',!captured);
+  _syncCaptureBars();   // keep the top bar (Combos) in the window; full capture bar is FS-only
   if(captured){
     const r=$view.getBoundingClientRect(); _cx=r.width/2; _cy=r.height/2;
     hideRecapture();
@@ -2041,6 +2052,7 @@ function toggleFS(){
 document.addEventListener('fullscreenchange',()=>{
   document.body.classList.toggle('fs',!!document.fullscreenElement);
   _syncKbLock();   // FS on while controlling -> keyboard lock; FS off -> unlock
+  _syncCaptureBars();   // full capture bar only in fullscreen; top-bar Release in the window
 });
 
 // Control-bar clicks are kept off the target by the _overUI() guard in the
