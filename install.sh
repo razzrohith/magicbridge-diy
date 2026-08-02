@@ -246,6 +246,10 @@ cp "$SRC_DIR/src/web/index.html"      "$INSTALL_DIR/web/"
 
 # Stealth dashboard
 cp "$SRC_DIR/src/dashboard/stealth-dashboard.py" "$INSTALL_DIR/dashboard/"
+# mb_edidconf.py: imported by the dashboard for runtime monitor-identity (EDID)
+# apply/validate. Was never installed by install.sh, so on a curl|bash unit the
+# dashboard's EDID feature silently errored ("mb_edidconf module not installed").
+cp "$SRC_DIR/src/dashboard/mb_edidconf.py" "$INSTALL_DIR/dashboard/"
 
 # Provisioning
 cp "$SRC_DIR/src/provision/mb-setup-ui.py"       "$INSTALL_DIR/provision/"
@@ -383,13 +387,19 @@ KEY="$CONFIG_DIR/ssl/key.pem"
 
 if [[ ! -f "$CERT" ]]; then
     info "Generating self-signed TLS certificate..."
+    # B5: CN = this unit's hostname, not a hardcoded "magicbridge.local". A
+    # fleet-wide identical branded CN is a pre-auth TLS beacon that outs every
+    # clone as MagicBridge to any ssl-cert scan. magicbridge.local stays a SAN
+    # so browsing to it still validates. (mb-secret-reset regenerates this
+    # per-unit on first boot of a flashed image; this is the install-time cert.)
+    CN_HOST="$(hostname 2>/dev/null)"; [ -n "$CN_HOST" ] || CN_HOST="localhost"
     openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
         -keyout "$KEY" -out "$CERT" \
-        -subj "/CN=magicbridge.local" \
-        -addext "subjectAltName=DNS:magicbridge.local,IP:127.0.0.1" \
+        -subj "/CN=${CN_HOST}" \
+        -addext "subjectAltName=DNS:${CN_HOST}.local,DNS:magicbridge.local,IP:127.0.0.1" \
         2>/dev/null
     chmod 600 "$KEY"
-    ok "TLS cert generated (10-year, self-signed)"
+    ok "TLS cert generated (10-year, self-signed, CN=${CN_HOST})"
 else
     ok "TLS cert already exists, skipping"
 fi
@@ -408,7 +418,10 @@ info "Setting up RAM-only (tmpfs) log directory..."
 # because the logs don't exist yet). All writers here run as root (magicbridge,
 # stealth-dashboard) and nginx's master creates its logs as root before handing
 # them to www-data, so 0755 root:root is sufficient - and avoids the trap.
-FSTAB_LINE="tmpfs /var/log/magicbridge-ram tmpfs defaults,noatime,mode=0755,size=32m 0 0"
+# nofail so a tmpfs mount failure (size typo, extreme low-RAM) degrades to
+# writing on the rootfs dir instead of failing local-fs.target and stalling a
+# headless boot with no SSH - same boot-survival rationale as /boot/firmware.
+FSTAB_LINE="tmpfs /var/log/magicbridge-ram tmpfs defaults,noatime,nofail,mode=0755,size=32m 0 0"
 # Normalize any existing entry (e.g. an older mode=1777 line) to the correct one
 # so a re-run self-heals instead of leaving the boot-time mode wrong.
 if grep -q '[[:space:]]/var/log/magicbridge-ram[[:space:]]' /etc/fstab; then
@@ -498,9 +511,18 @@ touch "$CONFIG_DIR/.firstboot-done" "$CONFIG_DIR/.firstboot-late-done"
 # any systemd-managed instance it finds), so a separately enabled
 # ustreamer.service would fight it for the capture device and port 8081.
 
-# Start gadget immediately if we have a UDC
+# Start gadget immediately if we have a UDC.
+# S7: during a self-update (MB_SELF_UPDATE=1) do NOT restart an already-running
+# gadget - that re-enumerates the spoofed USB device on the target (a device
+# remove/insert it logs) and drops the operator's live HID. A routine update
+# never changes the gadget config; a real gadget change still applies on the
+# next reboot. Fresh installs / manual runs restart as before.
 if ls /sys/class/udc/* &>/dev/null; then
-    systemctl restart mb-gadget && ok "USB gadget started" || warn "USB gadget start failed, may need reboot"
+    if [[ "${MB_SELF_UPDATE:-0}" == "1" ]] && systemctl is-active --quiet mb-gadget; then
+        ok "USB gadget already running - left as-is (self-update, avoid re-enumerating the target)"
+    else
+        systemctl restart mb-gadget && ok "USB gadget started" || warn "USB gadget start failed, may need reboot"
+    fi
 else
     warn "No UDC found, USB gadget will start after reboot (needs dtoverlay=dwc2)"
 fi
@@ -538,12 +560,34 @@ iptables -A INPUT -p udp --dport 67 -j ACCEPT     # DHCP (for AP mode)
 iptables -A INPUT -p tcp --dport 7777 -j DROP     # stealth dashboard: internal only
 iptables -A INPUT -p tcp --dport 8080 -j DROP     # aiohttp: internal only
 iptables -A INPUT -p tcp --dport 8081 -j DROP     # ustreamer: internal only
+iptables -A INPUT -p tcp --dport 8188 -j DROP     # Janus WebRTC WS: internal only
+iptables -A INPUT -p tcp --dport 8088 -j DROP     # Janus WebRTC HTTP: internal only
+
+# IPv6 firewall (S8): nginx also listens on [::]:443, and Janus/RaspiOS bring up
+# IPv6. Without matching ip6tables the ip6tables INPUT policy defaults to ACCEPT,
+# so the web UI (and internal ports) would be reachable over IPv6 with NO
+# firewall - and mb-lockdown's "Tailscale-only" would be bypassable over v6.
+# Mirror the v4 policy. (Backends bind 127.0.0.1 only, so they stay loopback-safe,
+# but nginx :: is real.)
+if command -v ip6tables >/dev/null 2>&1; then
+    ip6tables -F INPUT
+    ip6tables -P INPUT DROP
+    ip6tables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
+    ip6tables -A INPUT -i lo -j ACCEPT
+    ip6tables -A INPUT -p ipv6-icmp -j ACCEPT                 # NDP/ping6 - v6 needs this
+    ip6tables -A INPUT -p tcp --dport 22  -j ACCEPT
+    ip6tables -A INPUT -p tcp --dport 80  -j ACCEPT
+    ip6tables -A INPUT -p tcp --dport 443 -j ACCEPT
+    ip6tables -A INPUT -p udp --dport 5353 -j ACCEPT          # mDNS
+    for p in 7777 8080 8081 8188 8088; do ip6tables -A INPUT -p tcp --dport "$p" -j DROP; done
+fi
 
 # Persist rules across reboots
 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     iptables-persistent 2>&1 | grep -E "^(Setting|E:|W:)" || true
 iptables-save > /etc/iptables/rules.v4
-ok "Firewall configured"
+command -v ip6tables-save >/dev/null 2>&1 && ip6tables-save > /etc/iptables/rules.v6 || true
+ok "Firewall configured (IPv4 + IPv6)"
 
 # Re-apply the lockdown we found active, so an update can't silently re-expose
 # the admin surface. mb-lockdown.sh re-inserts the Tailscale-only rules at the

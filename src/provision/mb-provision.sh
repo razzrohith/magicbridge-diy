@@ -92,6 +92,15 @@ fi
 
 echo "[$(date)] No WiFi, starting provisioning AP: $AP_SSID"
 
+# B4: the ENTIRE AP phase (dep install, wlan0 bring-up, hostapd/dnsmasq launch,
+# captive portal, teardown) runs under `set +e`. Previously errexit was active
+# here, so any failure of apt/ip/hostapd/dnsmasq exited immediately and SKIPPED
+# the teardown + /boot escape-hatch report + OLED error below - leaving a
+# no-network unit silently broadcasting a dead AP with zero on-card diagnostic.
+# Every step here is best-effort with explicit checks; do not re-enable errexit
+# until after the teardown/report block.
+set +e
+
 # Dependencies
 for pkg in hostapd dnsmasq python3 python3-flask; do
     dpkg -s "$pkg" &>/dev/null || apt-get install -y "$pkg"
@@ -164,24 +173,34 @@ pkill -f "dnsmasq.*mb-dnsmasq"     2>/dev/null || true
 hostapd -B /tmp/mb-hostapd.conf -P /tmp/mb-hostapd.pid
 sleep 1
 dnsmasq -C /tmp/mb-dnsmasq.conf --pid-file=/tmp/mb-dnsmasq.pid
+sleep 1
 
-# iptables redirect all port 80 to portal
-iptables -t nat -A PREROUTING -i "$AP_IFACE" -p tcp --dport 80 \
-         -j DNAT --to-destination "${AP_IP}:${PORTAL_PORT}" 2>/dev/null || true
-iptables -t nat -A PREROUTING -i "$AP_IFACE" -p tcp --dport 443 \
-         -j DNAT --to-destination "${AP_IP}:${PORTAL_PORT}" 2>/dev/null || true
+# Confirm the AP actually came up. If hostapd or dnsmasq isn't running there is
+# no hotspot to serve the portal on, so skip the (blocking) portal and fall
+# straight through to teardown + the /boot escape-hatch report + OLED error.
+AP_FAIL=""
+pgrep -f "hostapd /tmp/mb-hostapd" >/dev/null 2>&1 || AP_FAIL="hostapd"
+pgrep -f "dnsmasq.*mb-dnsmasq"     >/dev/null 2>&1 || AP_FAIL="${AP_FAIL:+$AP_FAIL+}dnsmasq"
 
-echo "[$(date)] AP up, SSID '$AP_SSID', IP $AP_IP, portal :$PORTAL_PORT"
-oled "@WIFI" "Join WiFi hotspot:" "$AP_SSID"
+if [[ -n "$AP_FAIL" ]]; then
+    echo "[$(date)] AP bring-up FAILED ($AP_FAIL) - skipping portal, going to teardown/report"
+    PORTAL_EXIT=98
+else
+    # iptables redirect all port 80/443 to portal
+    iptables -t nat -A PREROUTING -i "$AP_IFACE" -p tcp --dport 80 \
+             -j DNAT --to-destination "${AP_IP}:${PORTAL_PORT}" 2>/dev/null || true
+    iptables -t nat -A PREROUTING -i "$AP_IFACE" -p tcp --dport 443 \
+             -j DNAT --to-destination "${AP_IP}:${PORTAL_PORT}" 2>/dev/null || true
 
-# Run captive portal (blocks until user submits)
-# Temporarily disable errexit: if the portal script exits non-zero (crash, kill,
-# etc.) we still MUST fall through to AP teardown below, or the Pi is stuck
-# broadcasting the setup AP with no way to reach it again over normal WiFi.
-set +e
-python3 "$PORTAL_SCRIPT" "$AP_IP" "$PORTAL_PORT" "$WIFI_FILE" "$TS_KEY_TMP"
-PORTAL_EXIT=$?
-set -e
+    echo "[$(date)] AP up, SSID '$AP_SSID', IP $AP_IP, portal :$PORTAL_PORT"
+    oled "@WIFI" "Join WiFi hotspot:" "$AP_SSID"
+
+    # Run captive portal (blocks until user submits). errexit is already off for
+    # the whole AP phase (set +e above), so a portal crash still falls through
+    # to teardown - the Pi must never be left broadcasting an unreachable AP.
+    python3 "$PORTAL_SCRIPT" "$AP_IP" "$PORTAL_PORT" "$WIFI_FILE" "$TS_KEY_TMP"
+    PORTAL_EXIT=$?
+fi
 
 echo "[$(date)] Portal exited (code $PORTAL_EXIT)"
 
@@ -228,7 +247,10 @@ systemctl start dnsmasq 2>/dev/null || true
 [ "${NGINX_WAS_ACTIVE:-0}" = "1" ] && { systemctl start nginx 2>/dev/null || true; }
 # If the portal never got a WiFi submission, don't leave the OLED telling the
 # user to join a hotspot we just tore down - say what actually happened.
-if [[ "${PORTAL_EXIT:-1}" -ne 0 && ! -f "$WIFI_FILE" ]]; then
+if [[ -n "${AP_FAIL:-}" ]]; then
+    echo "[$(date)] hotspot bring-up failed ($AP_FAIL) - flagging on OLED + boot report"
+    oled "Hotspot FAILED" "$AP_FAIL" "see card report"
+elif [[ "${PORTAL_EXIT:-1}" -ne 0 && ! -f "$WIFI_FILE" ]]; then
     echo "[$(date)] portal exited $PORTAL_EXIT with no WiFi submitted - flagging on OLED"
     oled "Setup problem" "portal failed" "see provision.log"
 fi

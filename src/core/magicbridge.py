@@ -1116,6 +1116,12 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         # so one reconnecting client doesn't stall every other connection.
         await loop.run_in_executor(None, hid_autodc.ensure_connected)
 
+    # Track fire-and-forget bulk typing (paste/combo) for THIS connection so we
+    # can cancel it if the client disconnects mid-paste (S2) - otherwise a
+    # human-paced paste keeps typing into the target for minutes after the tab
+    # closes. Each entry is a threading.Event the worker checks between chars.
+    _bulk_cancels = []
+
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
@@ -1140,7 +1146,8 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                     elif t == "combo":
                         codes = list(d.get("codes", []))
                         if codes:
-                            loop.run_in_executor(None, lambda c=codes: keyboard.combo(c))
+                            _cx = threading.Event(); _bulk_cancels.append(_cx)
+                            loop.run_in_executor(None, lambda c=codes, cx=_cx: keyboard.combo(c, cancel=cx))
 
                     elif t == "mousemove":
                         dx = int(d.get("dx", 0))
@@ -1177,7 +1184,8 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                         # can opt into the fast path with {"human": false}.
                         human = bool(d.get("human", True))
                         if text:
-                            loop.run_in_executor(None, lambda tx=text,dl=delay,hu=human: keyboard.send_text(tx,dl,hu))
+                            _cx = threading.Event(); _bulk_cancels.append(_cx)
+                            loop.run_in_executor(None, lambda tx=text,dl=delay,hu=human,cx=_cx: keyboard.send_text(tx,dl,hu,cancel=cx))
 
                 except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                     pass
@@ -1189,7 +1197,13 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     finally:
         _ws_clients.discard(ws)
         _ws_info.pop(ws, None)
-        hidq.release_all()
+        # Cancel any paste/combo still typing for THIS client (S2).
+        for _cx in _bulk_cancels:
+            _cx.set()
+        # Release held keys/buttons only when NO clients remain (S6), so one
+        # client's disconnect doesn't clobber another live operator's held state.
+        if not _ws_clients:
+            hidq.release_all()
         dur = int(time.time() - t0)
         log.info("WS disconnect %s  (total: %d, dur: %ds)", ip, len(_ws_clients), dur)
         _sess_log(sid, ip, ua, "disconnect", duration=dur)
@@ -2333,6 +2347,7 @@ _UPD_FILE_MAP = {
     "src/core/oled.py":                   (_UPD_INSTALL_DIR + "/core/oled.py", "mb-oled"),
     "src/web/index.html":                 (_UPD_INSTALL_DIR + "/web/index.html", None),
     "src/dashboard/stealth-dashboard.py": (_UPD_INSTALL_DIR + "/dashboard/stealth-dashboard.py", "stealth-dashboard"),
+    "src/dashboard/mb_edidconf.py":       (_UPD_INSTALL_DIR + "/dashboard/mb_edidconf.py", None),
     "src/provision/mb-setup-ui.py":       (_UPD_INSTALL_DIR + "/provision/mb-setup-ui.py", None),
     "src/core/mb-gadget.sh":              ("/usr/local/bin/mb-gadget.sh", None),
     "src/core/mb-hdmi-init.sh":           ("/usr/local/bin/mb-hdmi-init.sh", None),
@@ -2547,7 +2562,11 @@ async def api_update(request):
         _full_sh = (
             "mkdir -p /run/magicbridge; "
             "printf '@UPDATING Upgrading' > /run/magicbridge/oled-status; "   # animated on the OLED
-            f"bash {REPO_DIR}/install.sh >{upd_log} 2>&1; RC=$?; "
+            # MB_SELF_UPDATE=1 tells install.sh NOT to rebuild/restart the USB
+            # gadget if it's already up (S7): a routine update must not
+            # re-enumerate the spoofed 'Logitech Receiver' on the target (a
+            # remove/insert event it logs) or drop the operator's live HID.
+            f"MB_SELF_UPDATE=1 bash {REPO_DIR}/install.sh >{upd_log} 2>&1; RC=$?; "
             "if [ $RC -eq 0 ]; then printf 'MagicBridge\\nUpdated!\\nrestarting...' > /run/magicbridge/oled-status; "
             "else printf 'MagicBridge\\nUpdate FAILED\\nsee log' > /run/magicbridge/oled-status; fi; "
             "sleep 4; rm -f /run/magicbridge/oled-status"
@@ -2788,12 +2807,15 @@ async def api_ai_run(request):
                 ],
                 "temperature": 0.1
             }).encode()
+            # No HTTP-Referer / X-Title: those OpenRouter app-attribution headers
+            # would ship the strings "magicbridge.local" and "MagicBridge" to a
+            # third party (openrouter.ai logs them against the key + source IP) -
+            # the only path that leaks the product identity OFF the device. Drop
+            # them; attribution isn't needed for a private key.
             req = _ur.Request(
                 "https://openrouter.ai/api/v1/chat/completions", data=payload,
                 headers={"Content-Type": "application/json",
-                         "Authorization": "Bearer " + api_key,
-                         "HTTP-Referer": "https://magicbridge.local",
-                         "X-Title": "MagicBridge"})
+                         "Authorization": "Bearer " + api_key})
             raw = await loop.run_in_executor(None, _fetch_json, req)
             text = raw["choices"][0]["message"]["content"].strip()
 

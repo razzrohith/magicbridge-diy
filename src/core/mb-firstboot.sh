@@ -68,7 +68,17 @@ else
         echo "[$(date)] WARNING: saved WiFi present on a first-boot run - keeping it (refusing to strand this unit)"
         export MB_KEEP_WIFI=1
     fi
-    /usr/local/bin/mb-secret-reset.sh || echo "[$(date)] secret-reset had errors (non-fatal)"
+    # FAIL-CLOSED (B2): secret-reset now returns non-zero if any CRITICAL per-unit
+    # secret (SSH host keys, machine-id, TLS cert, hostname) failed to regenerate.
+    # In that case DO NOT stamp .firstboot-done - leave it unset so first-boot
+    # retries next boot rather than shipping a shared/baked identity. (The
+    # MB_KEEP_WIFI guard above already prevents the retry from stranding an
+    # already-provisioned unit by re-wiping its saved WiFi.)
+    if ! /usr/local/bin/mb-secret-reset.sh; then
+        oled "Setup FAILED" "identity not unique" "Retries next boot"
+        echo "[$(date)] secret-reset reported CRITICAL failure - leaving flag unset to retry next boot"
+        exit 1
+    fi
 fi
 
 # Write the done-marker and PROVE it landed. A silent failure here (read-only or

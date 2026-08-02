@@ -101,6 +101,12 @@ if [[ "$MODE" == "verify" ]]; then
   chk "no DuckDNS IP-history log"                    '[ ! -f "$R/var/log/mb-duckdns.log" ]'
   chk "no baked-MAC systemd unit (mb-mac.service)"   '[ ! -f "$R/etc/systemd/system/mb-mac.service" ]'
   chk "no plaintext WiFi PSK (.provision-wifi)"      '[ ! -f "$R/etc/magicbridge/.provision-wifi" ]'
+  chk "no inherited user SSH keys/known_hosts (B1)"  '! ls "$R"/root/.ssh/* "$R"/home/*/.ssh/* 2>/dev/null | grep -q .'
+  chk "hostname neutralized (no baked per-unit name)" '[ "$(cat "$R/etc/hostname" 2>/dev/null)" = localhost ]'
+  chk "login history wiped (wtmp/btmp/lastlog)"      '[ ! -s "$R/var/log/wtmp" ] && [ ! -s "$R/var/log/btmp" ] && [ ! -s "$R/var/log/lastlog" ]'
+  chk "no shell history left"                        '! ls "$R"/root/.bash_history "$R"/home/*/.bash_history 2>/dev/null | grep -q .'
+  chk "no golden systemd journal"                    '! ls "$R"/var/log/journal/*/*.journal 2>/dev/null | grep -q .'
+  chk "no NM seen-bssids (builder location)"         '[ ! -e "$R/var/lib/NetworkManager/seen-bssids" ]'
   # On Debian/RPi OS /var/lib/dbus/machine-id is an ABSOLUTE symlink to
   # /etc/machine-id (verified blank just above). A plain `-s` test follows that
   # symlink and - because we mount the image OFFLINE, not chrooted - resolves it
@@ -231,7 +237,7 @@ if [[ -d "$REPO_DIR/src/core" ]]; then
   }
   # /usr/local/bin scripts (executable) - exist on any Pi OS image.
   for f in mb-gadget mb-hdmi-init mb-mdns-alias mb-lockdown mb-setup-fan \
-           mb-firstboot mb-firstboot-late mb-secret-reset; do
+           mb-firstboot mb-firstboot-late mb-secret-reset mb-power-test; do
     _put "src/core/$f.sh" "$MNT/usr/local/bin/$f.sh" 0755
   done
   _put src/provision/mb-provision.sh "$MNT/usr/local/bin/mb-provision.sh" 0755
@@ -346,6 +352,21 @@ fi
 : > "$MNT/var/log/lastlog" 2>/dev/null || true
 rm -f "$MNT"/boot/firmware/magicbridge-setup-report.txt "$MNT"/boot/magicbridge-setup-report.txt 2>/dev/null || true
 find "$MNT/root" "$MNT/home" -maxdepth 2 -name ".bash_history" -delete 2>/dev/null || true
+# User SSH material (B1): a shared private key / authorized_keys is a master key
+# into EVERY clone, and known_hosts cross-links them. Never ship them.
+rm -rf "$MNT"/root/.ssh "$MNT"/home/*/.ssh 2>/dev/null || true
+# NetworkManager location state (seen-BSSIDs = builder's WiFi environment) + the
+# systemd journal (golden unit's full boot/usage history). Both cross-link clones.
+rm -rf "$MNT"/var/lib/NetworkManager/seen-bssids "$MNT"/var/lib/NetworkManager/timestamps \
+       "$MNT"/var/lib/NetworkManager/*.lease "$MNT"/var/lib/NetworkManager/*-internal.lease \
+       "$MNT"/var/lib/NetworkManager/dhclient*.lease 2>/dev/null || true
+rm -rf "$MNT"/var/log/journal/* 2>/dev/null || true
+# Hostname (B3): neutralize the golden name so two freshly-flashed clones don't
+# broadcast the SAME per-unit name over DHCP opt-12 + mDNS before first-boot
+# renames each to a unique DESKTOP-XXXXXXX. Ship a neutral placeholder; both
+# mb-secret-reset (first boot) and mb-provision (every boot) replace it.
+echo "localhost" > "$MNT/etc/hostname" 2>/dev/null || true
+sed -i "/^127.0.1.1/d" "$MNT/etc/hosts" 2>/dev/null || true
 if [[ -f "$MNT/etc/magicbridge/config.json" ]] && command -v python3 >/dev/null; then
   python3 - "$MNT/etc/magicbridge/config.json" <<'PY' 2>/dev/null || true
 import json,sys

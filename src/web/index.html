@@ -1585,6 +1585,14 @@ let _rCtrlSent=false;
 // released only the four LEFT modifiers, so AltGr / right-Shift/Ctrl / any held
 // letter stayed stuck on the target when the operator alt-tabbed away.
 const _heldKeys=new Set();
+// True when the keyboard event targets an on-page editable field (paste box,
+// forms, etc.) - those keystrokes belong to the UI and must NOT be forwarded to
+// the target or preventDefault'd (S3).
+function _overEditable(t){
+  if(!t) return false;
+  const tag=t.tagName;
+  return tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||t.isContentEditable===true;
+}
 function _sendDown(code){ _heldKeys.add(code); send({type:'keydown',code}); }
 function _sendUp(code){ _heldKeys.delete(code); send({type:'keyup',code}); }
 // Escape = hold-to-exit. A single tap is forwarded to the remote as a normal
@@ -1680,6 +1688,18 @@ function _setCaptured(on){
       showRecapture();
     }
     clearTimeout(_escHoldTimer); _escDown=0;
+    // Release everything still held on the TARGET. A browser-FORCED capture exit
+    // (pressing Esc while pointer-locked in relative mode) reaches here via
+    // pointerlockchange WITHOUT going through releaseAll(), so Escape (sent raw,
+    // never tracked in _heldKeys) and any key held at that instant would stay
+    // stuck DOWN on the target and auto-repeat (S4). Release them here too;
+    // duplicate keyups are harmless/idempotent.
+    send({type:'keyup',code:'Escape'});
+    _heldKeys.forEach(c=>send({type:'keyup',code:c}));
+    _heldKeys.clear();
+    ['ShiftLeft','ControlLeft','AltLeft','MetaLeft',
+     'ShiftRight','ControlRight','AltRight','MetaRight'].forEach(c=>send({type:'keyup',code:c}));
+    _rCtrlDown=0; _rCtrlSent=false;
     _intentional=false;
     _syncKbLock();   // released control -> drop keyboard lock (stays in FS if you chose it)
     document.getElementById('cur-dot').style.display='none';
@@ -1740,6 +1760,12 @@ function releaseAll(){
 // Keyboard
 document.addEventListener('keydown',e=>{
   if(!captured) return;
+  // S3: if the operator is typing into an on-page field (the paste box, WiFi
+  // form, any input), let the field have the keystrokes - do NOT forward them
+  // to the target or preventDefault. In absolute mode `captured` stays true
+  // while the cursor is visible and UI is clickable, so without this the paste
+  // box got nothing and every character leaked to the remote machine.
+  if(_overEditable(e.target)) return;
   // Esc: single tap is forwarded to the remote; hold ESC_HOLD_MS to exit control.
   if(e.code==='Escape'){
     e.preventDefault();
@@ -1784,6 +1810,7 @@ document.addEventListener('keydown',e=>{
 
 document.addEventListener('keyup',e=>{
   if(!captured) return;
+  if(_overEditable(e.target)) return;   // S3: matches the keydown guard above
   if(e.code==='Escape'){
     clearTimeout(_escHoldTimer);          // released before the hold fired = a tap
     _escDown=0;

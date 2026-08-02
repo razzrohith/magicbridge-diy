@@ -10,6 +10,7 @@ Mouse report (4 bytes):    [buttons, dx, dy, wheel]
 """
 import os
 import queue
+import select
 import struct
 import threading
 import time
@@ -36,14 +37,23 @@ def _hidg_write(owner, data: bytes):
     drop the handle so the next report transparently reopens the (possibly new)
     device. `owner` supplies .device (path) and ._fd (cached handle); every
     caller already holds owner._lock, so no additional locking is needed here.
-    Blocking semantics are kept identical to the old code (a connected host is
-    always polling, so writes don't block in practice).
+
+    S1: the fd is opened O_NONBLOCK and every write is gated on a bounded
+    select() for POLLOUT. A connected host polls constantly, so the endpoint is
+    writable instantly and there is no behaviour change. But if the target USB
+    host STOPS polling (selective suspend, sleep), a plain blocking os.write
+    would hang the single HID worker thread FOREVER, freezing all input for all
+    clients. With the timeout we simply drop that report and move on - input to
+    a suspended host is meaningless anyway - so the worker can never wedge.
     """
     try:
         if owner._fd is None:
-            owner._fd = os.open(owner.device, os.O_WRONLY)
+            owner._fd = os.open(owner.device, os.O_WRONLY | os.O_NONBLOCK)
+        _, wl, _ = select.select([], [owner._fd], [], _HIDG_WRITE_TIMEOUT)
+        if not wl:
+            return                      # endpoint not accepting reports right now
         os.write(owner._fd, data)
-    except OSError as e:
+    except (OSError, BlockingIOError) as e:
         log.debug("HID write %s: %s", owner.device, e)
         if owner._fd is not None:
             try:
@@ -51,6 +61,12 @@ def _hidg_write(owner, data: bytes):
             except OSError:
                 pass
             owner._fd = None
+
+
+# Max seconds to wait for the hidg endpoint to accept a report before dropping
+# it. Long enough to ride out a momentary stall, short enough that a suspended
+# host can never wedge the worker thread.
+_HIDG_WRITE_TIMEOUT = 0.5
 
 # Keyboard scancode table
 # JS event.code → USB HID Usage ID (Keyboard/Keypad Usage Page 0x07)
@@ -280,11 +296,18 @@ class HIDKeyboard:
             self.pressed.clear()
             self._write(0, set())
 
-    def combo(self, codes: list):
+    def combo(self, codes: list, cancel=None):
         """
         Press all codes simultaneously (modifier + key combos),
-        hold 80 ms, then release all.
+        hold 80 ms, then RESTORE whatever was held before.
         Safe to call from a thread pool executor.
+
+        S5: the tail used to force self.modifiers=0 / self.pressed.clear(),
+        which released any key the operator was physically holding (tracked in
+        that same shared state by the live-key path) and desynced the later
+        keyup. Snapshot the held state before the macro and restore it after,
+        so a self-contained macro never clobbers independently-held keys.
+        `cancel` (a threading.Event) is accepted for API parity with send_text.
         """
         mods = 0
         keys: set = set()
@@ -294,18 +317,26 @@ class HIDKeyboard:
             elif code in KEY_MAP:
                 keys.add(KEY_MAP[code])
         with self._lock:
+            saved_mods = self.modifiers
+            saved_keys = set(self.pressed)
             self._write(mods, keys)
         time.sleep(0.08)
         with self._lock:
-            self.modifiers = 0
-            self.pressed.clear()
-            self._write(0, set())
+            self.modifiers = saved_mods
+            self.pressed = saved_keys
+            self._write(self.modifiers, self.pressed)
 
-    def send_text(self, text: str, delay: float = 0.012, human: bool = True):
+    def send_text(self, text: str, delay: float = 0.012, human: bool = True, cancel=None):
         """
         Type a string character-by-character (paste / AI-typed text).
         Safe to call from a thread pool executor.
         Skips characters not in CHAR_MAP (non-ASCII, etc.).
+
+        `cancel` (a threading.Event, optional): checked between characters; when
+        set, typing stops immediately and any held keys are released. The WS
+        handler sets it if the operator disconnects mid-paste, so a human-paced
+        paste can't keep typing into the target for minutes after the tab closes
+        (S2).
 
         STEALTH TIMING. Behavioural endpoint tools (corporate EDR) don't just
         look at what a HID device IS, they look at how it TYPES: a "keyboard"
@@ -330,6 +361,8 @@ class HIDKeyboard:
         """
         n = 0
         for ch in text:
+            if cancel is not None and cancel.is_set():
+                break                                 # operator disconnected mid-paste (S2)
             entry = CHAR_MAP.get(ch)
             if not entry:
                 continue
@@ -337,11 +370,12 @@ class HIDKeyboard:
             hid_code = KEY_MAP.get(code)
             if hid_code is None:
                 continue
-            # --- press ---
+            # --- press --- (OR in any physically-held keys so a paste doesn't
+            # momentarily drop the operator's held key from each char report - S5)
             with self._lock:
                 saved_mods = self.modifiers
                 mods = saved_mods | (MODIFIER_MAP["ShiftLeft"] if need_shift else 0)
-                self._write(mods, {hid_code})
+                self._write(mods, set(self.pressed) | {hid_code})
 
             if human:
                 # Physical key-hold, then release, then the inter-key gap.
@@ -371,6 +405,10 @@ class HIDKeyboard:
                 with self._lock:
                     self._write(saved_mods, self.pressed)
                 time.sleep(hold * random.uniform(0.35, 0.85))
+        # Settle the report back to exactly what's physically held (a mid-char
+        # cancel could otherwise leave the last pasted key down).
+        with self._lock:
+            self._write(self.modifiers, self.pressed)
 
 
 class HIDMouse:

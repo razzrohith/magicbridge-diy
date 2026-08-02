@@ -167,16 +167,29 @@ except Exception:
 _login_fails: dict = {}
 
 def _client_ip() -> str:
-    return (request.headers.get("X-Forwarded-For") or
-            request.headers.get("X-Real-IP") or
+    # Trust ONLY X-Real-IP (nginx sets it from $remote_addr) or the socket peer.
+    # X-Forwarded-For is client-appendable: nginx's proxy_add_x_forwarded_for
+    # APPENDS the real IP AFTER any value the client forged, so keying the
+    # brute-force throttle on its leftmost element let an attacker rotate a fresh
+    # fake IP per request and never accumulate a delay. Match magicbridge.py.
+    return (request.headers.get("X-Real-IP") or
             request.remote_addr or "").split(",")[0].strip()
 
 def _apply_delay(ip: str):
     n = _login_fails.get(ip, 0)
-    if n > 0:
+    # Escalating delay, then a hard lockout window past the threshold so the
+    # throttle can actually stop a sustained guess run (not just slow it).
+    if n >= 8:
+        time.sleep(30)
+    elif n > 0:
         time.sleep(min(n, 10))
 
 def _record_fail(ip: str):
+    # Bound the dict so a spoofed-key flood (or many peers) can't grow it without
+    # limit; drop the oldest arbitrary entry once large.
+    if len(_login_fails) > 512 and ip not in _login_fails:
+        try: _login_fails.pop(next(iter(_login_fails)))
+        except (StopIteration, KeyError): pass
     _login_fails[ip] = _login_fails.get(ip, 0) + 1
 
 def _record_ok(ip: str):

@@ -78,7 +78,7 @@ BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 ok()   { echo -e "${GREEN}✓${NC} $*"; }
 info() { echo -e "${BLUE}→${NC} $*"; }
 warn() { echo -e "${YELLOW}⚠${NC} $*"; }
-die()  { echo -e "${RED}✗ FATAL:${NC} $*"; }
+die()  { echo -e "${RED}✗ FATAL:${NC} $*"; exit 1; }
 
 [[ $EUID -eq 0 ]] || { echo "Run as root: sudo bash install_janus_webrtc.sh"; exit 1; }
 
@@ -306,10 +306,17 @@ fi
 # ══════════════════════════════════════════════════════════════════
 # 6. systemd service for Janus (separate from magicbridge/mb-gadget)
 # ══════════════════════════════════════════════════════════════════
+# S9: only create+enable the unit if the build actually succeeded. Enabling a
+# unit whose ExecStart binary doesn't exist makes systemd restart-loop it
+# forever on every boot (journal spam + wasted CPU on a device meant to idle).
+# ConditionPathExists is a second guard so even an enabled unit no-ops if the
+# binary is missing.
+if [[ "$JANUS_OK" == true && -x "$JANUS_BIN" ]]; then
 cat > /etc/systemd/system/janus-webrtc.service <<EOF
 [Unit]
 Description=Janus WebRTC Gateway (MagicBridge C790 video path)
 After=network.target
+ConditionPathExists=${JANUS_BIN}
 
 [Service]
 ExecStart=${JANUS_BIN} --disable-colors --log-stdout --configs-folder ${JANUS_CONF_DIR} --plugins-folder ${JANUS_PLUGIN_DIR}
@@ -322,6 +329,9 @@ WantedBy=multi-user.target
 EOF
 systemctl daemon-reload
 systemctl enable janus-webrtc.service 2>&1 | tail -5
+else
+    warn "Janus build did not succeed - NOT creating/enabling janus-webrtc.service (avoids a permanently-flapping unit on every boot)."
+fi
 
 info "Not starting janus-webrtc.service yet — there's no capture device feeding"
 info "the memsink until the C790 is physically installed and mode=h264 is set."
