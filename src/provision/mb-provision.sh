@@ -76,6 +76,13 @@ ensure_mdns_healthy() {
     # <hostname>.local, so the unit stays reachable without advertising a name.
     systemctl enable mb-mdns-alias.service --now 2>/dev/null || true
 }
+# Disable errexit for EVERYTHING from here on. ensure_mdns_healthy runs
+# hostnamectl / systemctl unmask / sed / systemctl restart - any of which can
+# return non-zero (busy dbus, masked unit) and, under set -e, would abort the
+# WHOLE script BEFORE the setup hotspot is ever raised: no network, no hotspot,
+# no OLED escape = a bricked headless unit. Provisioning is best-effort with
+# explicit checks + the /boot escape-hatch report, so it must never hard-exit.
+set +e
 ensure_mdns_healthy
 
 # Check for live network (WiFi, Ethernet, or otherwise) via NetworkManager's

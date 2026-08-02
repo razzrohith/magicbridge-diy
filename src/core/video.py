@@ -923,17 +923,29 @@ class VideoManager:
         }
 
     def start_watchdog(self):
-        """Background thread that auto-restarts a dead stream every 5 s."""
+        """Background thread that auto-restarts a dead stream, with backoff."""
+        # Idempotent: don't spawn a second watchdog if one is already running
+        # (start_watchdog is now called unconditionally at boot).
+        if getattr(self, "_mon_thr", None) and self._mon_thr.is_alive():
+            return
         def _watch():
+            fails = 0
             while True:
-                time.sleep(5)
+                # Exponential backoff on consecutive failures so a persistently
+                # un-launchable stream doesn't restart-storm every 5 s forever
+                # (5, 10, 20, 40, capped 60). Resets to 5 s once healthy.
+                time.sleep(min(5 * (2 ** fails), 60))
                 needs_restart = False
                 with self._lock:
                     if self.device and not self.is_running():
-                        log.info("Stream died, restarting...")
                         needs_restart = True
-                if needs_restart:
-                    self.restart()
+                if not needs_restart:
+                    fails = 0
+                    continue
+                log.info("Stream not running, restarting (attempt %d)...", fails + 1)
+                self.restart()
+                time.sleep(2)   # let it come up before judging
+                fails = 0 if self.is_running() else min(fails + 1, 4)
         t = threading.Thread(target=_watch, daemon=True, name="mb-video-watchdog")
         t.start()
         self._mon_thr = t

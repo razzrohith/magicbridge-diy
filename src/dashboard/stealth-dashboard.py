@@ -1950,7 +1950,18 @@ async function connectWifi(name) {
   if (r.ok) { setTimeout(loadWifiStatus, 3000); loadSavedWifi(); }
 }
 
-function esc(s) { return String(s).replace(/'/g,"\\'"); }
+// Safe in BOTH contexts esc() is used in: inside a JS single-quoted string
+// (onclick="fn('...')") AND inside a double-quoted HTML attribute (data-net="...").
+// The old version only backslash-escaped ' - so a saved WiFi SSID containing
+// <, >, & or " (or a JS-breakout payload) rendered raw into the authenticated,
+// auto-refreshing panel = stored/DOM XSS. JS-escape \ and ' first, then
+// HTML-escape the attribute metacharacters.
+function esc(s) {
+  return String(s)
+    .replace(/\\/g, '\\\\').replace(/'/g, "\\'")
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 /* Logs */
 async function refreshLogs() {

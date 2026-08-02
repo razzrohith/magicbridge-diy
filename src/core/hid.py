@@ -475,6 +475,13 @@ class HIDMouse:
 
     def move(self, dx: int, dy: int):
         """Send relative movement, chunking large deltas into ±127 steps."""
+        # Clamp to a screen-sized bound BEFORE chunking. An unclamped huge delta
+        # (a buggy/hostile client, or a large summed backlog) would loop the
+        # ±127 chunker hundreds of times, each write gated on the select()
+        # timeout - a multi-second stall of the single HID worker that freezes
+        # all input. No real relative move exceeds a few thousand px.
+        dx = max(-4096, min(4096, int(dx)))
+        dy = max(-4096, min(4096, int(dy)))
         with self._lock:
             while dx != 0 or dy != 0:
                 sx = max(-127, min(127, dx))

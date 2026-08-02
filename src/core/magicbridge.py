@@ -3002,9 +3002,14 @@ async def main():
     ))
     if ok:
         log.info("Stream started: %s", video.status())
-        video.start_watchdog()
     else:
-        log.warning("Stream not started, no capture device or streamer found")
+        log.warning("Stream not started on first try (no device, or transient launch failure)")
+    # Always start the watchdog, not only on a successful first launch. It
+    # self-guards (acts ONLY when a capture device is present but the stream
+    # isn't running), so it no-ops when there's genuinely no device, but RECOVERS
+    # a transient first-launch failure that would otherwise leave video dead
+    # until a manual restart.
+    video.start_watchdog()
 
     # Start HTTP server
     app    = build_app()

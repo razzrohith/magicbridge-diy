@@ -1,7 +1,11 @@
 [Unit]
 Description=MagicBridge WiFi Provisioning
-After=NetworkManager.service network-pre.target
+After=NetworkManager.service network-pre.target mb-firstboot.service
 Before=magicbridge.service
+# After=mb-firstboot so a FRESH clone finishes secret-reset (which sets the
+# hostname + may submit/clear WiFi) before provisioning checks connectivity and
+# raises the setup hotspot - otherwise the two race on nginx :80 and on the
+# just-submitted WiFi profile.
 # Runs on every boot and re-checks connectivity itself (see mb-provision.sh);
 # no longer gated to "first boot only" so the setup hotspot can come back
 # any time the Pi can't reach a known WiFi network (e.g. moved to a new

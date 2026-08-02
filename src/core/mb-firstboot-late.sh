@@ -77,28 +77,42 @@ fi
 # Patch the 32-bit serial (EDID bytes 12-15) and fix the base-block checksum
 # (byte 127 makes bytes 0..127 sum to 0 mod 256). Monitor name/manufacturer are
 # untouched, so the target still sees a genuine "DELL P2419H".
+EDID_OK=0
 if [ -f "$EDID" ] && command -v python3 >/dev/null 2>&1; then
-    python3 - "$EDID" <<'PY'
+    if python3 - "$EDID" <<'PY'
 import random, re, sys
 p = sys.argv[1]
 raw = open(p).read()
 b = [int(x, 16) for x in re.findall(r'[0-9a-fA-F]{2}', raw)]
-if len(b) >= 128:
-    ser = random.randint(0x01000000, 0xfffffffe)
-    b[12] = ser & 0xFF; b[13] = (ser >> 8) & 0xFF
-    b[14] = (ser >> 16) & 0xFF; b[15] = (ser >> 24) & 0xFF
-    b[127] = (256 - (sum(b[0:127]) % 256)) % 256      # recompute checksum
-    assert sum(b[0:128]) % 256 == 0, "checksum fix failed"
-    with open(p, "w", newline="\n") as f:
-        for blk in (b[:128], b[128:256]):
-            if not blk: continue
-            for i in range(0, len(blk), 16):
-                f.write(" ".join("%02x" % x for x in blk[i:i+16]) + "\n")
-            f.write("\n")
-    print("EDID serial randomized -> 0x%08x (checksum OK)" % ser)
+if len(b) < 128:
+    sys.exit(1)                                       # malformed - fail (retry)
+ser = random.randint(0x01000000, 0xfffffffe)
+b[12] = ser & 0xFF; b[13] = (ser >> 8) & 0xFF
+b[14] = (ser >> 16) & 0xFF; b[15] = (ser >> 24) & 0xFF
+b[127] = (256 - (sum(b[0:127]) % 256)) % 256          # recompute checksum
+assert sum(b[0:128]) % 256 == 0, "checksum fix failed"
+with open(p, "w", newline="\n") as f:
+    for blk in (b[:128], b[128:256]):
+        if not blk: continue
+        for i in range(0, len(blk), 16):
+            f.write(" ".join("%02x" % x for x in blk[i:i+16]) + "\n")
+        f.write("\n")
+print("EDID serial randomized -> 0x%08x (checksum OK)" % ser)
 PY
-    # Re-apply so the change is live for the currently attached source.
-    /usr/local/bin/mb-hdmi-init.sh --init >/dev/null 2>&1 && echo "EDID re-applied"
+    then
+        # Confirm the serial (bytes 12-15 = end of line 1) is no longer the baked
+        # default 0x00000001 before trusting it.
+        if head -1 "$EDID" | grep -qiE ' 01 00 00 00[[:space:]]*$'; then
+            echo "EDID serial still the baked default - randomize did not take"
+        else
+            EDID_OK=1
+            /usr/local/bin/mb-hdmi-init.sh --init >/dev/null 2>&1 && echo "EDID re-applied"
+        fi
+    else
+        echo "EDID randomize python failed"
+    fi
+else
+    echo "EDID file or python3 missing - cannot personalize monitor serial this boot"
 fi
 
 # ---- 3. Under-voltage flag -------------------------------------------------
@@ -112,6 +126,16 @@ if command -v vcgencmd >/dev/null 2>&1; then
 fi
 
 # ---- 4. Mark done (verified + synced, same lesson as mb-firstboot) ---------
+# FAIL-CLOSED on the EDID serial: if it wasn't personalized this boot, DON'T
+# write the marker or self-disable - retry next boot instead of permanently
+# shipping the shared baked serial (0x00000001) that cross-links units. The
+# rootfs-expand + power steps above already ran and are idempotent, so a retry
+# is harmless. (python3 + the EDID file are effectively always present, so this
+# only bites a genuinely transient failure.)
+if [ "$EDID_OK" != "1" ]; then
+    echo "EDID serial NOT personalized - leaving marker unset to retry next boot"
+    exit 1
+fi
 mkdir -p "$(dirname "$MARKER")" 2>/dev/null
 date > "$MARKER" 2>/dev/null
 sync

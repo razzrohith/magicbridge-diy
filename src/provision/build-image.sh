@@ -107,6 +107,8 @@ if [[ "$MODE" == "verify" ]]; then
   chk "no shell history left"                        '! ls "$R"/root/.bash_history "$R"/home/*/.bash_history 2>/dev/null | grep -q .'
   chk "no golden systemd journal"                    '! ls "$R"/var/log/journal/*/*.journal 2>/dev/null | grep -q .'
   chk "no NM seen-bssids (builder location)"         '[ ! -e "$R/var/lib/NetworkManager/seen-bssids" ]'
+  chk "no leftover web-password on boot partition"   '[ ! -f "$R/boot/firmware/magicbridge-password.txt" ] && [ ! -f "$R/boot/magicbridge-password.txt" ]'
+  chk "no shared systemd RNG seed"                   '[ ! -e "$R/var/lib/systemd/random-seed" ]'
   # On Debian/RPi OS /var/lib/dbus/machine-id is an ABSOLUTE symlink to
   # /etc/machine-id (verified blank just above). A plain `-s` test follows that
   # symlink and - because we mount the image OFFLINE, not chrooted - resolves it
@@ -351,6 +353,13 @@ fi
 : > "$MNT/var/log/btmp"    2>/dev/null || true
 : > "$MNT/var/log/lastlog" 2>/dev/null || true
 rm -f "$MNT"/boot/firmware/magicbridge-setup-report.txt "$MNT"/boot/magicbridge-setup-report.txt 2>/dev/null || true
+# The per-unit web password mb-secret-reset writes to the FAT boot partition:
+# if a golden unit was ever booted, its cleartext credential would ship in the
+# image. Strip it (the clone regenerates its own on first boot).
+rm -f "$MNT"/boot/firmware/magicbridge-password.txt "$MNT"/boot/magicbridge-password.txt 2>/dev/null || true
+# systemd RNG seed: a shared seed across clones weakens early-boot entropy and
+# is a documented golden-image no-no. Regenerated on first boot.
+rm -f "$MNT"/var/lib/systemd/random-seed 2>/dev/null || true
 find "$MNT/root" "$MNT/home" -maxdepth 2 -name ".bash_history" -delete 2>/dev/null || true
 # User SSH material (B1): a shared private key / authorized_keys is a master key
 # into EVERY clone, and known_hosts cross-links them. Never ship them.

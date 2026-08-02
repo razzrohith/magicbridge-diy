@@ -87,15 +87,22 @@ except Exception: c={}
 # unambiguous charset (no 0/O/1/l/I) so the owner can read it off the OLED/card
 alphabet="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
 pw="".join(secrets.choice(alphabet) for _ in range(12))
-try:
-    import bcrypt
-    h=bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
-except Exception:
-    h="sha256:"+hashlib.sha256(pw.encode()).hexdigest()
-# Fresh auth: unique main password + secret key. Dropping the stealth
-# password_hash/secret_key too just re-bootstraps the internal (:7777,
-# firewall-blocked) dashboard on its next start — acceptable, it isn't LAN-open.
-c["auth"]={"main_password_hash":h,"main_secret_key":secrets.token_hex(32)}
+def _mkhash(s):
+    try:
+        import bcrypt
+        return bcrypt.hashpw(s.encode(), bcrypt.gensalt()).decode()
+    except Exception:
+        return "sha256:"+hashlib.sha256(s.encode()).hexdigest()
+h=_mkhash(pw)
+# Fresh auth for BOTH panels with the SAME per-unit random password. CRITICAL:
+# the stealth admin dashboard (its auth.password_hash/secret_key) is reachable
+# on the LAN via nginx's location /stealth/ on :443 - the :7777 firewall drop
+# only blocks DIRECT access, not the proxy. If we only reset main and let the
+# stealth panel re-bootstrap, every clone would ship the public default
+# "stealthbridge" on a LAN-reachable admin panel that can rotate USB/MAC/EDID
+# and reveal WiFi PSKs. Setting both to the random pw closes that.
+c["auth"]={"main_password_hash":h,"main_secret_key":secrets.token_hex(32),
+           "password_hash":h,"secret_key":secrets.token_hex(32)}
 c.pop("duckdns",None); c.pop("tailscale",None)
 c.pop("mac_persist",None)
 if isinstance(c.get("ai"),dict): c["ai"].pop("keys",None)
