@@ -52,6 +52,39 @@ if [[ ! -f /opt/magicbridge/core/magicbridge.py ]]; then
         echo "[$(date)] install.sh failed - will retry next boot"
         exit 1
     }
+    # B4: install.sh leaves auth unset, so both backends would otherwise
+    # bootstrap the shared public defaults (magicbridge/stealthbridge) on a
+    # LAN-reachable panel. Give this net-install unit the SAME per-unit random
+    # web password for both panels that the pre-installed path gets, and drop it
+    # on the boot partition for the headless owner.
+    CFG=/etc/magicbridge/config.json
+    if command -v python3 >/dev/null; then
+        NEWPW="$(python3 - "$CFG" <<'PY'
+import json,sys,secrets,hashlib
+p=sys.argv[1]
+try: c=json.load(open(p))
+except Exception: c={}
+ab="ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789"
+pw="".join(secrets.choice(ab) for _ in range(12))
+try:
+    import bcrypt; h=bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
+except Exception:
+    h="sha256:"+hashlib.sha256(pw.encode()).hexdigest()
+c["auth"]={"main_password_hash":h,"main_secret_key":secrets.token_hex(32),
+           "password_hash":h,"secret_key":secrets.token_hex(32)}
+json.dump(c,open(p,"w"),indent=2)
+print(pw)
+PY
+)"
+        chmod 600 "$CFG" 2>/dev/null || true
+        if [ -n "$NEWPW" ]; then
+            BOOT=/boot/firmware; [ -d "$BOOT" ] || BOOT=/boot
+            [ -d "$BOOT" ] && { printf 'MagicBridge web login\nPassword: %s\nChange it after first login; delete this file.\n' "$NEWPW" > "$BOOT/magicbridge-password.txt" 2>/dev/null; sync; }
+            echo "[$(date)] net-install: per-unit web password set (on boot partition)"
+        else
+            echo "[$(date)] WARNING: net-install password generation failed - default may be active"
+        fi
+    fi
 else
     # PRE-INSTALLED image (pi-gen / clone): the software is baked in, so the
     # ONLY thing to do is regenerate the per-unit secrets that must never be

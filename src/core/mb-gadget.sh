@@ -121,7 +121,10 @@ printf '%s' "$SER"  > "$GADGET_DIR/strings/0x409/serialnumber"
 # Configuration descriptor
 mkdir -p "$GADGET_DIR/configs/c.1/strings/0x409"
 echo "Config 1" > "$GADGET_DIR/configs/c.1/strings/0x409/configuration"
-echo "250"      > "$GADGET_DIR/configs/c.1/MaxPower"   # 250 mA
+echo "98"       > "$GADGET_DIR/configs/c.1/MaxPower"   # ~98 mA: matches a real
+# Logitech Unifying Receiver's config descriptor. 250 mA was a generic-gadget
+# value the target could read (it already parses this descriptor for VID/PID) -
+# a bus-power figure inconsistent with any real Logitech receiver = a tell.
 
 # Keyboard HID function
 mkdir -p "$GADGET_DIR/functions/hid.keyboard"

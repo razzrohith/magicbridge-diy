@@ -129,7 +129,7 @@ if [[ "$MODE" == "verify" ]]; then
   chk "MagicBridge installed (/opt/magicbridge)"     '[ -f "$R/opt/magicbridge/core/magicbridge.py" ]'
   chk "WiFi retry: hotspot re-raised on bad password" 'grep -q "re-raising the setup hotspot" "$R/usr/local/bin/mb-provision.sh"'
   chk "WiFi retry: provisioning timeout raised"      'grep -q "TimeoutStartSec=1800" "$R/etc/systemd/system/mb-provision.service"'
-  chk "reachable by name (mdns_alias set)"           'python3 -c "import json,sys;sys.exit(0 if json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"mdns_alias\") else 1)"'
+  chk "mdns_alias is stealth default (empty, no LAN brand)" 'python3 -c "import json,sys;v=json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"mdns_alias\",\"\");sys.exit(0 if v==\"\" else 1)"'
   # Without these three the unit ships looking fine and behaving badly: it would
   # nag "deployment unverified" forever, silently skip its own installer logic on
   # the first upgrade, and let a shutdown land mid-install.
@@ -388,7 +388,12 @@ if isinstance(c.get("usb"),dict): c["usb"]["serial"]=""
 c["mac_persist"]={}                        # -> unique vendor MAC per unit
 c.setdefault("video",{})["mode"]="auto"    # -> detects C790/CSI or USB per unit
 c["video"]["fps"]=50                       # -> match a 1080p50 source (every frame; smoothest input). video.py caps to the real source refresh via a clean divisor
-c["mdns_alias"]="magicbridge"              # -> reachable at magicbridge.local out of the box
+c["mdns_alias"]=""                         # DISTRIBUTABLE default = full stealth: no
+# clone advertises the branded "magicbridge.local" on the LAN (N clones would
+# collide -> avahi renames losers magicbridge-2.local, leaking fleet size + the
+# brand). Each unit stays reachable at its UNIQUE DESKTOP-XXXXXXX.local (avahi
+# auto-publishes the hostname) shown on the OLED, or set a per-unit memorable
+# alias from the dashboard.
 json.dump(c,open(p,"w"),indent=2)
 PY
 fi

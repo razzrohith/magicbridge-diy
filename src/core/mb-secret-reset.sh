@@ -116,6 +116,11 @@ PY
     if [[ $? -eq 0 ]]; then PW_OUT=1; else fail "config secret reset / password generation failed"; fi
     chmod 600 "$CFG" 2>/dev/null || true
 fi
+# FAIL-CLOSED (B4): if the password block was SKIPPED entirely (config.json
+# momentarily absent, or python3 broken) PW_OUT stays 0 and nothing above fired
+# fail() - so without this the unit would stamp first-boot done and re-bootstrap
+# the shared public defaults (magicbridge/stealthbridge) on a LAN-reachable panel.
+if [[ "$PW_OUT" != "1" ]]; then fail "web/admin password was not regenerated (config/python missing)"; fi
 # Surface the new password where a headless owner can read it: the FAT boot
 # partition (pull the card, open in any OS). Root-only perms on the runtime copy.
 if [[ "$PW_OUT" == "1" && -s /run/magicbridge/.new-web-password ]]; then

@@ -20,7 +20,7 @@ HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MagicBridge Setup</title>
+<title>Device Setup</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{min-height:100vh;background:#060606;
@@ -52,8 +52,8 @@ button:hover{opacity:.83}
 <body>
 <main>
 <div class="card">
-  <h1>MagicBridge</h1>
-  <p class="sub">Connect to your WiFi network to complete setup</p>
+  <h1>Device Setup</h1>
+  <p class="sub">Connect this device to your WiFi network to complete setup</p>
   MSGBLOCK
   <form method="POST" action="/setup">
     <label for="ssid">Network name (SSID)</label>
@@ -77,8 +77,8 @@ button:hover{opacity:.83}
     <button type="submit">Connect &amp; Complete Setup</button>
   </form>
   <p class="hint">
-    After connecting, MagicBridge will reboot into normal KVM mode.<br>
-    Access it at <strong>http://magicbridge.local/</strong> or via Tailscale.
+    After connecting, this device finishes setup automatically.<br>
+    Reach it at the address shown on its small screen, or via Tailscale.
   </p>
 </div>
 </main>
@@ -90,7 +90,7 @@ SUCCESS_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MagicBridge Connected</title>
+<title>Connected</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{min-height:100vh;background:#060606;
@@ -110,10 +110,10 @@ strong{color:#888}
   <div class="icon">✓</div>
   <h1>Setup complete!</h1>
   <p>
-    MagicBridge is connecting to <strong>SSID_PLACEHOLDER</strong>.<br>
-    This AP will disappear in a few seconds.<br><br>
-    Reconnect your device to your main network, then open:<br>
-    <strong>http://magicbridge.local/</strong>
+    Connecting to <strong>SSID_PLACEHOLDER</strong>.<br>
+    This setup network will disappear in a few seconds.<br><br>
+    Reconnect to your main WiFi, then open the address<br>
+    shown on the device's small screen.
   </p>
 </div>
 </main>

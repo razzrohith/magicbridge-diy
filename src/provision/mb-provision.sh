@@ -20,7 +20,15 @@ set -e
 FLAG_FILE="/etc/magicbridge/.provisioned"   # informational timestamp only, doesn't gate anything
 WIFI_FILE="/etc/magicbridge/.provision-wifi"
 LOG="/var/log/magicbridge-provision.log"
-AP_SSID="MagicBridge-Setup"
+# Generic, per-unit setup SSID (B3): the old "MagicBridge-Setup" beaconed the
+# product name over the air (on the real Pi MAC), a branded leak bypassing every
+# USB/HDMI/LAN precaution. A stable "Setup-XXXX" suffix from this unit's
+# machine-id reads like an ordinary router setup AP; the exact name is shown on
+# the OLED so the owner still knows which network to join.
+_ap_sfx="$(cat /etc/machine-id 2>/dev/null | tr -dc 'a-f0-9' | tail -c 4)"
+[ -n "$_ap_sfx" ] || _ap_sfx="$(hostname 2>/dev/null | tr -dc 'A-Za-z0-9' | tail -c 4)"
+[ -n "$_ap_sfx" ] || _ap_sfx="0000"
+AP_SSID="Setup-${_ap_sfx}"
 AP_IP="192.168.73.1"
 AP_IFACE="wlan0"
 PORTAL_PORT=80
@@ -88,9 +96,19 @@ ensure_mdns_healthy
 # Check for live network (WiFi, Ethernet, or otherwise) via NetworkManager's
 # overall state, not just wlan0 specifically - this fires the setup hotspot
 # only when the Pi genuinely has no way onto any network, every boot.
-sleep 8   # give NetworkManager time to connect saved networks
-CONNECTED=$(nmcli -t -f STATE general 2>/dev/null | grep -c "^connected$" || true)
-if [[ "$CONNECTED" -gt 0 ]]; then
+# Poll up to ~40s for connectivity (B7). Two fixes over the old single 8s +
+# exact "^connected$" check, which tore GOOD units into the setup hotspot
+# (disconnecting wlan0 and DELETING the working profile):
+#   1. Match the "connected" PREFIX, so "connected (site only)" - a normal
+#      isolated-LAN / no-internet KVM state - counts as connected.
+#   2. Poll instead of sampling once, because WPA + DHCP on a slow AP routinely
+#      takes well over 8s, during which nmcli still reports "connecting".
+CONNECTED=0
+for _i in $(seq 1 20); do
+    if nmcli -t -f STATE general 2>/dev/null | grep -qE '^connected'; then CONNECTED=1; break; fi
+    sleep 2
+done
+if [[ "$CONNECTED" == "1" ]]; then
     echo "[$(date)] Already connected, nothing to do"
     clear_oled                      # normal status display
     touch "$FLAG_FILE"

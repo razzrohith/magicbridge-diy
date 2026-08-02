@@ -238,6 +238,26 @@ cp "$SRC_DIR/src/core/oled.py"        "$INSTALL_DIR/core/"   # OLED status panel
 # at boot by mb-hdmi-init. Without it the TC358743 has no EDID after reboot and
 # the source sends no signal.
 cp "$SRC_DIR/src/edid/mb-edid-1080p50.hex" "$INSTALL_DIR/edid/"
+# Give THIS install a unique EDID monitor serial right here (B6), so every
+# install path - direct curl|bash AND net-install-via-mb-firstboot - ships a
+# per-unit serial instead of the shared baked 0x00000001. The identity stays a
+# genuine "DELL P2419H"; only bytes 12-15 (+ checksum) change. mb-firstboot-late
+# still re-randomizes on the distributable-image path as a safety net.
+python3 - "$INSTALL_DIR/edid/mb-edid-1080p50.hex" <<'PY' 2>/dev/null || true
+import random, re, sys
+p=sys.argv[1]; b=[int(x,16) for x in re.findall(r'[0-9a-fA-F]{2}', open(p).read())]
+if len(b) >= 128:
+    ser=random.randint(0x01000000, 0xfffffffe)
+    b[12],b[13],b[14],b[15]=ser&0xFF,(ser>>8)&0xFF,(ser>>16)&0xFF,(ser>>24)&0xFF
+    b[127]=(256-(sum(b[0:127])%256))%256
+    assert sum(b[0:128])%256==0
+    with open(p,"w",newline="\n") as f:
+        for blk in (b[:128], b[128:256]):
+            if not blk: continue
+            for i in range(0,len(blk),16): f.write(" ".join("%02x"%x for x in blk[i:i+16])+"\n")
+            f.write("\n")
+    print("EDID serial personalized -> 0x%08x" % ser)
+PY
 
 # Web UI
 cp "$SRC_DIR/src/web/index.html"      "$INSTALL_DIR/web/"
