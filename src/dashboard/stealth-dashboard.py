@@ -234,8 +234,9 @@ def _boot():
     app.secret_key = cfg["auth"]["secret_key"]
     _purge_old_logs_if_due()
     try:
-        _ensure_default_mac(cfg)   # best-effort; never block dashboard startup
-    except Exception:
+        _ensure_default_mac(cfg)   # fresh unit: spoof wifi + wired on first boot
+        _backfill_wired_mac(cfg)   # already-spoofed unit: catch a wired NIC the
+    except Exception:              # old eth0-only path skipped (end0 / USB)
         pass
 
 # CSRF
@@ -469,6 +470,33 @@ NM_MAC_CONF = "/etc/NetworkManager/conf.d/00-mb-macspoof.conf"
 def _iface_is_wifi(iface: str) -> bool:
     return iface.startswith("wl") or Path(f"/sys/class/net/{iface}/wireless").exists()
 
+def _wired_ifaces() -> list:
+    """Real wired NIC name(s), detected by hardware so they're name-agnostic:
+    catches eth0, end0, and USB ethernet (enx*/eth1) regardless of how the
+    kernel names the port. Excludes loopback, wifi, and virtual/tun/bridge/AP
+    interfaces (which have no backing /device symlink). This is why the onboard
+    Ethernet MAC gets spoofed even on OS builds that name it end0, not eth0."""
+    out = []
+    try:
+        for p in sorted(Path("/sys/class/net").iterdir()):
+            i = p.name
+            if i == "lo" or _iface_is_wifi(i):
+                continue
+            if not (p / "device").exists():   # real hardware only
+                continue
+            out.append(i)
+    except Exception:
+        pass
+    return out
+
+def _primary_wired() -> str:
+    """The wired iface to show/target by default; prefers the onboard port."""
+    w = _wired_ifaces()
+    for pref in ("eth0", "end0"):
+        if pref in w:
+            return pref
+    return w[0] if w else "eth0"
+
 def _nm_apply_mac(iface: str, mac: str):
     """Make NetworkManager itself adopt `mac`. Without this, NM reasserts the
     permanent (real Raspberry Pi) MAC on the next (re)connect and silently
@@ -586,13 +614,18 @@ def _ensure_default_mac(cfg: dict):
     router client-list and network scanner flags as "Raspberry Pi" instantly.
     Runs once: once mac_persist is populated (here, or by the user) it never
     touches the live link again. Opt out with config "mac_autospoof": false.
-    NOTE: this changes the WiFi MAC, so the DHCP lease/IP may change on the
-    first boot after enabling - reach the unit via magicbridge.local if so."""
+    Covers WiFi (wlan0) and the wired NIC (eth0/end0/USB), so neither path
+    advertises the Pi OUI. NOTE: changing the MAC means the DHCP lease/IP may
+    change on the first boot after enabling - reach the unit via magicbridge.local
+    if so."""
     if not cfg.get("mac_autospoof", True) or cfg.get("mac_persist"):
         return
     prof = secrets.choice(MAC_PROFILES)          # one vendor = one laptop identity
     applied = {}
-    for iface in ("wlan0", "eth0"):
+    # wifi (wlan0) + every real wired NIC, detected by hardware so end0 and USB
+    # ethernet are covered too. A hardcoded "eth0" silently skipped them and
+    # left the real Raspberry Pi Ethernet MAC (dc:a6:32...) on the wired network.
+    for iface in dict.fromkeys(["wlan0", *_wired_ifaces()]):
         if Path(f"/sys/class/net/{iface}").exists():
             m = _rand_mac(prof["oui"])
             _set_mac(iface, m)
@@ -602,6 +635,43 @@ def _ensure_default_mac(cfg: dict):
         _save(cfg)
         _write_mac_svc(cfg)
         _log_sess(f"MAC auto-spoof first boot [{prof['name']}]: "
+                  + ", ".join(f"{i}->{m}" for i, m in applied.items()))
+
+def _backfill_wired_mac(cfg: dict):
+    """Close the wired-MAC leak on units already auto-spoofed under the old code
+    (which only covered eth0): if a wired NIC is present now but has no spoofed
+    MAC - it was named end0/USB and got skipped, or was added later - spoof just
+    that one with the vendor OUI this unit already wears, so the real Pi OUI
+    stops leaking on the wired network. Idempotent; leaves an already-spoofed
+    wired NIC untouched; respects mac_autospoof. This is what makes a webpage
+    'Update' actually fix a running unit, not only future clones."""
+    if not cfg.get("mac_autospoof", True):
+        return
+    persist = cfg.get("mac_persist") or {}
+    if not persist:
+        return  # nothing spoofed yet -> _ensure_default_mac handles the fresh case
+    missing = [i for i in _wired_ifaces() if i not in persist]
+    if not missing:
+        return
+    oui = None                       # reuse this unit's existing vendor (one identity)
+    for m in persist.values():
+        try:
+            oui = [int(x, 16) for x in m.split(":")[:3]]
+            break
+        except Exception:
+            oui = None
+    if not oui:
+        oui = secrets.choice(MAC_PROFILES)["oui"]
+    applied = {}
+    for iface in missing:
+        mac = _rand_mac(oui)
+        _set_mac(iface, mac)
+        applied[iface] = mac
+    if applied:
+        cfg.setdefault("mac_persist", {}).update(applied)
+        _save(cfg)
+        _write_mac_svc(cfg)
+        _log_sess("MAC backfill wired NIC: "
                   + ", ".join(f"{i}->{m}" for i, m in applied.items()))
 
 def _tailscale_status() -> dict:
@@ -1322,7 +1392,7 @@ hr{border:none;border-top:1px solid var(--br);margin:10px 0}
       <span class="fd">Changes the hardware address reported on the network.</span>
       <div class="frow" style="margin-top:6px">
         <select id="net-if" aria-labelledby="h-mac" style="width:80px">
-          <option>eth0</option><option>wlan0</option>
+          <option>eth0</option><option>end0</option><option>wlan0</option>
         </select>
         <input type="text" id="net-mac" aria-label="MAC address" placeholder="00:1a:2b:xx:xx:xx" style="flex:1">
         <button class="btn" onclick="applyMac()" aria-label="Apply MAC">Apply</button>
@@ -2091,7 +2161,7 @@ def api_status():
         # gadget genuinely isn't presenting - a real, previously-invisible
         # failure mode now surfaced in the status strip.
         "usb_bound":   bool(_usb_r("UDC")),
-        "mac":         _cur_mac("eth0"),
+        "mac":         _cur_mac(_primary_wired()),
         "ddns_host":   cfg.get("duckdns", {}).get("host", ""),
         "ddns":        {"host": cfg.get("duckdns", {}).get("host", ""),
                          "last_ip": cfg.get("duckdns", {}).get("last_ip", ""),
@@ -2304,7 +2374,7 @@ def api_apply():
             return jsonify({"ok": True})
 
         elif act == "mac":
-            iface, mac = d.get("iface","eth0"), d.get("mac","")
+            iface, mac = d.get("iface", _primary_wired()), d.get("mac","")
             if not re.match(r"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$", mac):
                 return jsonify({"error": "Invalid MAC format"}), 400
             _set_mac(iface, mac)
@@ -2313,7 +2383,7 @@ def api_apply():
             return jsonify({"ok": True})
 
         elif act == "rand_mac":
-            iface = d.get("iface", "eth0")
+            iface = d.get("iface", _primary_wired())
             idx = d.get("vendor_idx")
             oui = None
             vendor_name = "random"
