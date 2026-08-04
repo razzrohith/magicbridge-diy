@@ -75,6 +75,18 @@ case "${1:---init}" in
     exit 0
     ;;
   --watch)
+    # SCOPE / KNOWN LIMITATION: this watcher can only arm timings while the CSI
+    # node is FREE. Once magicbridge.py has launched ustreamer (which holds the
+    # node for its whole lifetime with --persistent), dev_busy() is permanently
+    # true, so the lock_timings arm below never fires and the signal-lost re-arm
+    # branch stays gated - i.e. during streaming this daemon is effectively a
+    # no-op. That is intentional: it is NOT the safety net for a source change
+    # while streaming. The authority for that is video.py's watchdog, which
+    # re-runs detect_csi_timings() against the live signal and restart()s
+    # ustreamer at the new resolution (locking timings alone would not relaunch
+    # ustreamer off its stale --resolution anyway). This daemon's real job is the
+    # boot/hot-plug window BEFORE ustreamer grabs the node: push EDID and lock
+    # timings so the first source negotiates 1080p50 with no manual steps.
     log WATCH "=== watchdog started ==="
     armed=0
     while true; do

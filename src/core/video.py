@@ -613,12 +613,25 @@ class VideoManager:
         # to the largest divisor of the source that is <= the request.
         _eff_fps = _clean_divisor_fps(self.fps, self._src_fps)
         _eff_fps = max(1, min(60, _eff_fps))
+        # Clamp ONLY the value handed to ustreamer's --resolution; do NOT
+        # overwrite self.resolution. self.resolution must keep the TRUE detected
+        # source resolution because the watchdog (start_watchdog) compares the
+        # live signal against it to decide when the source changed. If the clamp
+        # falsified self.resolution to 1080p, a >1080p source would read as a
+        # PERMANENT mismatch (live 1440p != stored 1080p) and the watchdog would
+        # restart every ~30s forever - a Janus-bouncing storm - instead of
+        # settling on a stable "can't encode this" dark stream. Keep the source
+        # value; only cap what the encoder is asked for.
+        cmd_res = self.resolution
         try:
             _w, _h = (int(x) for x in self.resolution.lower().split("x"))
             if _w > 1920 or _h > 1080:
                 log.warning("source %s exceeds the Pi-4 H.264 encoder's 1080p max - "
-                            "clamping to 1920x1080", self.resolution)
-                self.resolution = "1920x1080"
+                            "requesting 1920x1080 (a >1080p source can't be captured/"
+                            "encoded on the Pi-4 2-lane CSI + M2M path; the stream "
+                            "stays dark until the source drops to <=1080p)",
+                            self.resolution)
+                cmd_res = "1920x1080"
         except (ValueError, AttributeError):
             pass
         # Base capture/encoder flags follow pikvm/ustreamer's documented
@@ -660,7 +673,7 @@ class VideoManager:
             "--persistent",
             "--dv-timings",
             "--drop-same-frames", "30",
-            "--resolution",       self.resolution,
+            "--resolution",       cmd_res,
             "--desired-fps",      str(_eff_fps),
             "--host",             STREAM_HOST,
             "--port",             str(self.port),
@@ -702,6 +715,7 @@ class VideoManager:
                 return self._fallback_or_fail()
             log.info("ustreamer H.264: %s %s %dfps -> sink=%s (Janus reads this for WebRTC)",
                       self.device, self.resolution, self.fps, sink_name)
+            self._notify_janus_sink_ready()
             try:
                 self._sync_janus_audio_cfg()
             except Exception:
@@ -713,6 +727,33 @@ class VideoManager:
         except Exception as e:
             log.error("ustreamer H.264 start error: %s", e)
             return self._fallback_or_fail()
+
+    def _notify_janus_sink_ready(self):
+        """Best-effort: if the Janus WebRTC gateway is running, bounce it so it
+        re-attaches to the freshly (re)created h264 memsink.
+
+        ustreamer's Janus plugin is the memsink CONSUMER; ustreamer is the
+        producer. When ustreamer (re)starts - boot ordering, a settings change,
+        or a watchdog restart - a Janus that came up first can be left reading a
+        stale/gone sink and deliver no pixels to WebRTC clients even though ICE
+        stays 'connected'. systemd ordering can't fix this (the unit is
+        Type=simple, so 'started' does NOT mean the sink exists yet), so the
+        producer notifies the consumer here. Guards make it safe:
+          - no-op unless janus-webrtc.service is actually active (so it does
+            nothing on this unit until Janus is installed), and
+          - it only ever fires right as the sink is (re)created - a moment when
+            WebRTC clients must re-attach anyway - so it never disrupts a
+            healthy, steady stream.
+        Fully swallowed; never affects the video path's own success."""
+        try:
+            r = subprocess.run(["systemctl", "is-active", "janus-webrtc.service"],
+                               capture_output=True, text=True, timeout=3)
+            if r.stdout.strip() == "active":
+                subprocess.run(["systemctl", "try-restart", "janus-webrtc.service"],
+                               capture_output=True, timeout=5)
+                log.info("Notified Janus of fresh h264 sink (try-restart janus-webrtc.service)")
+        except Exception:
+            log.debug("Janus sink-ready notify skipped", exc_info=True)
 
     def _fallback_or_fail(self) -> bool:
         """H.264 launch failed. Fall back to MJPEG ONLY on a device that can
@@ -970,7 +1011,16 @@ class VideoManager:
                             is_csi = False
                         if is_csi:
                             det = self.detect_csi_timings(self.device)
-                            if det:
+                            if det and (det[0] > 1920 or det[1] > 1080):
+                                # A >1080p source can't be captured/encoded on the
+                                # Pi-4 2-lane CSI + M2M path, so restart() cannot
+                                # help - it would just re-detect the same too-big
+                                # timings and bounce forever. Settle on a stable
+                                # dark stream instead of a ~30 s restart storm.
+                                # (Belt-and-braces: self.resolution is no longer
+                                # clamped, so live == self.resolution here anyway.)
+                                res_miss = 0
+                            elif det:
                                 live = "%dx%d" % (det[0], det[1])
                                 if live != self.resolution:
                                     res_miss += 1

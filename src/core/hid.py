@@ -98,6 +98,48 @@ def _hidg_invalidate(owner):
             owner._fd = None
 
 
+def _hidg_prime(owner, data: bytes, budget: float = 2.0, step: float = 0.05) -> bool:
+    """Write `data`, retrying until os.write() actually SUCCEEDS or `budget`
+    seconds elapse. Returns True once a write lands, False on timeout.
+
+    Used right after a UDC (re)bind. The subtle trap the normal _hidg_write
+    can't cover: the f_hid gadget's poll reports the endpoint writable as soon
+    as no write is pending - which is true the instant the UDC is bound, BEFORE
+    the target host has finished USB enumeration and enabled the interrupt-IN
+    endpoint. So the very first real report sails past select()'s POLLOUT check
+    and then fails inside os.write() (writing to a not-yet-enabled endpoint),
+    landing in _hidg_write's except branch which drops it with no retry - a
+    silently lost first keystroke/click. Priming with a harmless idle report
+    here retries THROUGH that window (os.write is the only reliable readiness
+    signal), so by the time real input arrives the endpoint is proven live.
+
+    Best-effort: on total timeout it returns False and the caller proceeds
+    exactly as before (no worse than today). Serialises with the hid-worker via
+    owner._lock, so it can't corrupt an in-flight report."""
+    start = time.monotonic()
+    while True:
+        try:
+            with owner._lock:
+                if owner._fd is None:
+                    owner._fd = os.open(owner.device, os.O_WRONLY | os.O_NONBLOCK)
+                    owner._fd_ino = os.fstat(owner._fd).st_ino
+                os.write(owner._fd, data)
+            return True
+        except (OSError, BlockingIOError):
+            # Endpoint not enabled yet (host still enumerating) or node in flux:
+            # drop the fd so the next attempt reopens, then retry within budget.
+            with owner._lock:
+                if owner._fd is not None:
+                    try:
+                        os.close(owner._fd)
+                    except OSError:
+                        pass
+                    owner._fd = None
+            if time.monotonic() - start >= budget:
+                return False
+            time.sleep(step)
+
+
 # Max seconds to wait for the hidg endpoint to accept a report before dropping
 # it. Long enough to ride out a momentary stall, short enough that a suspended
 # host can never wedge the worker thread.
@@ -330,6 +372,12 @@ class HIDKeyboard:
             self.modifiers = 0
             self.pressed.clear()
             self._write(0, set())
+
+    def prime(self, budget: float = 2.0) -> bool:
+        """Prove the keyboard endpoint is live after a UDC (re)bind by writing a
+        harmless all-keys-released idle report, retried until it actually lands.
+        See _hidg_prime for why the first post-rebind report is otherwise lost."""
+        return _hidg_prime(self, self.NULL_REPORT, budget)
 
     def combo(self, codes: list, cancel=None):
         """
@@ -579,6 +627,22 @@ class HIDMouse:
         with self._lock:
             self.buttons = 0
             self._emit_buttons()
+
+    def prime(self, budget: float = 2.0) -> bool:
+        """Prove the mouse endpoint is live after a UDC (re)bind by writing a
+        harmless idle report (no buttons, no motion) in whichever descriptor is
+        current - 4-byte relative or 6-byte absolute - retried until it actually
+        lands. Matching the live descriptor length matters (see set_absolute).
+        See _hidg_prime for why the first post-rebind report is otherwise lost."""
+        with self._lock:
+            if self.absolute:
+                x = max(0, min(self.ABS_MAX, int(self._ax)))
+                y = max(0, min(self.ABS_MAX, int(self._ay)))
+                data = bytes([0, x & 0xFF, (x >> 8) & 0xFF,
+                                 y & 0xFF, (y >> 8) & 0xFF, 0])
+            else:
+                data = bytes([0, 0, 0, 0])
+        return _hidg_prime(self, data, budget)
 
 
 class HIDWorker:

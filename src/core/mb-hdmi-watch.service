@@ -1,5 +1,10 @@
 [Unit]
-Description=MagicBridge HDMI hot-plug watchdog (re-arms EDID/timings on source change)
+Description=MagicBridge HDMI boot/hot-plug EDID+timings arm (pre-stream only)
+# SCOPE: this arms EDID/timings only while the CSI node is FREE (boot + hot-plug
+# BEFORE ustreamer grabs it). Once magicbridge is streaming, ustreamer holds the
+# node and this daemon is a deliberate no-op - source-change recovery DURING
+# streaming is video.py's watchdog (detect_csi_timings + restart), not this. See
+# the --watch header in mb-hdmi-init.sh. Do not mistake this for a live safety net.
 # NOTE: only After= here, never Before=magicbridge.service - see mb-hdmi-init.service
 # for why that combination creates an ordering cycle.
 After=magicbridge.service

@@ -970,6 +970,17 @@ jiggler = MouseJiggler(mouse)
 # target screen awake between sessions, keep this feature off, or expect
 # jiggler to go quiet whenever it's disconnected you.
 # ---------------------------------------------------------------------------
+def _prime_hid_endpoints():
+    """After a UDC rebind, prove both hidg endpoints are live so the FIRST real
+    keystroke/click isn't silently dropped during the target's USB enumeration
+    window (see hid._hidg_prime). Best-effort and quick; never raises."""
+    try:
+        keyboard.prime()
+        mouse.prime()
+    except Exception:
+        log.debug("HID endpoint prime after rebind failed", exc_info=True)
+
+
 class HidAutoDisconnect:
     def __init__(self):
         self.enabled = False
@@ -1018,6 +1029,7 @@ class HidAutoDisconnect:
         _usb_w("UDC", udc)
         log.info("hid-autodisconnect: rebound gadget to %s (new session)", udc)
         time.sleep(0.35)  # brief settle so /dev/hidg* is ready for the caller
+        _prime_hid_endpoints()   # retry a null report until the endpoint is live
 
     def rebind_if_unbound(self) -> bool:
         """Rebind the gadget to its UDC if currently unbound, IGNORING
@@ -1036,6 +1048,7 @@ class HidAutoDisconnect:
         _usb_w("UDC", udc)
         log.info("hid-autodisconnect: rebound gadget to %s (feature disabled while unbound)", udc)
         time.sleep(0.35)
+        _prime_hid_endpoints()   # retry a null report until the endpoint is live
         return True
 
     def start(self):

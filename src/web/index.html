@@ -1435,6 +1435,10 @@ let ws=null, captured=false, _toastT=null;
 const WS_URL=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws';
 
 let _wsBackoff=1000;   // exponential backoff, reset on a clean open
+// Last viewer count from /api/status. Gates the reconnect reconciliation below:
+// only a SOLE operator may issue a target-wide release_all (see ws.onopen).
+// Defaults to 1 so a first connect (nothing held) takes the harmless sole path.
+let _lastViewerCount=1;
 function connect(){
   try{ ws=new WebSocket(WS_URL); }catch(e){ _scheduleReconnect(); return; }
   // Only (re)open the MJPEG stream if MJPEG is actually the active transport.
@@ -1445,6 +1449,24 @@ function connect(){
   let _wsOpened=false;
   ws.onopen=()=>{ _wsOpened=true; dot('ok','Connected'); _wsAuthFails=0; _wsBackoff=1000;
     if(_activeTransport !== 'h264') retryStream();
+    // Reconcile held input on every (re)connect. During an outage send() writes
+    // to the old CLOSED socket and silently drops the message, so a key/button
+    // RELEASED during the outage never reaches the target and can be stuck DOWN.
+    // SOLE operator: a target-wide release_all is safe and best - it also clears
+    // a key we released during the outage (whose keyup was the dropped message).
+    // With a 2nd viewer present we must NOT clobber their held input (the backend
+    // deliberately keeps held input alive across one client's drop, S6), so we
+    // release only OUR OWN tracked keys/buttons. Either way clear local tracking.
+    // First connect: nothing held + sole path, so a harmless idle report.
+    const _hb=(typeof _heldBtns!=='undefined')?_heldBtns:null;
+    if(_lastViewerCount<=1){
+      send({type:'release_all'});
+    } else {
+      _heldKeys.forEach(c=>send({type:'keyup',code:c}));
+      if(_hb) _hb.forEach(b=>send({type:'mouseup',button:b}));
+    }
+    _heldKeys.clear();
+    if(_hb) _hb.clear();
     ping(); };
   ws.onclose=(ev)=>{
     // Distinguish a genuine auth/handshake rejection (closes WITHOUT ever
@@ -2771,6 +2793,7 @@ function applyStatus(d){
   }
   // Who's connected now: top-bar count chip + the System-tab device list.
   if(Array.isArray(d.viewers)){
+    _lastViewerCount=d.viewers.length;   // gates the reconnect release_all (ws.onopen)
     const vc=document.getElementById('sv-viewers'), chip=document.getElementById('chip-viewers');
     if(vc) vc.textContent=String(d.viewers.length);
     if(chip) chip.classList.toggle('multi', d.viewers.length>1);
