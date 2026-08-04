@@ -2547,7 +2547,7 @@ async def api_update(request):
         return web.json_response({"ok": False, "error": "clone failed: " + clone_out})
 
     if action == "status":
-        ver = _sp.run(["git", "-C", REPO_DIR, "log", "--oneline", "-1"],
+        ver = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "--short", "HEAD"],
                      capture_output=True, text=True, timeout=10)
         branch = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "--abbrev-ref", "HEAD"],
                         capture_output=True, text=True, timeout=10)
@@ -2577,10 +2577,16 @@ async def api_update(request):
         update_available = bool(local_hash and remote_hash
                                  and local_hash != remote_hash and commits_behind > 0)
         changed = []
+        pending = []
         if update_available:
             _diff = _sp.run(["git", "-C", REPO_DIR, "diff", "--name-only",
                              f"{local_hash}..origin/{BRANCH}"], capture_output=True, text=True, timeout=10)
             changed = [x for x in _diff.stdout.split("\n") if x.strip()]
+            # Subjects of EVERY pending commit (newest first), so the UI can show
+            # a short "what's new" list across all commits, not just the latest.
+            _pl = _sp.run(["git", "-C", REPO_DIR, "log", "--format=%s",
+                           f"{local_hash}..origin/{BRANCH}"], capture_output=True, text=True, timeout=10)
+            pending = [x.strip() for x in _pl.stdout.split("\n") if x.strip()]
         mode = _upd_classify(changed) if update_available else "none"
         # Clone already at origin but nothing recorded as deployed = a previous
         # install died after the pull. "Up to date" would be a lie and would
@@ -2601,6 +2607,7 @@ async def api_update(request):
             "commits_behind": commits_behind,
             "mode": mode,                 # "incremental" | "full" | "none"
             "changed": len(changed),
+            "pending": pending,           # subjects of all incoming commits (newest first)
             "deploy_unknown": deploy_unknown,
             "out": out,
         })

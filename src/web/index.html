@@ -1018,10 +1018,16 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="sys-cat" data-cat="update">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>Software Update</div>
-          <div class="snote" style="margin-bottom:8px">Pulls the latest from GitHub. Small changes update instantly; big ones do a full reinstall.</div>
+          <div class="snote" style="margin-bottom:8px">Updates MagicBridge from GitHub. Small changes apply in a few seconds; bigger ones reinstall and reconnect in about a minute.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="sys-avail">-</span></div>
-          <div class="srow"><span class="sk">Commit</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:10px">-</span></div>
+          <div class="srow"><span class="sk">Version</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:11px">-</span></div>
           <div class="srow"><span class="sk">Branch</span><span class="sv" id="sys-branch">-</span></div>
+          <!-- What's new: short one-line summary of EVERY pending commit, not just
+               the latest. Full-width block so long text never collides with a label. -->
+          <div id="sys-whatsnew" style="display:none;margin:10px 0 4px">
+            <div class="sk" style="margin-bottom:5px">What's new</div>
+            <ul id="sys-whatsnew-list" style="margin:0;padding-left:18px;font-size:11px;color:var(--text);line-height:1.65"></ul>
+          </div>
           <div id="sys-update-out" style="display:none;font-size:10px;background:var(--surf2);border:1px solid var(--border);border-radius:4px;padding:6px;margin:6px 0;white-space:pre-wrap;max-height:120px;overflow:auto;font-family:monospace;color:var(--muted)"></div>
           <button class="sbtn" onclick="sysCheckVer()" style="margin-top:6px">↺ Check for updates</button>
           <button class="sbtn suc" id="sys-update-btn" onclick="sysUpdate()" style="margin-top:4px">⬆ Update now</button>
@@ -3343,6 +3349,22 @@ async function sysCheckVer(){
       btn.classList.remove('pulse');
       btn.disabled=true;
       const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='sys-dot ok';
+    }
+    // "What's new": a short one-line summary of EVERY pending commit (newest
+    // first), not just the latest. Strip the conventional-commit "type(scope):"
+    // prefix so each line reads as plain English.
+    const wn=document.getElementById('sys-whatsnew'), wnl=document.getElementById('sys-whatsnew-list');
+    if(wn&&wnl){
+      const pend=Array.isArray(d.pending)?d.pending:[];
+      if(d.update_available&&pend.length){
+        const clean=s=>String(s).replace(/^[a-z]+(\([^)]*\))?!?:\s*/i,'').replace(/^./,c=>c.toUpperCase()).trim();
+        const items=pend.slice(0,8).map(clean).filter(Boolean);
+        wnl.innerHTML=items.map(s=>'<li>'+_escHtml(s)+'</li>').join('')
+          +(pend.length>8?'<li>…and '+(pend.length-8)+' more</li>':'');
+        wn.style.display='';
+      }else{
+        wnl.innerHTML=''; wn.style.display='none';
+      }
     }
     const out=document.getElementById('sys-update-out');
     out.textContent=d.out||'';out.style.display=d.out?'block':'none';
