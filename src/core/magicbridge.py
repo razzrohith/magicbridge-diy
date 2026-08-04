@@ -50,7 +50,8 @@ VERSION     = "1.0.0"
 # secret, separate cookie/session. Logging into one doesn't unlock the
 # other, so a leaked main-page password can't reach the admin panel.
 SESSION_COOKIE  = "mb_sess"
-SESSION_TIMEOUT = 1800  # 30 min idle, matches stealth-dashboard.py
+SESSION_TIMEOUT = 1800  # 30 min default session, matches stealth-dashboard.py
+REMEMBER_TIMEOUT = 30 * 24 * 3600  # "Remember this device": 30-day session
 DEFAULT_PASSWORD = "magicbridge"
 
 # Logging
@@ -135,18 +136,39 @@ def _check_pw(pw: str, stored: str) -> bool:
     raw = stored[len("sha256:"):] if stored.startswith("sha256:") else stored
     return hmac.compare_digest(hashlib.sha256(pw.encode()).hexdigest(), raw)
 
-def _make_token(secret: str) -> str:
+def _make_token(secret: str, ttl: int = SESSION_TIMEOUT) -> str:
+    """Signed session token that carries its OWN lifetime, so "Remember this
+    device" can mint a long-lived session with no extra server-side store.
+    Format: <issued_ts>.<ttl_seconds>.<hmac(secret, "ts.ttl")>. The ttl is part
+    of the signed body, so a client cannot extend its own session by editing it."""
     ts = str(int(time.time()))
-    sig = hmac.new(secret.encode(), ts.encode(), hashlib.sha256).hexdigest()
-    return ts + "." + sig
+    ttl = str(int(ttl))
+    body = ts + "." + ttl
+    sig = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
+    return body + "." + sig
 
 def _check_token(token: str, secret: str) -> bool:
     try:
-        ts, sig = token.split(".", 1)
-        expected = hmac.new(secret.encode(), ts.encode(), hashlib.sha256).hexdigest()
+        parts = token.split(".")
+        if len(parts) == 3:
+            ts, ttl, sig = parts
+            body = ts + "." + ttl
+            # Clamp: never honour a lifetime larger than the longest we issue,
+            # even if the signature checks out (defence in depth against a future
+            # bug that mints an over-long ttl).
+            ttl_s = min(int(ttl), REMEMBER_TIMEOUT)
+        elif len(parts) == 2:
+            # Legacy token (pre-remember-me): fixed lifetime, signed over ts only.
+            ts, sig = parts
+            body = ts
+            ttl_s = SESSION_TIMEOUT
+        else:
+            return False
+        expected = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return False
-        return (time.time() - int(ts)) <= SESSION_TIMEOUT
+        age = time.time() - int(ts)
+        return 0 <= age <= ttl_s          # reject future-dated tokens too
     except Exception:
         return False
 
@@ -494,6 +516,9 @@ button:active{transform:scale(.98)}
 @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-4px)}
   40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(3px)}}
 .foot{margin-top:1.5rem;text-align:center;font-size:10px;color:#6f93a8;letter-spacing:.02em}
+.rmb{display:flex;align-items:center;gap:9px;margin-top:1rem;font-size:12.5px;color:#9fb9c8;
+  cursor:pointer;user-select:none}
+.rmb input{width:16px;height:16px;accent-color:#22d3ee;cursor:pointer;flex:none}
 </style></head><body><main><div class="card">
 <div class="brand">
   <div class="brand-icon">
@@ -520,6 +545,7 @@ __ERROR__
   <input type="password" id="pw" name="pw" placeholder="Enter password" autocomplete="current-password" autofocus>
 </div>
 __TOTP__
+<label class="rmb"><input type="checkbox" name="remember" value="1">Remember this device for 30 days</label>
 <button type="submit">Unlock MagicBridge</button>
 </form>
 <div class="foot">Self-hosted KVM-over-IP · this device only</div>
@@ -583,12 +609,16 @@ async def _login_attempt(request, ip):
                 return _login_page("Incorrect or expired 2FA code.", status=401)
             _record_login_ok(ip)
             secret = auth.get("main_secret_key", "")
+            # "Remember this device": a 30-day signed session instead of 30 min,
+            # so a trusted personal device isn't re-prompted for the password.
+            remember = bool(data.get("remember"))
+            ttl = REMEMBER_TIMEOUT if remember else SESSION_TIMEOUT
             resp = web.HTTPFound("/")
             if secret:
-                resp.set_cookie(SESSION_COOKIE, _make_token(secret),
-                                 max_age=SESSION_TIMEOUT, httponly=True,
+                resp.set_cookie(SESSION_COOKIE, _make_token(secret, ttl),
+                                 max_age=ttl, httponly=True,
                                  secure=True, samesite="Lax", path="/")
-            log.info("Login OK from %s", ip)
+            log.info("Login OK from %s (remember=%s)", ip, remember)
             return resp
         _record_login_fail(ip)
         log.info("Failed login from %s (attempt %d)", ip, _login_fails.get(ip, 0))

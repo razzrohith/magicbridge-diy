@@ -213,37 +213,80 @@ class VideoManager:
                  "USB-audio adapter). Video works fine without it.")
         return None
 
-    def _sync_janus_audio_cfg(self):
-        """Rewrite janus.plugin.ustreamer.jcfg's audio block with whatever
-        was actually detected, so a wrong install-time guess (or a card
-        index that shifts across boots) self-heals instead of silently
-        staying wrong. No-ops safely if Janus isn't installed at all (e.g.
-        before install_janus_webrtc.sh has ever been run) or no audio
-        device is found — h264 video keeps working either way; audio is
-        additive, never load-bearing for the video path.
-        """
-        jcfg_path = "/opt/janus/lib/janus/configs/janus.plugin.ustreamer.jcfg"
-        if not os.path.isfile(jcfg_path):
-            return
-        audio_dev = self.detect_audio_device()
-        if not audio_dev:
-            return
+    def _probe_audio_capture(self, device: str) -> bool:
+        """Return True only if `device` actually yields PCM samples right now.
+
+        Two things make a merely-present capture card useless: the C790/TC358743
+        I2S path enumerates as a card but EIOs on read (a parked upstream-driver
+        issue), and the HDMI source may not be sending audio at all. Either way
+        we must NOT hand Janus a device that can't capture, or its audio thread
+        churns on a dead endpoint. A short arecord to raw stdout is the honest
+        test. Cached briefly so repeated stream starts don't re-probe (the probe
+        runs under the video lock, so it must stay cheap)."""
+        cache = getattr(self, "_audio_probe_cache", None)
+        if cache is None:
+            cache = self._audio_probe_cache = {}
+        hit = cache.get(device)
+        now = time.monotonic()
+        if hit and (now - hit[1]) < 120:
+            return hit[0]
+        ok = False
         try:
-            text = open(jcfg_path).read()
-            new_block = (
-                "audio: {\n"
-                f'    device = "{audio_dev}"\n'
-                f'    tc358743 = "{self.device}"\n'
-                "}\n"
-            )
-            if re.search(r"audio:\s*\{[^}]*\}", text, re.S):
-                text = re.sub(r"audio:\s*\{[^}]*\}\s*", new_block, text, flags=re.S)
-            else:
-                text = text.rstrip() + "\n" + new_block
-            open(jcfg_path, "w").write(text)
-            log.info("Synced Janus audio config: device=%s tc358743=%s", audio_dev, self.device)
-        except Exception as e:
-            log.warning("Could not sync Janus audio config (non-fatal, video unaffected): %s", e)
+            r = subprocess.run(
+                ["arecord", "-D", device, "-f", "S16_LE", "-r", "48000",
+                 "-c", "2", "-d", "1", "-t", "raw"],
+                capture_output=True, timeout=3)
+            # EIO path exits non-zero with empty PCM; a real capture exits 0 with data.
+            ok = (r.returncode == 0 and len(r.stdout) > 0)
+        except Exception:
+            ok = False
+        cache[device] = (ok, now)
+        return ok
+
+    def _sync_janus_audio_cfg(self):
+        """Rewrite janus.plugin.ustreamer.jcfg's audio block with whatever audio
+        device ACTUALLY captures, so a wrong install-time guess, a shifted card
+        index, or a broken/absent device all self-heal. No-ops safely if Janus
+        isn't installed — h264 video keeps working either way; audio is additive,
+        never load-bearing for the video path.
+
+        Two bugs fixed here: (1) the old code wrote to
+        /opt/janus/lib/janus/configs/, which is NOT the folder Janus reads
+        (it runs with --configs-folder /opt/janus/etc/janus), so the audio block
+        never reached Janus. We now write to whichever config actually exists.
+        (2) It configured a device without checking it works, so the dead C790
+        I2S path (arecord EIO) got handed to Janus. We now probe first and, if
+        nothing captures, STRIP any stale audio block instead of leaving Janus
+        pointed at a dead endpoint."""
+        candidates = [
+            "/opt/janus/etc/janus/janus.plugin.ustreamer.jcfg",          # --configs-folder (what Janus reads)
+            "/opt/janus/lib/janus/configs/janus.plugin.ustreamer.jcfg",  # legacy layout
+            "/usr/local/etc/janus/janus.plugin.ustreamer.jcfg",
+        ]
+        paths = [p for p in candidates if os.path.isfile(p)]
+        if not paths:
+            return
+        dev = self.detect_audio_device()
+        working = bool(dev) and self._probe_audio_capture(dev)
+        self._audio_active = dev if working else None
+        new_block = (
+            "audio: {\n"
+            f'    device = "{dev}"\n'
+            f'    tc358743 = "{self.device}"\n'
+            "}\n"
+        ) if working else ""
+        for jcfg_path in paths:
+            try:
+                text = open(jcfg_path).read()
+                if re.search(r"audio:\s*\{[^}]*\}", text, re.S):
+                    text = re.sub(r"audio:\s*\{[^}]*\}\s*", new_block, text, flags=re.S)
+                elif working:
+                    text = text.rstrip() + "\n" + new_block
+                open(jcfg_path, "w").write(text)
+            except Exception as e:
+                log.warning("Could not sync Janus audio config at %s (non-fatal): %s", jcfg_path, e)
+        log.info("Synced Janus audio config: device=%s working=%s -> %d file(s)",
+                 dev, working, len(paths))
 
     def get_resolutions(self, device: str = None) -> list:
         """Return sorted list of supported resolutions for a device."""
@@ -715,11 +758,11 @@ class VideoManager:
                 return self._fallback_or_fail()
             log.info("ustreamer H.264: %s %s %dfps -> sink=%s (Janus reads this for WebRTC)",
                       self.device, self.resolution, self.fps, sink_name)
-            self._notify_janus_sink_ready()
             try:
-                self._sync_janus_audio_cfg()
+                self._sync_janus_audio_cfg()   # write audio cfg BEFORE (re)starting Janus
             except Exception:
                 pass  # audio is additive - never let it affect the video path's return value
+            self._notify_janus_sink_ready()    # bounce Janus so it reads the fresh cfg + re-attaches
             return True
         except FileNotFoundError:
             log.error("ustreamer binary not found")
@@ -960,7 +1003,7 @@ class VideoManager:
             "streamer":   streamer,
             "devices":    self.detect_devices(),
             "h264_sink":  self.h264_sink,
-            "audio_device": self.detect_audio_device() if self.h264_sink else None,
+            "audio_device": getattr(self, "_audio_active", None) if self.h264_sink else None,
         }
 
     def start_watchdog(self):

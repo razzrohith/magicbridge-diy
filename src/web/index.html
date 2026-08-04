@@ -643,13 +643,13 @@ body:not(.fs) .fs-hud{display:none!important}
     <img id="stream" src="/stream" alt="" onerror="onErr()" onload="onLoad()">
     <video id="webrtc-view" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:contain;background:#000"></video>
     <div id="nosig">
-      <svg class="nsico" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1">
+      <svg class="nsico" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1" style="display:none">
         <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
         <line x1="4" y1="5" x2="20" y2="19" stroke="#ef4444" stroke-width="1.5"/>
       </svg>
-      <p class="nsh">No Signal</p>
-      <p class="nsp">Connect HDMI from PC to capture card. Check ustreamer is running.</p>
-      <button id="retrybtn" onclick="retryStream()">↺ Retry</button>
+      <p class="nsh" id="ns-head">Connecting…</p>
+      <p class="nsp" id="ns-sub">Establishing video stream…</p>
+      <button id="retrybtn" onclick="retryVideo()" style="display:none">↺ Retry</button>
     </div>
     <div id="cur-dot"></div>
     <div id="hint">Click to capture · Esc tap → sent to remote · hold Esc or Right Ctrl 2s to exit control</div>
@@ -1557,12 +1557,37 @@ let _frameLoadTimes=[];
 // resolution/fps change, a brief backend hiccup during a gadget rebuild) left
 // the "No Signal" overlay up until the user clicked Retry by hand.
 let _nosigTimer=null, _nosigDelay=800;
+// Overlay state helper. Three states so the user only ever sees the alarming
+// "No Signal" on a GENUINE failure, never during a normal connect: 'connecting'
+// (neutral, no Retry button), 'nosignal' (red copy + Retry), 'hide'.
+function _nsState(s){
+  if(!$ns) return;
+  if(s==='hide'){ $ns.style.display='none'; return; }
+  $ns.style.display='flex';
+  const h=document.getElementById('ns-head'), p=document.getElementById('ns-sub'),
+        b=document.getElementById('retrybtn'), ic=$ns.querySelector('.nsico');
+  if(s==='connecting'){
+    if(h) h.textContent='Connecting…';
+    if(p) p.textContent='Establishing video stream…';
+    if(b) b.style.display='none';
+    if(ic) ic.style.display='none';
+  } else {   // 'nosignal'
+    if(h) h.textContent='No Signal';
+    if(p) p.textContent='Connect HDMI from PC to capture card. Check ustreamer is running.';
+    if(b) b.style.display='';
+    if(ic) ic.style.display='';
+  }
+}
+function _mjpegOwnsOverlay(){
+  // MJPEG owns the overlay/pills whenever it's the visible picture: on the mjpeg
+  // transport, and on h264 UNTIL WebRTC has actually swapped in (confirmed).
+  return !(typeof _activeTransport!=='undefined' && _activeTransport==='h264' && _webrtcConfirmed);
+}
 function onLoad(){
-  // The MJPEG <img> keeps running in the background even while WebRTC is
-  // the active/visible transport (see setVideoTransport) - its own
-  // load/error events shouldn't overwrite the status pills that are
-  // currently describing the WebRTC stream the user can actually see.
-  if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
+  // Once WebRTC has confirmed and taken over the picture, the background MJPEG
+  // <img> is closed and its stray events must not touch the WebRTC pills. Until
+  // then MJPEG is the visible picture, so let it clear the overlay.
+  if(!_mjpegOwnsOverlay()) return;
   $ns.style.display='none';
   if(_nosigTimer){ clearTimeout(_nosigTimer); _nosigTimer=null; }
   _nosigDelay=800;                      // frames back -> reset the backoff
@@ -1587,8 +1612,14 @@ function onLoad(){
   }
 }
 function onErr(){
-  if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
-  $ns.style.display='flex';
+  // Ignore the stray error that fires when _confirmed() removes the <img> src
+  // after WebRTC has taken over; only react while MJPEG is the visible picture.
+  if(!_mjpegOwnsOverlay()) return;
+  // On the h264 path this is still the CONNECTING window (WebRTC not confirmed),
+  // so a momentary MJPEG hiccup is not a real "No Signal" - show the neutral
+  // connecting state and keep retrying. On the mjpeg transport it's a genuine
+  // no-signal, so show the red overlay + Retry.
+  _nsState((_activeTransport==='h264') ? 'connecting' : 'nosignal');
   document.getElementById('bd-stream').className='bd err';
   document.getElementById('bv-stream').textContent='No signal';
   document.getElementById('s-stream').textContent='No signal';
@@ -1599,10 +1630,26 @@ function onErr(){
   _nosigTimer=setTimeout(function(){
     _nosigTimer=null;
     _nosigDelay=Math.min(_nosigDelay*1.6, 5000);
-    if(typeof _activeTransport==='undefined' || _activeTransport!=='h264') retryStream();
+    if(_mjpegOwnsOverlay()) retryStream();
   }, _nosigDelay);
 }
 function retryStream(){ $s.src='/stream?_='+Date.now(); _frameLoadTimes=[]; }
+// Retry BUTTON handler: re-establish whatever transport is active. The old
+// button wired straight to retryStream(), which only pokes the MJPEG <img> -
+// a pure no-op on the default h264 path (img hidden, onLoad early-returns), so
+// it "worked" only because the 8s timeout had already fallen back to MJPEG by
+// the time a human clicked. Now it forces a real re-attempt of the CURRENT
+// transport.
+function retryVideo(){
+  const m = _activeTransport || ((document.getElementById('sel-mode')||{}).value);
+  if(m==='h264'){
+    _webrtcGaveUp=false; _webrtcRetries=0; _webrtcConfirmed=false;
+    clearTimeout(_webrtcRearmTimer);
+    setVideoTransport('h264');
+  } else {
+    retryStream();
+  }
+}
 
 // MJPEG-over-HTTP has no frame-dropping: TCP guarantees in-order delivery,
 // so if the browser or network ever falls behind the capture card's output
@@ -1908,7 +1955,37 @@ function _releaseOnFocusLoss(){
   if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();   // stuck mouse button (e.g. autoscroll) on focus loss
 }
 window.addEventListener('blur', _releaseOnFocusLoss);
-document.addEventListener('visibilitychange', ()=>{ if(document.hidden) _releaseOnFocusLoss(); });
+let _hideSuspendTimer=null;
+document.addEventListener('visibilitychange', ()=>{
+  if(document.hidden){
+    _releaseOnFocusLoss();
+    // Tear down WebRTC after a short grace period when the tab is backgrounded.
+    // A hidden tab keeps the Janus session + memsink watcher open, pinning the
+    // ustreamer plugin's capture thread at ~100% CPU for video nobody is
+    // watching (heat/power/anonymity on the stealth Pi). The grace period means
+    // a quick tab-switch doesn't churn the connection.
+    if(_activeTransport==='h264'){
+      clearTimeout(_hideSuspendTimer);
+      _hideSuspendTimer=setTimeout(function(){
+        if(document.hidden && _activeTransport==='h264'){ _webrtcSuspended=true; stopWebRTC(); }
+      }, 10000);
+    }
+  } else {
+    clearTimeout(_hideSuspendTimer);
+    if(_webrtcSuspended){
+      _webrtcSuspended=false;
+      // Re-establish on return. The status poll can't do this: syncVideoTransport
+      // early-returns because _activeTransport is still 'h264'. MJPEG-first gives
+      // an instant picture while WebRTC reconnects.
+      if(_activeTransport==='h264'){ _webrtcConfirmed=false; setVideoTransport('h264'); }
+    }
+  }
+});
+// Hang up the Janus session when the page goes away (logout, reload, tab close),
+// so the server frees the memsink watcher immediately instead of spinning the
+// capture thread until its own timeout. pagehide is more reliable than
+// beforeunload/unload on mobile Safari/Chrome.
+window.addEventListener('pagehide', function(){ try{ stopWebRTC(); }catch(e){} });
 
 // Mouse
 // Mouse mode: 'relative' (default, pointer-lock + deltas, stealthiest USB
@@ -1926,7 +2003,10 @@ let _cx=0,_cy=0,_showOverlay=true;
 function _videoRect(){
   const r=$view.getBoundingClientRect();
   let iw=0,ih=0;
-  if(_activeTransport==='h264'){ const v=document.getElementById('webrtc-view'); iw=v.videoWidth; ih=v.videoHeight; }
+  // Use whichever element is actually ON SCREEN: during the MJPEG-first WebRTC
+  // connect window the <img> is still the visible picture, so only read the
+  // <video> once WebRTC has confirmed and swapped in.
+  if(_activeTransport==='h264' && _webrtcConfirmed){ const v=document.getElementById('webrtc-view'); iw=v.videoWidth; ih=v.videoHeight; }
   else { const im=document.getElementById('stream'); iw=im.naturalWidth; ih=im.naturalHeight; }
   if(!iw||!ih||!r.width||!r.height) return r;                 // not ready -> container
   const cAR=r.width/r.height, vAR=iw/ih;
@@ -2444,25 +2524,40 @@ const _WEBRTC_DECAY_MS = 300000;   // 5 min
 // while video actually renders; if it stops advancing we recover here. This is
 // the h264 twin of the MJPEG onErr() self-heal.
 let _wrtcLastFrames = -1, _wrtcStallPolls = 0;
+// MJPEG-first model: h264 keeps the working MJPEG picture on screen and only
+// swaps to the <video> once WebRTC has REAL pixels. _webrtcConfirmed marks that
+// swap so the MJPEG onLoad/onErr paths know when to stop owning the overlay.
+let _webrtcConfirmed = false;
+// Generation token: every startWebRTC captures the current value; stopWebRTC and
+// the fallback bump it. Async Janus callbacks bail if their captured gen is
+// stale, so a handshake that completes AFTER a fallback/teardown self-destructs
+// instead of orphaning a Janus session (which pins the plugin at ~100% CPU).
+let _webrtcGen = 0;
+// True while WebRTC was deliberately torn down because the tab is hidden, so the
+// visibility handler knows to re-establish it on return (the status poll can't:
+// syncVideoTransport early-returns since _activeTransport stays 'h264').
+let _webrtcSuspended = false;
 
 function setVideoTransport(mode){
   _activeTransport = mode;
   const img = document.getElementById('stream');
   const vid = document.getElementById('webrtc-view');
   if(mode === 'h264'){
-    _webrtcGaveUp = false;   // a genuine attempt is starting; give it a fair try
-    img.style.display = 'none';
-    // CLOSE the MJPEG connection, don't just hide it. display:none does NOT
-    // stop an in-flight <img> stream - the browser keeps the HTTP request open
-    // and ustreamer keeps encoding and sending. Measured on a live unit while
-    // WebRTC was working: h264 sink had a client AND mjpeg clients was still 1,
-    // so ~50-100 Mbit/s of MJPEG was competing over WiFi with the very stream
-    // it had been replaced by, on a link we already proved MJPEG can saturate.
-    // Dropping the src is what actually ends the request. onErr() already
-    // returns early while _activeTransport is 'h264', so this cannot raise a
-    // spurious "No signal", and the periodic reconnect above is skipped too.
-    img.removeAttribute('src');
-    vid.style.display = '';
+    _webrtcGaveUp = false;      // a genuine attempt is starting; give it a fair try
+    _webrtcConfirmed = false;   // not swapped to <video> until real pixels arrive
+    // MJPEG-FIRST. Keep the <img> visible and streaming so there is an INSTANT
+    // picture, and connect WebRTC underneath into the (still hidden) <video>.
+    // The actual swap - hide + CLOSE the MJPEG connection, reveal the <video> -
+    // happens in _confirmed() only once WebRTC truly has pixels. Rationale for
+    // closing MJPEG at all: display:none does NOT stop an <img> stream, so a
+    // live unit had ~50-100 Mbit/s of MJPEG competing over WiFi with the very
+    // WebRTC stream that replaced it; we still close it, just at confirm-time
+    // instead of eagerly. The win: a WebRTC that is slow or never confirms now
+    // leaves the WORKING MJPEG on screen instead of a black frame under a stale
+    // "No Signal" overlay - which was the first-load bug.
+    if(!img.getAttribute('src')) retryStream();   // ensure MJPEG is actually live
+    img.style.display = '';
+    vid.style.display = 'none';    // revealed by _confirmed() once it has pixels
     startWebRTC();
   } else {
     stopWebRTC();
@@ -2517,14 +2612,15 @@ function startWebRTC(){
     _webrtcFallbackToMjpeg('janus.js not loaded');
     return;
   }
-  stopWebRTC();
+  stopWebRTC();               // bumps _webrtcGen, killing any prior in-flight attempt
+  const gen = _webrtcGen;     // this attempt's generation; async callbacks bail if stale
   // Give the whole attach/watch/jsep handshake a bounded amount of time.
   // If no video track has arrived by then (Janus not running, plugin not
   // loaded, ustreamer's h264-sink not actually feeding it, etc.), fall
   // back rather than leaving the viewer stuck on a black video element.
   clearTimeout(_webrtcTimeout);
   _webrtcTimeout = setTimeout(()=>{
-    if(_activeTransport === 'h264') _webrtcFallbackToMjpeg('connect timeout (8s)');
+    if(_activeTransport === 'h264' && gen === _webrtcGen) _webrtcFallbackToMjpeg('connect timeout (8s)');
   }, 8000);
   // Callback names/shape below (onremotetrack + manual MediaStream assembly,
   // watch/start/jsep flow) match janus.js v1.0.0 specifically - that's the
@@ -2534,6 +2630,7 @@ function startWebRTC(){
   // upgraded independently of the server, re-check pikvm/ustreamer's
   // docs/h264.md sample against whatever version is in use.
   Janus.init({debug: false, dependencies: Janus.useDefaultDependencies(), callback: function(){
+    if(gen !== _webrtcGen) return;   // a fallback/teardown happened during init - don't orphan a session
     _janus = new Janus({
       server: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/janus-ws',
       // LAN-direct only: no external STUN. janus.js defaults to Google's public
@@ -2544,21 +2641,29 @@ function startWebRTC(){
       // only, which is all that's needed when the browser and Pi share a LAN.
       iceServers: [],
       success: function(){
+        if(gen !== _webrtcGen) return;   // stale session (fallback ran); _janus already destroyed by stopWebRTC
         _janus.attach({
           plugin: 'janus.plugin.ustreamer',
           success: function(handle){
+            if(gen !== _webrtcGen){ try{ handle && handle.detach(); }catch(e){} return; }
             _janusHandle = handle;
-            _sendWatch(1);
+            _sendWatch(1, gen);
           },
           onmessage: function(msg, jsep){
+            if(gen !== _webrtcGen) return;
             if(jsep) _janusHandle.createAnswer({
               jsep: jsep,
               media: {audioSend: false, videoSend: false},
-              success: function(answerJsep){ _janusHandle.send({message: {request: 'start'}, jsep: answerJsep}); },
-              error: function(err){ _webrtcFallbackToMjpeg('createAnswer error: '+err); }
+              // createAnswer resolves LATER than onmessage's gen check above, so
+              // re-check: a stale attempt whose SDP negotiation completes after a
+              // teardown must not send a stray 'start' onto a newer session, nor
+              // fire a fallback that overrides the user's mode / kills a live attempt.
+              success: function(answerJsep){ if(gen !== _webrtcGen) return; _janusHandle.send({message: {request: 'start'}, jsep: answerJsep}); },
+              error: function(err){ if(gen !== _webrtcGen) return; _webrtcFallbackToMjpeg('createAnswer error: '+err); }
             });
           },
           onremotetrack: function(track, mid, added){
+            if(gen !== _webrtcGen) return;
             if(!added) return;
             const vid = document.getElementById('webrtc-view');
             if(vid.srcObject === null) vid.srcObject = new MediaStream();
@@ -2585,15 +2690,33 @@ function startWebRTC(){
               // It was only ever hidden on the MJPEG <img> onload path, so on
               // the WebRTC transport it stayed visible ON TOP of working video.
               const _confirmed = function(){
+                if(gen !== _webrtcGen) return;   // stale attempt must never flip the UI to Live
                 clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
                 _webrtcRetries = 0;   // good connection -> refill the recovery budget
                 _wrtcLastFrames = -1; _wrtcStallPolls = 0;   // restart stall baseline
+                _webrtcConfirmed = true;
+                // THE SWAP. WebRTC now has real pixels, so close the MJPEG
+                // connection (frees the ~50-100 Mbit/s that was competing on
+                // WiFi during the connect window) and reveal the <video>. Doing
+                // it here instead of eagerly at attempt-start is what keeps a
+                // working MJPEG picture on screen the whole time WebRTC connects.
+                const _img=document.getElementById('stream');
+                _img.style.display='none'; _img.removeAttribute('src');
+                vid.style.display='';
                 if($ns) $ns.style.display='none';
                 document.getElementById('bd-stream').className='bd ok';
                 const ss=document.getElementById('s-stream'); if(ss){ss.textContent='Live';ss.className='sv ac';}
               };
+              // Exactly one confirm path per session: clear any listeners/timer a
+              // prior attempt left on this persistent <video> (P5 listener leak).
+              if(vid._mbConfirmPlaying){
+                vid.removeEventListener('playing', vid._mbConfirmPlaying);
+                vid.removeEventListener('loadeddata', vid._mbConfirmPlaying);
+              }
+              if(vid._mbConfirmTimer){ clearInterval(vid._mbConfirmTimer); }
               let _confirmTries = 0;
               const _confirmTimer = setInterval(function(){
+                if(gen !== _webrtcGen){ clearInterval(_confirmTimer); return; }
                 if(vid.videoWidth > 0){
                   _confirmed();
                   clearInterval(_confirmTimer);
@@ -2601,12 +2724,14 @@ function startWebRTC(){
                   clearInterval(_confirmTimer);
                 }
               }, 250);
+              vid._mbConfirmTimer = _confirmTimer;
               const confirmPlaying = function(){
                 if(vid.videoWidth > 0){
                   _confirmed();
                   clearInterval(_confirmTimer);
                 }
               };
+              vid._mbConfirmPlaying = confirmPlaying;
               vid.addEventListener('playing', confirmPlaying);
               vid.addEventListener('loadeddata', confirmPlaying);
               // Video-FPS readout for the WebRTC path. The "s-vfps" pill is fed
@@ -2617,8 +2742,9 @@ function startWebRTC(){
                 if(pc0 && pc0.getStats){
                   clearInterval(_webrtcFpsTimer);
                   _webrtcFpsTimer = setInterval(function(){
-                    if(_activeTransport !== 'h264'){ clearInterval(_webrtcFpsTimer); return; }
+                    if(_activeTransport !== 'h264' || gen !== _webrtcGen){ clearInterval(_webrtcFpsTimer); return; }
                     pc0.getStats(null).then(function(stats){
+                      if(gen !== _webrtcGen) return;   // promise resolved after teardown
                       stats.forEach(function(r){
                         if(r.type==='inbound-rtp' && r.kind==='video'){
                           if(r.framesPerSecond!=null){
@@ -2687,13 +2813,16 @@ function startWebRTC(){
           // back to MJPEG so video keeps flowing - and because the fallback now
           // auto-retries WebRTC on a cooldown, it recovers to h264 on its own
           // instead of stranding you on slow MJPEG for the rest of the session.
-          webrtcState: function(up){ if(!up && _activeTransport === 'h264') _webrtcFallbackToMjpeg('webrtc connection down'); },
-          iceState: function(st){ if(st === 'failed' && _activeTransport === 'h264') _webrtcFallbackToMjpeg('ice '+st); },
-          oncleanup: function(){ if(_activeTransport === 'h264') _webrtcFallbackToMjpeg('session ended'); },
-          error: function(err){ _webrtcFallbackToMjpeg('plugin attach error: '+err); }
+          // gen guard on each: a stale session's drop/cleanup (including the
+          // oncleanup fired by our OWN stopWebRTC, which bumps _webrtcGen) must
+          // not knock a newer, live h264 attempt down to MJPEG.
+          webrtcState: function(up){ if(!up && gen === _webrtcGen && _activeTransport === 'h264') _webrtcFallbackToMjpeg('webrtc connection down'); },
+          iceState: function(st){ if(st === 'failed' && gen === _webrtcGen && _activeTransport === 'h264') _webrtcFallbackToMjpeg('ice '+st); },
+          oncleanup: function(){ if(gen === _webrtcGen && _activeTransport === 'h264') _webrtcFallbackToMjpeg('session ended'); },
+          error: function(err){ if(gen === _webrtcGen) _webrtcFallbackToMjpeg('plugin attach error: '+err); }
         });
       },
-      error: function(err){ _webrtcFallbackToMjpeg('janus connect error: '+err); }
+      error: function(err){ if(gen === _webrtcGen) _webrtcFallbackToMjpeg('janus connect error: '+err); }
     });
   }});
 }
@@ -2701,15 +2830,16 @@ function startWebRTC(){
 // ustreamer's Janus plugin needs a moment after attach before it has a
 // video frame to hand back; per pikvm/ustreamer docs/h264.md, the first
 // "watch" can fail and the client is expected to retry.
-function _sendWatch(attemptsLeft){
-  if(!_janusHandle) return;
+function _sendWatch(attemptsLeft, gen){
+  if(gen !== _webrtcGen || !_janusHandle) return;   // stale attempt: don't watch/retry
   _janusHandle.send({
     // audio:true just asks Janus to include an audio track IF the plugin's
     // audio block resolved a real device - harmless to always send even
     // with no C790/audio wired yet, it just won't produce an audio track.
     message: {request: 'watch', params: {audio: true}},
     error: function(){
-      if(attemptsLeft > 0) setTimeout(function(){ _sendWatch(attemptsLeft - 1); }, 1000);
+      if(gen !== _webrtcGen) return;
+      if(attemptsLeft > 0) setTimeout(function(){ _sendWatch(attemptsLeft - 1, gen); }, 1000);
       else _webrtcFallbackToMjpeg('watch request failed after retries');
     },
   });
@@ -2746,6 +2876,9 @@ function syncVideoTransport(mode){
 }
 
 function stopWebRTC(){
+  _webrtcGen++;                 // invalidate any in-flight attempt's async callbacks (P4)
+  _webrtcConfirmed = false;
+  clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
   clearInterval(_webrtcFpsTimer); _webrtcFpsTimer = null;
   const _vf=document.getElementById('s-vfps'); if(_vf) _vf.textContent='-';
   try{
@@ -2753,7 +2886,17 @@ function stopWebRTC(){
     if(_janus){ _janus.destroy(); _janus = null; }
   }catch(e){}
   const vid = document.getElementById('webrtc-view');
-  if(vid){ vid.srcObject = null; vid.muted = true; }
+  if(vid){
+    // Remove the confirm listeners/timer this session wired onto the persistent
+    // <video>, so they don't accumulate across re-arms (P5) or fire stale.
+    if(vid._mbConfirmPlaying){
+      vid.removeEventListener('playing', vid._mbConfirmPlaying);
+      vid.removeEventListener('loadeddata', vid._mbConfirmPlaying);
+      vid._mbConfirmPlaying = null;
+    }
+    if(vid._mbConfirmTimer){ clearInterval(vid._mbConfirmTimer); vid._mbConfirmTimer = null; }
+    vid.srcObject = null; vid.muted = true;
+  }
   // No audio without an active WebRTC session (MJPEG carries no audio at
   // all) - hide the controls rather than leave a stale enabled-looking
   // button around with nothing behind it.
