@@ -96,6 +96,7 @@ if [[ "$DO_CHECK" == 1 ]]; then
   chk "config.txt: camera_auto_detect=0"       "grep -q '^camera_auto_detect=0' '$CONFIG_TXT'"
   chk "config.txt: tc358743 (C790 capture)"    "grep -q '^dtoverlay=tc358743' '$CONFIG_TXT'"
   chk "config.txt: i2c_arm (OLED)"             "grep -q '^dtparam=i2c_arm=on' '$CONFIG_TXT'"
+  chk "config.txt: i2c_arm_baudrate (OLED)"    "grep -q '^dtparam=i2c_arm_baudrate=' '$CONFIG_TXT'"
   chk "core: magicbridge.py / hid.py / video.py" "test -f $INSTALL_DIR/core/magicbridge.py -a -f $INSTALL_DIR/core/video.py"
   chk "core: oled.py"                          "test -f $INSTALL_DIR/core/oled.py"
   chk "web: index.html"                        "test -f $INSTALL_DIR/web/index.html"
@@ -174,7 +175,13 @@ sed -i '/^\[all\]/a dtoverlay=tc358743-audio' "$CONFIG_TXT"
 sed -i '/^\[all\]/a dtoverlay=tc358743' "$CONFIG_TXT"
 # I2C for the SSD1306 OLED status panel.
 set_cfgtxt "dtparam=i2c_arm=" "dtparam=i2c_arm=on"
-ok "config.txt set: dwc2 + tc358743(+audio) + camera_auto_detect=0 + i2c_arm (idempotent)"
+# Slow the OLED's I2C bus to 50kHz. The default 100kHz was marginal on this unit's
+# OLED wiring and dropped out intermittently (repeated "I2C device not found on
+# 0x3C", blanking the panel); 50kHz makes the link reliable and a status display
+# needs no speed. (Key "dtparam=i2c_arm_baudrate=" does not collide with the
+# "dtparam=i2c_arm=" set above.)
+set_cfgtxt "dtparam=i2c_arm_baudrate=" "dtparam=i2c_arm_baudrate=50000"
+ok "config.txt set: dwc2 + tc358743(+audio) + camera_auto_detect=0 + i2c_arm + i2c_baud (idempotent)"
 
 # Load modules now where possible (full effect needs a reboot).
 modprobe libcomposite 2>/dev/null || warn "libcomposite not loadable now, needs reboot"
