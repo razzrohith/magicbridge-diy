@@ -1456,9 +1456,22 @@ function connect(){
     // connection kept the page LOOKING connected. That is exactly the state
     // where combos do nothing and you can't clear a target-side autoscroll.
     if(_wsOpened){ _wsAuthFails=0; }   // a real session dropped -> just reconnect
-    else { _wsAuthFails++; }           // never opened -> likely auth/handshake reject
+    else { _wsAuthFails++; }           // never opened -> MIGHT be an auth reject
     dot('warn','Reconnecting…');       // reflect reality: input is NOT live now
-    if(_wsAuthFails>=3){ location.href='/login'; return; }
+    if(_wsAuthFails>=3){
+      // "Never opened" alone does NOT prove an auth reject: a 502 (backend
+      // restarting), connection-refused, or an offline blip ALSO closes /ws
+      // before onopen, and those must not log the operator out mid-session.
+      // Only a real HTTP 401 means the session is actually gone - verify with
+      // a cheap API call first, and otherwise keep reconnecting.
+      fetch('/api/status',{cache:'no-store'}).then(function(r){
+        if(r.status===401){ location.href='/login'; }
+        else { _wsAuthFails=0; _scheduleReconnect(); }   // backend up -> keep trying
+      }).catch(function(){
+        _wsAuthFails=0; _scheduleReconnect();             // offline/refused -> keep trying
+      });
+      return;
+    }
     _scheduleReconnect();
   };
   ws.onerror=()=>{};
@@ -1517,6 +1530,11 @@ function dot(cls,txt){
 const $s=document.getElementById('stream');
 const $ns=document.getElementById('nosig');
 let _frameLoadTimes=[];
+// Auto-recovery for the MJPEG transport. Without this, any stream error
+// (first-load race before ustreamer is serving, the encoder restarting on a
+// resolution/fps change, a brief backend hiccup during a gadget rebuild) left
+// the "No Signal" overlay up until the user clicked Retry by hand.
+let _nosigTimer=null, _nosigDelay=800;
 function onLoad(){
   // The MJPEG <img> keeps running in the background even while WebRTC is
   // the active/visible transport (see setVideoTransport) - its own
@@ -1524,6 +1542,8 @@ function onLoad(){
   // currently describing the WebRTC stream the user can actually see.
   if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
   $ns.style.display='none';
+  if(_nosigTimer){ clearTimeout(_nosigTimer); _nosigTimer=null; }
+  _nosigDelay=800;                      // frames back -> reset the backoff
   document.getElementById('bd-stream').className='bd ok';
   document.getElementById('bv-stream').textContent='Live';
   document.getElementById('s-stream').textContent='Live';
@@ -1551,6 +1571,14 @@ function onErr(){
   document.getElementById('bv-stream').textContent='No signal';
   document.getElementById('s-stream').textContent='No signal';
   document.getElementById('s-stream').className='sv err';
+  // Self-heal: keep reconnecting on a capped backoff so the overlay clears the
+  // moment frames return, instead of stranding the user until a manual Retry.
+  if(_nosigTimer) return;               // one retry in flight already
+  _nosigTimer=setTimeout(function(){
+    _nosigTimer=null;
+    _nosigDelay=Math.min(_nosigDelay*1.6, 5000);
+    if(typeof _activeTransport==='undefined' || _activeTransport!=='h264') retryStream();
+  }, _nosigDelay);
 }
 function retryStream(){ $s.src='/stream?_='+Date.now(); _frameLoadTimes=[]; }
 
@@ -2380,6 +2408,20 @@ let _webrtcFpsTimer = null;   // polls receiver stats for the Video-FPS readout
 // 8s-black-then-fallback toast loop when WebRTC genuinely can't run.
 let _webrtcRearmTimer = null, _webrtcRetries = 0;
 const _WEBRTC_MAX_RETRIES = 4, _WEBRTC_REARM_MS = 30000;
+// After the per-session retry budget is spent we used to stay on MJPEG for the
+// WHOLE session (the give-up latch never decayed). This lets a link that has
+// since recovered climb back to low-latency h264: once exhausted, wait a longer
+// cooldown, then refill the budget and clear the latch so the next status poll
+// re-attempts WebRTC. A genuinely dead Janus just re-exhausts and re-arms this
+// same slow decay, so it can't flap.
+const _WEBRTC_DECAY_MS = 300000;   // 5 min
+// Media-stall watchdog for the h264/WebRTC path. A frozen-but-'connected'
+// stream (HDMI source unplugged, C790 sink/encoder stall, sender-side media
+// freeze) never trips an ICE/DTLS callback, so none of janus.js's recovery
+// hooks fire and the picture stays frozen forever. framesDecoded is monotonic
+// while video actually renders; if it stops advancing we recover here. This is
+// the h264 twin of the MJPEG onErr() self-heal.
+let _wrtcLastFrames = -1, _wrtcStallPolls = 0;
 
 function setVideoTransport(mode){
   _activeTransport = mode;
@@ -2435,6 +2477,15 @@ function _webrtcFallbackToMjpeg(reason){
     if(_webrtcRetries === 0) toast('Video dropped to MJPEG — retrying WebRTC…');
   } else {
     toast('WebRTC unstable on this link — staying on MJPEG');
+    // Budget spent: instead of stranding on MJPEG for the rest of the session,
+    // decay the latch. After a longer cooldown, refill the budget and clear the
+    // give-up flag so a link that has since recovered re-attempts h264 on the
+    // next status poll. If WebRTC is still dead it just re-exhausts and re-arms
+    // this same slow timer, so it can't flap.
+    _webrtcRearmTimer = setTimeout(function(){
+      _webrtcRetries = 0;
+      _webrtcGaveUp = false;
+    }, _WEBRTC_DECAY_MS);
   }
 }
 
@@ -2514,6 +2565,7 @@ function startWebRTC(){
               const _confirmed = function(){
                 clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
                 _webrtcRetries = 0;   // good connection -> refill the recovery budget
+                _wrtcLastFrames = -1; _wrtcStallPolls = 0;   // restart stall baseline
                 if($ns) $ns.style.display='none';
                 document.getElementById('bd-stream').className='bd ok';
                 const ss=document.getElementById('s-stream'); if(ss){ss.textContent='Live';ss.className='sv ac';}
@@ -2546,9 +2598,27 @@ function startWebRTC(){
                     if(_activeTransport !== 'h264'){ clearInterval(_webrtcFpsTimer); return; }
                     pc0.getStats(null).then(function(stats){
                       stats.forEach(function(r){
-                        if(r.type==='inbound-rtp' && r.kind==='video' && r.framesPerSecond!=null){
-                          const el=document.getElementById('s-vfps');
-                          if(el) el.textContent=Math.round(r.framesPerSecond)+' fps';
+                        if(r.type==='inbound-rtp' && r.kind==='video'){
+                          if(r.framesPerSecond!=null){
+                            const el=document.getElementById('s-vfps');
+                            if(el) el.textContent=Math.round(r.framesPerSecond)+' fps';
+                          }
+                          // Stall detection: framesDecoded stops advancing while
+                          // ICE stays 'connected' -> the feed froze with no event
+                          // to catch it. After ~3 flat polls (~6s) of a stream
+                          // that WAS live, fall back (which re-arms WebRTC), so
+                          // the h264 path self-heals like MJPEG's onErr does.
+                          if(r.framesDecoded!=null){
+                            if(_wrtcLastFrames >= 0 && r.framesDecoded === _wrtcLastFrames && r.framesDecoded > 0){
+                              if(++_wrtcStallPolls >= 3){
+                                _wrtcStallPolls = 0; _wrtcLastFrames = -1;
+                                _webrtcFallbackToMjpeg('video stalled (no new frames)');
+                              }
+                            } else {
+                              _wrtcStallPolls = 0;
+                            }
+                            _wrtcLastFrames = r.framesDecoded;
+                          }
                         }
                       });
                     }).catch(function(){});
@@ -3831,7 +3901,18 @@ loadMouseMode();
 
 // Keep connections, uptime and temp live: poll status every 5s while the page
 // is visible and not actively controlling (the top bar is hidden during capture).
-setInterval(()=>{ if(document.visibilityState==='visible' && !captured) refreshStatus(); }, 5000);
+// Also poll at a slower 15s cadence DURING capture: the give-up-latch decay and
+// h264 re-upgrade are reconciled through syncVideoTransport(), which only runs
+// off a status poll. Without a poll during capture, a link that recovered while
+// you were controlling would never climb back to low-latency h264 until you let
+// go, and a server-side fallback would go unnoticed.
+let _pollTick=0;
+setInterval(()=>{
+  if(document.visibilityState!=='visible') return;
+  _pollTick++;
+  if(!captured) refreshStatus();
+  else if(_pollTick % 3 === 0) refreshStatus();   // ~15s while capturing
+}, 5000);
 </script>
 </body>
 </html>

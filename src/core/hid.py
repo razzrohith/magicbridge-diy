@@ -509,7 +509,30 @@ class HIDMouse:
             self._write_abs(self.buttons, self._ax, self._ay)
 
     def move(self, dx: int, dy: int):
-        """Send relative movement, chunking large deltas into ±127 steps."""
+        """Send pointer movement, chunking large deltas into ±127 steps.
+
+        Absolute-mode aware. When the gadget is in absolute mode the target
+        expects a 6-byte absolute report, not the 4-byte relative one; a raw
+        relative write there is ignored or moves the pointer erratically (see
+        set_absolute). So in absolute mode we translate the relative nudge into
+        an absolute move around the last known position. This keeps every
+        relative-only caller - notably the mouse jiggler, which always speaks in
+        relative deltas - correct in BOTH modes without it having to know which
+        descriptor is currently live. (Previously the jiggler emitted 4-byte
+        relative reports even after a switch to absolute, so it silently stopped
+        moving the pointer / could confuse the target's absolute driver.)
+        """
+        if self.absolute:
+            # ~16 absolute units per "pixel" so the nudge is visually comparable
+            # to the relative path (ABS_MAX 32767 over a ~2048-wide mapping). The
+            # jiggler's walk is symmetric (out, then back by the negated delta),
+            # so this linear scaling preserves its zero-net-displacement property
+            # except right at a screen edge, where a clamp may absorb one step.
+            with self._lock:
+                self._ax = max(0, min(self.ABS_MAX, self._ax + int(dx) * 16))
+                self._ay = max(0, min(self.ABS_MAX, self._ay + int(dy) * 16))
+                self._write_abs(self.buttons, self._ax, self._ay)
+            return
         # Clamp to a screen-sized bound BEFORE chunking. An unclamped huge delta
         # (a buggy/hostile client, or a large summed backlog) would loop the
         # ±127 chunker hundreds of times, each write gated on the select()

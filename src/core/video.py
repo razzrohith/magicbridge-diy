@@ -930,22 +930,67 @@ class VideoManager:
             return
         def _watch():
             fails = 0
+            res_check = 0      # throttles the live-timings comparison
+            res_miss = 0       # consecutive resolution mismatches (debounce)
             while True:
                 # Exponential backoff on consecutive failures so a persistently
                 # un-launchable stream doesn't restart-storm every 5 s forever
                 # (5, 10, 20, 40, capped 60). Resets to 5 s once healthy.
                 time.sleep(min(5 * (2 ** fails), 60))
                 needs_restart = False
+                reason = ""
                 with self._lock:
                     if self.device and not self.is_running():
                         needs_restart = True
+                        reason = "process not running"
+                # Frame-liveness for CSI. is_running() is process-liveness only,
+                # so a "live but dark" stream is invisible to the death check
+                # above: ustreamer runs with --persistent and stays alive across
+                # a source change (e.g. 1080p50 -> 720p60), but keeps asking for
+                # the OLD --resolution the source no longer sends, so zero frames
+                # decode and the UI shows "No Signal" while a signal is clearly
+                # present. Nothing else recovers this (mb-hdmi-watch is a no-op
+                # while the capture node is busy). Every ~15 s, compare the live
+                # locked timings to what we launched with; on a CONFIRMED width/
+                # height change, restart() re-detects and relaunches. Guards:
+                #  - only for CSI (the only path that follows the live signal),
+                #  - detect_csi_timings returns None on no signal -> never touch
+                #    a stream just because the source is momentarily asleep,
+                #  - require two consecutive mismatches so one glitchy query
+                #    can't bounce a healthy stream.
+                # --query-dv-timings is a read-only query ioctl, safe to issue
+                # while ustreamer holds the node.
+                if not needs_restart and self.is_running():
+                    res_check += 1
+                    if res_check >= 3:
+                        res_check = 0
+                        try:
+                            is_csi = bool(self.device) and self.device_type(self.device) == "csi"
+                        except Exception:
+                            is_csi = False
+                        if is_csi:
+                            det = self.detect_csi_timings(self.device)
+                            if det:
+                                live = "%dx%d" % (det[0], det[1])
+                                if live != self.resolution:
+                                    res_miss += 1
+                                    if res_miss >= 2:
+                                        needs_restart = True
+                                        reason = "source resolution changed %s -> %s" % (
+                                            self.resolution, live)
+                                else:
+                                    res_miss = 0
+                            else:
+                                res_miss = 0   # no signal -> leave the live stream alone
                 if not needs_restart:
                     fails = 0
                     continue
-                log.info("Stream not running, restarting (attempt %d)...", fails + 1)
+                log.info("Stream restart (%s), attempt %d...", reason, fails + 1)
                 self.restart()
                 time.sleep(2)   # let it come up before judging
                 fails = 0 if self.is_running() else min(fails + 1, 4)
+                res_check = 0
+                res_miss = 0
         t = threading.Thread(target=_watch, daemon=True, name="mb-video-watchdog")
         t.start()
         self._mon_thr = t

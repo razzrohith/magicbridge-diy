@@ -1019,6 +1019,25 @@ class HidAutoDisconnect:
         log.info("hid-autodisconnect: rebound gadget to %s (new session)", udc)
         time.sleep(0.35)  # brief settle so /dev/hidg* is ready for the caller
 
+    def rebind_if_unbound(self) -> bool:
+        """Rebind the gadget to its UDC if currently unbound, IGNORING
+        self.enabled. Used when the feature is turned OFF while the loop had
+        already unbound the gadget - both normal rebind paths (this class'
+        ensure_connected and the ws_handler call site) are gated on enabled=True,
+        so once disabled nothing would ever rebind and the target would be left
+        with no keyboard/mouse. Returns True if it (re)bound. Blocking (file I/O
+        + settle sleep); call from an executor."""
+        if self._is_bound():
+            return False
+        udc = self._discover_udc()
+        if not udc:
+            log.warning("hid-autodisconnect: no UDC found, cannot rebind on disable")
+            return False
+        _usb_w("UDC", udc)
+        log.info("hid-autodisconnect: rebound gadget to %s (feature disabled while unbound)", udc)
+        time.sleep(0.35)
+        return True
+
     def start(self):
         if self._task is None:
             self._task = asyncio.create_task(self._loop())
@@ -2167,12 +2186,24 @@ async def api_hid_autodisconnect(request):
         d = await request.json()
     except Exception:
         return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    was_enabled = hid_autodc.enabled
     enabled = bool(d.get("enabled", hid_autodc.enabled))
     idle_minutes = d.get("idle_minutes", hid_autodc.idle_minutes)
     hid_autodc.configure(enabled, idle_minutes)
     cfg = _load_cfg()
     cfg["hid_autodisconnect"] = {"enabled": enabled, "idle_minutes": hid_autodc.idle_minutes}
     _save_cfg(cfg)
+    # If the feature was just turned OFF while the loop had already unbound the
+    # gadget, rebind now - otherwise the target is stranded with no keyboard/
+    # mouse and no code path ever rebinds it (both rebind paths require
+    # enabled=True). Also drop the cached hidg fds so input returns on the FIRST
+    # write after the rebind, not only after the inode self-heal kicks in.
+    if was_enabled and not enabled:
+        loop = asyncio.get_running_loop()
+        rebound = await loop.run_in_executor(None, hid_autodc.rebind_if_unbound)
+        if rebound:
+            hid._hidg_invalidate(keyboard)
+            hid._hidg_invalidate(mouse)
     return web.json_response({"ok": True, **hid_autodc.status()})
 
 
