@@ -33,10 +33,17 @@ def _hidg_write(owner, data: bytes):
     the video stream (a separate long-lived socket) stayed smooth.
 
     A cached fd turns each report into a single os.write() (sub-millisecond).
-    On any OSError - gadget torn down / re-enumerated / node briefly gone - we
-    drop the handle so the next report transparently reopens the (possibly new)
-    device. `owner` supplies .device (path) and ._fd (cached handle); every
-    caller already holds owner._lock, so no additional locking is needed here.
+    We reopen the handle in TWO cases: (a) on any OSError from the write - gadget
+    torn down / re-enumerated / node briefly gone; and (b) BEFORE the write when
+    the device node's inode has changed, i.e. a runtime gadget rebuild (mouse-mode
+    switch, USB-identity apply) destroyed and recreated /dev/hidgN under us. Case
+    (b) is essential: the stale fd then points at a dead endpoint that select()
+    reports as never-writable, so `if not wl: return` would drop every report
+    WITHOUT raising - the error-path reopen never fires and ALL input silently
+    dies until a restart. The inode check catches every rebuild trigger without
+    the trigger having to notify us. `owner` supplies .device (path), ._fd (cached
+    handle) and ._fd_ino (inode of that handle); every caller already holds
+    owner._lock, so no additional locking is needed here.
 
     S1: the fd is opened O_NONBLOCK and every write is gated on a bounded
     select() for POLLOUT. A connected host polls constantly, so the endpoint is
@@ -47,14 +54,42 @@ def _hidg_write(owner, data: bytes):
     a suspended host is meaningless anyway - so the worker can never wedge.
     """
     try:
+        # (b) Reopen if the node was recreated under us (gadget rebuild). Cheap
+        # single stat(); catches the case select() would otherwise mask forever.
+        if owner._fd is not None:
+            try:
+                fresh = os.stat(owner.device).st_ino == getattr(owner, "_fd_ino", None)
+            except OSError:
+                fresh = False               # node missing mid-rebuild -> reopen
+            if not fresh:
+                try:
+                    os.close(owner._fd)
+                except OSError:
+                    pass
+                owner._fd = None
         if owner._fd is None:
             owner._fd = os.open(owner.device, os.O_WRONLY | os.O_NONBLOCK)
+            owner._fd_ino = os.fstat(owner._fd).st_ino
         _, wl, _ = select.select([], [owner._fd], [], _HIDG_WRITE_TIMEOUT)
         if not wl:
             return                      # endpoint not accepting reports right now
         os.write(owner._fd, data)
     except (OSError, BlockingIOError) as e:
         log.debug("HID write %s: %s", owner.device, e)
+        if owner._fd is not None:
+            try:
+                os.close(owner._fd)
+            except OSError:
+                pass
+            owner._fd = None
+
+
+def _hidg_invalidate(owner):
+    """Drop the cached fd so the next report reopens the (possibly rebuilt) node.
+    Call this right after a deliberate gadget rebuild (mouse-mode switch, USB
+    identity apply). Thread-safe: takes owner._lock. _hidg_write also self-heals
+    by inode, but invalidating here restores input on the very first event."""
+    with owner._lock:
         if owner._fd is not None:
             try:
                 os.close(owner._fd)

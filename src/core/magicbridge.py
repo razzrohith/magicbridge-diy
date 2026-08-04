@@ -2219,6 +2219,13 @@ async def api_mouse_mode(request):
 
     # Align the live report format with the (now rebuilt) descriptor.
     mouse.set_absolute(mode == "absolute")
+    # The rebuild recreated /dev/hidg0 and /dev/hidg1, so both cached fds now point
+    # at destroyed nodes. Drop them so control returns on the FIRST event (covers
+    # the keyboard too). This was the root cause of "all control dies after a
+    # mouse-mode switch": the stale fd's select() never reports writable, so
+    # `if not wl: return` dropped every report and the write-error reopen never ran.
+    hid._hidg_invalidate(keyboard)
+    hid._hidg_invalidate(mouse)
     log.info("Mouse mode set to %s (gadget rebuilt=%s)", mode, rebuilt)
 
     return web.json_response({
