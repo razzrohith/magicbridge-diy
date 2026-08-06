@@ -757,7 +757,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="cur-opt" data-c="dot" onclick="setCursor('dot')">Dot</button>
           </div>
           <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:pointer">
-            <input type="checkbox" id="overlay-chk" onchange="toggleOverlay(this.checked)" checked style="accent-color:var(--accent)">
+            <input type="checkbox" id="overlay-chk" onchange="toggleOverlay(this.checked)" style="accent-color:var(--accent)">
             Show predictive cursor when locked (relative mode)
           </label>
         </div>
@@ -2020,7 +2020,13 @@ window.addEventListener('pagehide', function(){ try{ stopWebRTC(); }catch(e){} }
 // overlay dot is only useful/needed in relative mode (pointer lock hides the
 // real cursor); in absolute mode the real cursor is visible so it's off.
 let _mouseMode='relative';
-let _cx=0,_cy=0,_showOverlay=true;
+// Predictive local cursor: OFF by default. It draws a dot that tracks your hand
+// instantly while the real remote pointer catches up - but that means TWO cursors
+// on screen that never quite agree, and on a target with its own pointer
+// acceleration (iPadOS) they diverge badly and it just reads as broken. Only the
+// target's real pointer is the truth, so show that alone unless the operator
+// deliberately opts in.
+let _cx=0,_cy=0,_showOverlay=false;
 // The video is object-fit:contain inside #view, so a 16:9 stream is LETTERBOXED
 // (black bars) inside a differently-shaped container. Absolute mouse mapping
 // must use the video's ACTUAL displayed rectangle, not the container's - mapping
@@ -2276,7 +2282,19 @@ function setCursor(c){
   document.querySelectorAll('.cur-opt').forEach(b=>b.classList.toggle('active',b.dataset.c===c));
   $view.style.cursor=c==='dot'?'none':c==='default'?'default':c;
 }
-function toggleOverlay(on){ _showOverlay=on; if(!on) document.getElementById('cur-dot').style.display='none'; }
+function toggleOverlay(on){
+  _showOverlay=!!on;
+  if(!_showOverlay){ const d=document.getElementById('cur-dot'); if(d) d.style.display='none'; }
+  try{ localStorage.setItem('mb_predcursor', _showOverlay?'1':'0'); }catch(e){}
+}
+// Restore the operator's choice; default OFF (see _showOverlay above).
+(function(){
+  let on=false;
+  try{ on = localStorage.getItem('mb_predcursor')==='1'; }catch(e){}
+  _showOverlay=on;
+  const c=document.getElementById('overlay-chk'); if(c) c.checked=on;
+  if(!on){ const d=document.getElementById('cur-dot'); if(d) d.style.display='none'; }
+})();
 
 // --- Target screen area (absolute-mouse calibration) -----------------------
 function _renderScreenArea(){
