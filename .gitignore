@@ -12,3 +12,6 @@ deploy_log.txt
 push_now.bat
 _archive_old_iterations/
 _archive_root_cleanup/
+
+# Local UI restore point, not part of the shipped tree
+src/web/index.prerail.bak.html
