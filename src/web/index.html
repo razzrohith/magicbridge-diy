@@ -2130,11 +2130,25 @@ function _lpdArm(){        // commit the pending down as a real held drag
   const x=_lpd.x,y=_lpd.y; _lpd=null;
   _pinXY(x,y); _heldBtns.add(0); send({type:'mousedown',button:0});
 }
+// Minimum press duration for a synthesised click. _lpdClick used to emit
+// mousedown and mouseup back-to-back, i.e. a ZERO-millisecond press - something
+// no physical mouse ever produces, and which a picky target can legitimately
+// drop. Holding it for a normal human click length costs nothing and makes the
+// click unambiguous. (Does not affect double-click, which keys off the interval
+// BETWEEN clicks, not the press length.)
+const _CLICK_MS=60;
 function _lpdClick(){      // quick release, little movement -> a click (tap)
   if(!_lpd) return;
   clearTimeout(_lpdTimer); _lpdTimer=0;
   const x=_lpd.x,y=_lpd.y; _lpd=null;
-  _pinXY(x,y); send({type:'mousedown',button:0}); send({type:'mouseup',button:0});
+  _pinXY(x,y);
+  _heldBtns.add(0); send({type:'mousedown',button:0});
+  // Hold briefly, then release - see _CLICK_MS. Tracked in _heldBtns meanwhile so
+  // the existing stuck-button self-heals (focus loss, capture change, reconnect)
+  // still cover it if this timer never fires.
+  setTimeout(function(){
+    if(_heldBtns.has(0)){ _heldBtns.delete(0); send({type:'mouseup',button:0}); }
+  }, _CLICK_MS);
 }
 function _lpdCancel(){     // touchpad glide tap-drag -> phantom down, drop it
   if(!_lpd) return;
@@ -2327,6 +2341,16 @@ function _applyMouseModeUI(m){
 async function setMouseMode(m){
   if(m!=='relative' && m!=='absolute') return;
   if(m===_mouseMode) return;
+  // Absolute is genuinely unusable on iPadOS/iOS: verified on an iPad Air that it
+  // moves the pointer and even draws hover highlights from an absolute device but
+  // NEVER acts on its clicks (tested 70ms/300ms/800ms/double/move-then-click).
+  // Silently letting someone pick it on a tablet just looks like "clicks are
+  // broken", so say so up front - they can still proceed on a PC target.
+  if(m==='absolute' && !confirm(
+      'Absolute mode does not work on iPad / iPhone.\n\n'
+     +'iOS moves the pointer but ignores clicks from an absolute mouse. If your '
+     +'target is an iPad or iPhone, stay on Relative - clicks work there.\n\n'
+     +'Switch to Absolute anyway? (fine for a PC/laptop target)')) return;
   if(captured){ _intentional=true; releaseAll(); }   // drop control before changing model
   toast('Switching mouse mode… (USB gadget rebuilds, ~1s)',4000);
   try{
