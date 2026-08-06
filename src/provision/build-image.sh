@@ -99,6 +99,7 @@ if [[ "$MODE" == "verify" ]]; then
   chk "no spoofed-MAC conf (unique MAC per unit)"    '[ ! -f "$R/etc/NetworkManager/conf.d/00-mb-macspoof.conf" ]'
   chk "no DuckDNS token cron (shared credential)"    '[ ! -f "$R/etc/cron.d/mb-duckdns" ]'
   chk "no DuckDNS IP-history log"                    '[ ! -f "$R/var/log/mb-duckdns.log" ]'
+  chk "no HDMI capture-history log"                  '[ ! -f "$R/var/log/mb-hdmi-init.log" ]'
   chk "no baked-MAC systemd unit (mb-mac.service)"   '[ ! -f "$R/etc/systemd/system/mb-mac.service" ]'
   chk "no plaintext WiFi PSK (.provision-wifi)"      '[ ! -f "$R/etc/magicbridge/.provision-wifi" ]'
   chk "no inherited user SSH keys/known_hosts (B1)"  '! ls "$R"/root/.ssh/* "$R"/home/*/.ssh/* 2>/dev/null | grep -q .'
@@ -340,6 +341,11 @@ rm -f "$MNT"/etc/NetworkManager/conf.d/00-mb-macspoof.conf 2>/dev/null || true
 #                              which we must never touch. Only truncate if it's
 #                              somehow a REAL independent file.
 rm -f "$MNT"/etc/cron.d/mb-duckdns "$MNT"/var/log/mb-duckdns.log 2>/dev/null || true
+# mb-hdmi-init.log: a timestamped capture history (per-boot resolutions, EDID
+# applies, unplug events) of every machine the BUILDER's unit was ever attached
+# to. Same leak class as the DuckDNS IP history above; it was simply missed.
+# Now RAM-only at source, so this only cleans images built from an older tree.
+rm -f "$MNT"/var/log/mb-hdmi-init.log "$MNT"/var/log/magicbridge-update.log 2>/dev/null || true
 rm -f "$MNT"/etc/systemd/system/mb-mac.service \
       "$MNT"/etc/systemd/system/multi-user.target.wants/mb-mac.service 2>/dev/null || true
 rm -f "$MNT"/etc/magicbridge/.provision-wifi "$MNT"/tmp/mb-ts-key 2>/dev/null || true

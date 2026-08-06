@@ -157,11 +157,17 @@ except Exception:
 _al = logging.getLogger("magicbridge.stealth")
 _al.setLevel(logging.INFO)
 try:
-    _fh = logging.FileHandler(AUTH_LOG)
-    _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
-    _al.addHandler(_fh)
+    if os.path.ismount(RAM_LOG_DIR):
+        _fh = logging.FileHandler(AUTH_LOG)
+        _fh.setFormatter(logging.Formatter("%(asctime)s %(message)s"))
+        _al.addHandler(_fh)
+    else:
+        # No handler: messages go nowhere rather than to the card. journald still
+        # captures anything at WARNING+ via stderr for live debugging.
+        _al.addHandler(logging.NullHandler())
 except Exception:
     pass
+
 
 # Progressive login delay
 _login_fails: dict = {}
@@ -342,6 +348,26 @@ def _apply_usb(mfr: str, prod: str, ser: str, vid: str = None, pid: str = None,
     mfr  = _usb_str(mfr,  "Logitech")
     prod = _usb_str(prod, "USB Receiver")
     ser  = _usb_str(ser,  "")
+    # VID/PID must be a kernel-parseable 16-bit hex id or the gadget cannot be
+    # built AT ALL on the next boot. configfs parses these with kstrtou16(base 0),
+    # so "046d" is read as OCTAL (and 'd' is invalid), "46d" likewise, and a
+    # pasted "046d:c52b" is nonsense - every one returns EINVAL. mb-gadget.sh runs
+    # `echo "$VID" > idVendor` under `set -e`, so a rejected write ABORTS the
+    # script before it creates the keyboard function, the mouse function, or binds
+    # the UDC: no /dev/hidg*, no HID at all, and the target sees no device. The
+    # web UI still comes up, so it presents as "input broke for no reason" and
+    # recovery needs SSH to hand-edit config.json. "046d" is the natural typo -
+    # it is exactly what lsusb prints. Normalise a bare 4-hex value, reject
+    # anything else, and never persist a value we did not accept.
+    def _usb_id(v, what):
+        s = str(v).strip().lower()
+        if re.fullmatch(r"0x[0-9a-f]{1,4}", s):
+            return s
+        if re.fullmatch(r"[0-9a-f]{1,4}", s):
+            return "0x" + s          # accept the lsusb form, store it parseably
+        raise ValueError("%s must be a hex USB id like 0x046d (got %r)" % (what, v))
+    if vid: vid = _usb_id(vid, "idVendor")
+    if pid: pid = _usb_id(pid, "idProduct")
 
     _writes = []
     def _do():
@@ -2503,6 +2529,10 @@ def api_apply():
         else:
             return jsonify({"error": f"Unknown action: {act}"}), 400
 
+    except ValueError as e:
+        # Bad operator input (e.g. a malformed USB vid/pid) is a 400, not a
+        # server fault - and the message is written to be shown to the user.
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

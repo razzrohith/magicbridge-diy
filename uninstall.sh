@@ -80,7 +80,9 @@ if [[ "${LOG_ANS,,}" == "y" ]]; then
           /var/log/magicbridge-sessions.log \
           /var/log/magicbridge-provision.log \
           /var/log/magicbridge.log \
-          /var/log/mb-duckdns.log
+          /var/log/mb-duckdns.log \
+          /var/log/mb-hdmi-init.log \
+          /var/log/magicbridge-update.log
     ok "Log files removed"
 fi
 

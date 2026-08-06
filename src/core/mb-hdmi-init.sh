@@ -13,7 +13,18 @@
 #        mb-hdmi-init.sh --watch  (daemon: re-arms on hot-plug / source change)
 DEV=""   # resolved at runtime to the C790/CSI node (never a USB dongle)
 EDID=/opt/magicbridge/edid/mb-edid-1080p50.hex
-LOG=/var/log/mb-hdmi-init.log
+# RAM-ONLY, like every other MagicBridge log (MAGICBRIDGE_SYSTEM.md anonymity
+# model). This used to write to /var/log/mb-hdmi-init.log on the SD CARD: a
+# timestamped, never-rotated history of every boot, every EDID apply, the exact
+# pixelclock and resolution each attached machine negotiated, and a line per
+# unplug. That is a capture history of every target this device has ever seen,
+# persisted where anyone who images the card can read it - and because the image
+# builder never stripped it, the distributed .img shipped the builder's own test
+# history and cross-linked every flashed unit.
+# The tmpfs may not be mounted this early; log() already discards errors, so a
+# pre-mount line is simply dropped rather than falling back to the card.
+LOG=/var/log/magicbridge-ram/mb-hdmi-init.log
+mkdir -p /var/log/magicbridge-ram 2>/dev/null || true
 log() { echo "$(date '+%F %T') [$1] ${*:2}" >> "$LOG" 2>/dev/null; }
 
 # Find the C790/TC358743 CSI capture node. A USB HDMI dongle is deliberately

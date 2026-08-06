@@ -96,6 +96,56 @@ def _write_config(cfg: dict) -> None:
         except OSError:
             pass
 
+_EDID_RB = {"t": 0.0, "dev": None, "val": None}
+
+def _parse_edid_identity(b: bytes):
+    """Pull the manufacturer id and monitor name out of a raw 128-byte EDID."""
+    if len(b) < 128 or b[0:8] != b"\x00\xff\xff\xff\xff\xff\xff\x00":
+        return None
+    v = (b[8] << 8) | b[9]                       # 3 letters, 5 bits each
+    mfr = "".join(chr(64 + ((v >> s) & 0x1F)) for s in (10, 5, 0))
+    name = ""
+    for off in (54, 72, 90, 108):                # the four 18-byte descriptors
+        d = b[off:off + 18]
+        if len(d) == 18 and d[0:3] == b"\x00\x00\x00" and d[3] == 0xFC:
+            name = d[5:18].decode("ascii", "ignore").split("\n")[0].strip()
+            break
+    return {"mfr": mfr, "name": name}
+
+
+def _live_edid_identity():
+    """The EDID identity ACTUALLY loaded on the capture chip, or None.
+
+    Blocking (forks v4l2-ctl), so call it from an executor. Cached for 60s
+    because /api/status is polled every 5s per client and this changes only when
+    someone applies a new EDID - without the cache this would add a fork per
+    poll per viewer to the hottest path in the server."""
+    import re as _re
+    import subprocess as _sp
+    dev = getattr(video, "device", None)
+    if not dev:
+        return None
+    now = time.monotonic()
+    if _EDID_RB["val"] is not None and _EDID_RB["dev"] == dev and (now - _EDID_RB["t"]) < 60:
+        return _EDID_RB["val"]
+    val = None
+    try:
+        r = _sp.run(["v4l2-ctl", "-d", dev, "--get-edid"],
+                    capture_output=True, text=True, timeout=4)
+        toks = _re.findall(r"\b[0-9a-fA-F]{2}\b", r.stdout)
+        if len(toks) >= 128:
+            val = _parse_edid_identity(bytes(int(t, 16) for t in toks[:128]))
+    except Exception as e:
+        log.debug("EDID readback failed: %s", e)
+    _EDID_RB.update(t=now, dev=dev, val=val)
+    return val
+
+
+def _edid_readback_invalidate():
+    """Force the next status poll to re-read the EDID (call after applying one)."""
+    _EDID_RB.update(t=0.0, val=None)
+
+
 def _read_config() -> dict:
     """Read config.json under the same lock. Returns {} only if the file is
     genuinely absent - a PARSE failure re-raises so callers never mistake a
@@ -349,10 +399,24 @@ def _ensure_usb_defaults():
     boot. The extra HID interface (for interface-count realism) can only
     be created when the gadget's functions are (re)built, i.e. on next
     reboot / mb-gadget.sh run, not live here."""
+    # FAIL CLOSED on an unparseable config, exactly like _ensure_auth_defaults.
+    # The old code swallowed a parse error into cfg={} and then _write_config'd
+    # that, REPLACING a corrupt-but-recoverable file with one containing only a
+    # usb section - auth, video, wol, edid, network and jiggler all gone. On the
+    # next boot _ensure_auth_defaults parses that file fine, sees no
+    # main_password_hash, and bootstraps DEFAULT_PASSWORD with 2FA off: a stealth
+    # unit with a private password silently becomes reachable by anyone on the
+    # LAN with the public default. That is the exact catastrophe the threat-model
+    # note at the top of this file exists to prevent, and it defeated the
+    # fail-closed guard two functions away. Never write over a file we could not
+    # read. _read_config() returns {} only when the file genuinely does not
+    # exist, so true first-boot bootstrap is unchanged.
     try:
-        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
-    except Exception:
-        cfg = {}
+        cfg = _read_config()
+    except Exception as e:
+        log.error("config.json is unreadable (%s) - refusing to rewrite USB "
+                  "defaults over it; leaving the file untouched", e)
+        return
     usb = cfg.setdefault("usb", {})
     current_serial  = usb.get("serial", "")
     current_product = usb.get("product", "")
@@ -1505,13 +1569,36 @@ async def api_status(request: web.Request) -> web.Response:
             "note":    "USB dongle shows its own fixed EDID to the target - not spoofable. Use the C790/CSI board for the Dell monitor identity.",
         }
     else:
-        display = {
-            "name":    _edid.get("product_name") or "DELL P2419H",
-            "mfr":     _edid.get("mfr") or "DEL",
-            "serial":  _edid.get("serial") or "",
-            "spoofed": True,
-            "note":    "",
-        }
+        # Report the identity ACTUALLY loaded on the capture chip, not the one we
+        # intended. This used to hardcode spoofed:True + "DELL P2419H" for every
+        # CSI unit, so if apply_edid had fallen back to v4l-utils' generic test
+        # EDID (which carries a placeholder vendor id AND drops the 1080p50 cap)
+        # the panel still cheerfully reported a clean Dell spoof. On a stealth
+        # device the one thing this field must never do is claim a disguise that
+        # is not on. The USB branch above was already honest; this matches it.
+        live = await loop.run_in_executor(None, _live_edid_identity)
+        if live:
+            ok = (live["mfr"] == "DEL")     # our restricted blob is a Dell identity
+            display = {
+                "name":    live["name"] or _edid.get("product_name") or "(unnamed EDID)",
+                "mfr":     live["mfr"],
+                "serial":  _edid.get("serial") or "",
+                "spoofed": ok,
+                "note":    "" if ok else
+                           "The EDID on the capture chip is NOT the MagicBridge monitor "
+                           "identity - the target sees this instead, and the 1080p50 cap "
+                           "may not be in force. Re-apply the display identity.",
+            }
+        else:
+            # Could not read it back: say so rather than assert a spoof.
+            display = {
+                "name":    _edid.get("product_name") or "unknown",
+                "mfr":     _edid.get("mfr") or "",
+                "serial":  _edid.get("serial") or "",
+                "spoofed": False,
+                "note":    "Could not read the EDID back from the capture chip, so the "
+                           "identity the target sees is unconfirmed.",
+            }
 
     return web.json_response({
         "version":    VERSION,
@@ -1735,7 +1822,23 @@ async def api_wol_settings(request: web.Request) -> web.Response:
             except ValueError:
                 return web.json_response({"ok": False, "error": "Invalid MAC address format"}, status=400)
     if "broadcast" in d:
-        incoming["broadcast"] = str(d.get("broadcast") or WOL_DEFAULTS["broadcast"])[:64]
+        # Must be a literal IPv4 address. The MAC beside this is strictly
+        # normalised, but broadcast used to be any 64-char string handed straight
+        # to sock.sendto() - so a HOSTNAME here would make a stealth device
+        # perform a real DNS lookup (against the anonymity model's "no surprise
+        # DNS" rule) and then unicast a magic packet containing the target
+        # machine's real MAC to whatever it resolved to, potentially off-LAN.
+        # WoL is only meaningful on the local broadcast domain, so no hostname
+        # support is needed or wanted.
+        import ipaddress as _ipa
+        _b = str(d.get("broadcast") or WOL_DEFAULTS["broadcast"]).strip()[:64]
+        try:
+            _ipa.IPv4Address(_b)
+        except Exception:
+            return web.json_response(
+                {"ok": False, "error": "Broadcast must be an IPv4 address (e.g. 255.255.255.255)"},
+                status=400)
+        incoming["broadcast"] = _b
     if "port" in d:
         try:
             incoming["port"] = max(1, min(65535, int(d["port"])))
