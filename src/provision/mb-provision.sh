@@ -306,7 +306,14 @@ if [[ -f "$WIFI_FILE" ]]; then
     # can simply try again with the right password.
     WIFI_OK=0
     for _ in $(seq 1 12); do
-        if nmcli -t -f STATE general 2>/dev/null | grep -q "^connected$"; then WIFI_OK=1; break; fi
+        # Match the "connected" PREFIX, same as the initial check at the top of
+        # this script. An air-gapped / no-internet LAN (a very plausible home for
+        # this device) associates fine but NM reports "connected (site only)",
+        # which the old anchored "^connected$" rejected: the loop would time out,
+        # DELETE the just-created good profile, and re-raise the setup hotspot,
+        # stranding a unit that has the correct password. "connecting" doesn't
+        # start with "connected", so the prefix can't accept a still-connecting state.
+        if nmcli -t -f STATE general 2>/dev/null | grep -qE '^connected'; then WIFI_OK=1; break; fi
         sleep 2
     done
     if [[ "$WIFI_OK" != "1" ]]; then

@@ -175,10 +175,29 @@ def _auth_cfg() -> dict:
     except Exception:
         return {}
 
+def _pw_backend_broken(stored: str) -> bool:
+    """True when the stored hash is bcrypt ($2...) but the bcrypt module isn't
+    importable, so _check_pw can NEVER succeed. Lets the login page show a
+    distinct 'server misconfigured' message instead of a misleading 'incorrect
+    password' that would send the owner chasing the wrong problem."""
+    return bool(stored) and stored.startswith("$2") and not _HAS_BCRYPT
+
 def _check_pw(pw: str, stored: str) -> bool:
     if not stored:
         return False
-    if _HAS_BCRYPT and stored.startswith("$2"):
+    if stored.startswith("$2"):
+        if not _HAS_BCRYPT:
+            # The stored hash is bcrypt but the bcrypt module failed to import.
+            # Falling through to the sha256 branch below would compare a sha256
+            # digest against a bcrypt string, which can NEVER match: the owner is
+            # silently locked out of BOTH panels while the UI insists the correct
+            # password is wrong. Fail LOUDLY here rather than silently; the login
+            # path surfaces a distinct message (see _login_attempt).
+            log.error("PASSWORD BACKEND BROKEN: stored hash is bcrypt ($2...) but "
+                      "the bcrypt module is not importable - login is IMPOSSIBLE "
+                      "until bcrypt is reinstalled or the password is reset over "
+                      "SSH. Refusing to fall back to sha256 (it can never match).")
+            return False
         try:
             return _bcrypt.checkpw(pw.encode(), stored.encode())
         except Exception:
@@ -186,48 +205,78 @@ def _check_pw(pw: str, stored: str) -> bool:
     raw = stored[len("sha256:"):] if stored.startswith("sha256:") else stored
     return hmac.compare_digest(hashlib.sha256(pw.encode()).hexdigest(), raw)
 
-def _make_token(secret: str, ttl: int = SESSION_TIMEOUT) -> str:
+def _make_token(secret: str, ttl: int = SESSION_TIMEOUT, epoch: int = 0) -> str:
     """Signed session token that carries its OWN lifetime, so "Remember this
     device" can mint a long-lived session with no extra server-side store.
-    Format: <issued_ts>.<ttl_seconds>.<hmac(secret, "ts.ttl")>. The ttl is part
-    of the signed body, so a client cannot extend its own session by editing it."""
+    Format: <issued_ts>.<ttl_seconds>.<session_epoch>.<hmac(secret, "ts.ttl.epoch")>.
+    The ttl and epoch are part of the signed body, so a client cannot extend its
+    own session or dodge a logout by editing them. The epoch is what makes logout
+    mean something (see _check_token / logout_handler)."""
     ts = str(int(time.time()))
     ttl = str(int(ttl))
-    body = ts + "." + ttl
+    epoch = str(int(epoch))
+    body = ts + "." + ttl + "." + epoch
     sig = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
     return body + "." + sig
 
-def _check_token(token: str, secret: str) -> bool:
+def _check_token(token: str, secret: str, cur_epoch: int = 0) -> bool:
     try:
         parts = token.split(".")
-        if len(parts) == 3:
-            ts, ttl, sig = parts
-            body = ts + "." + ttl
+        tok_epoch = 0
+        if len(parts) == 4:
+            # Current token: ts.ttl.epoch.sig
+            ts, ttl, ep, sig = parts
+            body = ts + "." + ttl + "." + ep
             # Clamp: never honour a lifetime larger than the longest we issue,
             # even if the signature checks out (defence in depth against a future
             # bug that mints an over-long ttl).
             ttl_s = min(int(ttl), REMEMBER_TIMEOUT)
+            tok_epoch = int(ep)
+        elif len(parts) == 3:
+            # Pre-epoch token (had ts.ttl.sig): still valid, treated as epoch 0
+            # so an existing session survives this upgrade until the next logout.
+            ts, ttl, sig = parts
+            body = ts + "." + ttl
+            ttl_s = min(int(ttl), REMEMBER_TIMEOUT)
+            tok_epoch = 0
         elif len(parts) == 2:
             # Legacy token (pre-remember-me): fixed lifetime, signed over ts only.
             ts, sig = parts
             body = ts
             ttl_s = SESSION_TIMEOUT
+            tok_epoch = 0
         else:
             return False
         expected = hmac.new(secret.encode(), body.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             return False
+        # Logout increments auth.session_epoch; a token minted under an older
+        # epoch no longer matches and is refused. This is a GLOBAL revoke: with
+        # stateless HMAC tokens there is no per-token server-side store to revoke
+        # just one, so every device is logged out at once - the honest tradeoff
+        # for making logout actually invalidate a captured 30-day token. A missing
+        # session_epoch reads as 0, and pre-epoch/legacy tokens are treated as 0,
+        # so nobody is locked out until the first logout advances it past 0.
+        if int(tok_epoch) != int(cur_epoch or 0):
+            return False
         age = time.time() - int(ts)
-        return 0 <= age <= ttl_s          # reject future-dated tokens too
+        # Allow a backwards clock step: this Pi has no RTC, so a token minted
+        # before a reboot is checked while fake-hwclock sits on a pre-NTP time,
+        # which can make age go slightly NEGATIVE. On an air-gapped target LAN
+        # with no time source that would be a PERMANENT rejection, bouncing the
+        # owner to /login on a device that promised to remember them. ts is inside
+        # the signed body, so no client can forge it - tolerating -1h is safe.
+        return -3600 <= age <= ttl_s
     except Exception:
         return False
 
 def _is_authed(request: web.Request) -> bool:
-    secret = _auth_cfg().get("main_secret_key", "")
+    a = _auth_cfg()
+    secret = a.get("main_secret_key", "")
     if not secret:
         return False
     token = request.cookies.get(SESSION_COOKIE, "")
-    return bool(token) and _check_token(token, secret)
+    return bool(token) and _check_token(token, secret, a.get("session_epoch", 0))
 
 
 # ── TOTP (RFC 6238) ──────────────────────────────────────────────────────────
@@ -642,8 +691,14 @@ async def login_handler(request: web.Request) -> web.Response:
             return _login_page(
                 f"Too many attempts. Try again in {int(locked)//60 + 1} min.",
                 status=429)
-        # One attempt at a time: the gate is what makes the delay real against a
-        # concurrent burst. Held for the whole verify so parallel guesses queue.
+        # Apply the per-IP progressive delay BEFORE taking the gate, not inside
+        # it. Holding _LOGIN_GATE across the sleep serialized EVERY login globally
+        # behind one IP's up-to-6s penalty, so a single slow/attacked IP froze
+        # legitimate logins from every other address. The gate is only needed to
+        # make the verify itself one-at-a-time (so a concurrent burst can't race
+        # the fail-counter read-modify-write); the sleep is per-IP and needs no
+        # global lock. Sleep first, then queue the verify.
+        await _apply_login_delay(ip)
         async with _LOGIN_GATE:
             return await _login_attempt(request, ip)
     return _login_page()
@@ -651,7 +706,6 @@ async def login_handler(request: web.Request) -> web.Response:
 
 async def _login_attempt(request, ip):
     if True:
-        await _apply_login_delay(ip)
         try:
             data = await request.post()
             pw = str(data.get("pw", ""))
@@ -662,7 +716,18 @@ async def _login_attempt(request, ip):
         except Exception:
             code = ""
         auth = _auth_cfg()
-        if pw and _check_pw(pw, auth.get("main_password_hash", "")):
+        stored_hash = auth.get("main_password_hash", "")
+        # W4: if the stored hash is bcrypt but the bcrypt module is missing,
+        # _check_pw can never succeed. Say so with a DISTINCT message instead of
+        # "incorrect password", which would send the owner chasing a password
+        # that is actually correct while the real fault is a missing dependency.
+        if _pw_backend_broken(stored_hash):
+            log.error("login blocked from %s: bcrypt hash present but bcrypt "
+                      "module missing - reset password over SSH", ip)
+            return _login_page(
+                "Server auth backend is misconfigured (bcrypt missing). "
+                "Reset the password over SSH.", status=503)
+        if pw and _check_pw(pw, stored_hash):
             # Password is right; if 2FA is on it still has to clear the second
             # factor. Deliberately ONE form rather than a two-step flow with
             # server-side pending state - a half-authenticated state is exactly
@@ -670,7 +735,11 @@ async def _login_attempt(request, ip):
             if _totp_enabled() and not _totp_check_login(code):
                 _record_login_fail(ip)
                 log.info("2FA failed from %s", ip)
-                return _login_page("Incorrect or expired 2FA code.", status=401)
+                # W3: ONE user-facing message for both a wrong password and a
+                # right-password-wrong-2FA, so the page never confirms to an
+                # attacker that the password was correct. The which-factor-failed
+                # distinction stays in the server log above only.
+                return _login_page("Incorrect password or 2FA code.", status=401)
             _record_login_ok(ip)
             secret = auth.get("main_secret_key", "")
             # "Remember this device": a 30-day signed session instead of 30 min,
@@ -679,18 +748,44 @@ async def _login_attempt(request, ip):
             ttl = REMEMBER_TIMEOUT if remember else SESSION_TIMEOUT
             resp = web.HTTPFound("/")
             if secret:
-                resp.set_cookie(SESSION_COOKIE, _make_token(secret, ttl),
+                # Stamp the current session_epoch into the token so a later
+                # logout (which increments it) revokes this session too.
+                resp.set_cookie(SESSION_COOKIE,
+                                 _make_token(secret, ttl, auth.get("session_epoch", 0)),
                                  max_age=ttl, httponly=True,
                                  secure=True, samesite="Lax", path="/")
             log.info("Login OK from %s (remember=%s)", ip, remember)
             return resp
         _record_login_fail(ip)
         log.info("Failed login from %s (attempt %d)", ip, _login_fails.get(ip, 0))
-        return _login_page("Incorrect password.", status=401)
+        # W3: same generic message as the 2FA-fail path when 2FA is on, so the
+        # two cases are indistinguishable to the client. With 2FA off there is no
+        # second factor to hide, so the plain wording is fine there.
+        msg = "Incorrect password or 2FA code." if _totp_enabled() else "Incorrect password."
+        return _login_page(msg, status=401)
     return _login_page()
 
 
 async def logout_handler(request: web.Request) -> web.Response:
+    # Actually REVOKE, don't just drop the cookie. _check_token is stateless
+    # (HMAC + age), so a captured or retained 30-day token kept authenticating
+    # /api/*, /ws, /stream and /janus-ws for its full life after "logout".
+    # Incrementing auth.session_epoch changes what a valid token must carry, so
+    # every previously-issued token stops validating at once. Global by design:
+    # with stateless tokens there is no single-token revoke, and logging every
+    # device out is the honest behaviour for a "log me out" action. Best-effort:
+    # a persistence hiccup must not 500 a logout - the cookie is still cleared.
+    try:
+        with _CFG_LOCK:
+            # _read_config raises only on a CORRUPT file; do NOT overwrite one
+            # with a stub here (that would wipe the password hash and secret, the
+            # exact catastrophe _write_config was added to prevent).
+            cfg = _read_config()
+            auth = cfg.setdefault("auth", {})
+            auth["session_epoch"] = int(auth.get("session_epoch", 0)) + 1
+            _write_config(cfg)
+    except Exception as e:
+        log.error("logout: could not bump session_epoch (sessions NOT revoked): %s", e)
     resp = web.HTTPFound("/login")
     resp.del_cookie(SESSION_COOKIE, path="/")
     return resp
@@ -731,6 +826,17 @@ async def api_2fa(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "bad json"}, status=400)
     action = str(d.get("action", ""))
     auth = _auth_cfg()
+
+    # Re-enrollment guard (F20): if 2FA is ALREADY on, both setup and enable must
+    # prove the current password, exactly like disable does. Without this, anyone
+    # holding a borrowed session (a 30-day remember-me cookie) could silently
+    # re-enroll a fresh secret and new recovery codes, take over the second
+    # factor, and lock the owner out entirely. Gate ONLY when already enabled, so
+    # the first-time anti-lockout enrollment path (no password field yet) stays
+    # untouched and can never lock anyone out.
+    if action in ("setup", "enable") and _totp_enabled():
+        if not _check_pw(str(d.get("password", "")), auth.get("main_password_hash", "")):
+            return web.json_response({"ok": False, "error": "Password is incorrect"}, status=403)
 
     if action == "setup":
         # Store as PENDING. Nothing about login changes until 'enable' proves a
@@ -836,7 +942,8 @@ async def api_change_password(request: web.Request) -> web.Response:
 
     log.info("Main-page password changed, other sessions invalidated")
     resp = web.json_response({"ok": True})
-    resp.set_cookie(SESSION_COOKIE, _make_token(new_secret),
+    resp.set_cookie(SESSION_COOKIE,
+                     _make_token(new_secret, SESSION_TIMEOUT, auth.get("session_epoch", 0)),
                      max_age=SESSION_TIMEOUT, httponly=True,
                      secure=True, samesite="Lax", path="/")
     return resp
@@ -2232,17 +2339,26 @@ def _usb_w(rel, val):
     except: pass
 
 def _load_cfg():
-    try:
-        import json as _j
-        return _j.loads(open("/etc/magicbridge/config.json").read())
-    except: return {}
+    # Delegate to _read_config: a genuinely ABSENT file still reads as {}, but a
+    # CORRUPT (unparseable) file now RAISES instead of silently reading as {}.
+    # The old version swallowed a parse error into {}, and since _save_cfg wrote
+    # that {} straight back, a single jiggler/mouse-mode/identity toggle over an
+    # already-torn config WIPED the auth block (password hash + session secret)
+    # in one step - resetting a stealth unit to the public default password. Let
+    # the parse error propagate so the toggle fails loudly instead of clobbering.
+    return _read_config()
 
 def _save_cfg(d):
-    import json as _j
+    # Delegate to the atomic _write_config (temp file + fsync + os.replace + 0600)
+    # instead of open(path,'w')+write, which TRUNCATED the file to zero first and
+    # could leave config.json empty/unparseable on a kill or power loss - and
+    # config.json holds the password hash and session secret. Keep the old
+    # best-effort no-raise contract so a persistence hiccup doesn't 500 a live
+    # settings toggle; log it instead of failing silently.
     try:
-        with open("/etc/magicbridge/config.json", "w") as f:
-            f.write(_j.dumps(d, indent=2))
-    except: pass
+        _write_config(d)
+    except Exception as e:
+        log.error("could not persist config: %s", e)
 
 
 def _gen_serial(profile_idx):
@@ -2435,13 +2551,40 @@ async def api_mouse_mode(request):
 # ---------------------------------------------------------------------------
 _SCREEN_AREA_DEFAULT = {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 1.0}
 
+# Monotonic source epoch. The old tag was just resolution@device, but device is
+# always /dev/video0 and the restricted EDID makes nearly every compliant source
+# negotiate 1920x1080, so the tag was the SAME string for essentially every
+# target and the calibration auto-revert (see _get_screen_area) was a no-op. We
+# fold in the source refresh rate (video._src_fps: an iPad HDMI adapter presents
+# 60 while the EDID caps compliant sources at 50) AND accumulate a monotonic
+# counter that steps whenever the observable source signature changes. Because it
+# only ever COUNTS UP, a source that blips away and returns (unplug/replug, a
+# resolution change and back) lands on a HIGHER epoch than the one a calibration
+# was stamped with, so the stamped tag no longer matches and the calibration
+# safely falls back to the full frame. We can only advance it on transitions
+# video actually surfaces as plain attributes; that is the price of staying on
+# the /api/status hot path and never shelling out from here.
+_SRC_EPOCH = {"n": 0, "sig": None}
+
 def _screen_src_tag() -> str:
     """Cheap fingerprint of the CURRENT source, used to bind a calibration to the
     target it was measured on. Deliberately reads plain attributes only - this
     runs on every /api/status poll, so it must not enumerate devices or shell
     out (video.status() does both)."""
     try:
-        return "%s@%s" % (getattr(video, "resolution", "?"), getattr(video, "device", "?"))
+        res = getattr(video, "resolution", "?")
+        fps = getattr(video, "_src_fps", 0)
+        dev = getattr(video, "device", "?")
+        sig = "%s@%sfps@%s" % (res, fps, dev)
+        # Step the epoch on any observable change of the source signature. Called
+        # only from the single event-loop thread (status build + screen-area
+        # save/check), so this read-modify-write needs no lock; video's watchdog
+        # thread only writes the attributes we read, which is safe to read raw.
+        if sig != _SRC_EPOCH["sig"]:
+            if _SRC_EPOCH["sig"] is not None:   # not the first-ever observation
+                _SRC_EPOCH["n"] += 1
+            _SRC_EPOCH["sig"] = sig
+        return "%s#%d" % (sig, _SRC_EPOCH["n"])
     except Exception:
         return "?"
 

@@ -106,7 +106,7 @@ body.fs #fshud{display:flex}
   backdrop-filter:blur(18px) saturate(140%);-webkit-backdrop-filter:blur(18px) saturate(140%);
   border-bottom:1px solid var(--border);display:flex;align-items:center;
   gap:8px;padding:0 14px;z-index:60;transition:opacity .2s;}
-body.fs #topbar,body.fs #botbar,body.fs #sidebar,body.fs #railnav{display:none!important}
+body.fs #topbar,body.fs #botbar,body.fs #sidebar{display:none!important}
 #logo-mark{width:24px;height:24px;flex-shrink:0;display:block}
 #logo-lockup{display:flex;align-items:center;gap:8px;flex-shrink:0}
 #logo{font-size:15px;font-weight:700;letter-spacing:-.5px;flex-shrink:0;
@@ -122,15 +122,10 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar,body.fs #railnav{display:none!i
 #cdot.warn{background:var(--yellow);animation:pulse 1.4s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
 #sp{flex:1}
-.stat-chip{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);flex-shrink:0;cursor:default;
-  padding:3px 9px;border-radius:20px;background:rgba(255,255,255,.05);border:1px solid transparent}
+.stat-chip{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);flex-shrink:0;cursor:default}
 .stat-chip span{color:var(--sub);font-variant-numeric:tabular-nums}
-.stat-chip.multi span,.stat-chip.multi{color:var(--yellow)}
-.stat-chip.lv-g,.stat-chip.lv-g span{color:#6ee7b7}.stat-chip.lv-g{background:rgba(52,211,153,.14)}
-.stat-chip.lv-a,.stat-chip.lv-a span{color:#f5c98a}.stat-chip.lv-a{background:rgba(245,180,90,.16)}
-.stat-chip.lv-r,.stat-chip.lv-r span{color:#fca5a5}.stat-chip.lv-r{background:rgba(248,113,113,.16)}
-.spark{display:inline-flex;align-items:flex-end;gap:1px;height:11px;margin-left:3px}
-.spark i{width:2px;background:currentColor;opacity:.85;display:inline-block;border-radius:1px}
+.stat-chip.multi span{color:var(--yellow)}
+.stat-chip.multi{color:var(--yellow)}
 #ss-viewers{margin:2px 0 4px}
 .vw{display:flex;gap:8px;align-items:baseline;font-size:11px;padding:4px 0;border-top:1px solid var(--border)}
 .vw-ip{color:var(--text);font-family:ui-monospace,monospace;min-width:100px}
@@ -223,16 +218,6 @@ body:not(.fs) .fs-hud{display:none!important}
 .snav-btn:hover{color:var(--sub)}
 .snav-btn.active{color:var(--accent-l);border-bottom-color:var(--accent)}
 #sidebody{flex:1;overflow-y:auto}
-/* Rail: a thin always-visible icon rail on the right; clicking an icon expands
-   the settings panel (#sidebar). Replaces the in-panel tab nav (#sidenav). */
-#railnav{flex-shrink:0;width:46px;background:rgba(11,14,23,.82);border-left:1px solid var(--border);
-  display:flex;flex-direction:column;align-items:center;gap:6px;padding:10px 0;
-  -webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px)}
-.railbtn{width:34px;height:34px;border-radius:9px;border:1px solid transparent;background:none;
-  color:var(--muted);font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s}
-.railbtn:hover{background:rgba(255,255,255,.06);color:var(--sub)}
-.railbtn.active{background:rgba(92,150,255,.16);color:var(--accent-l);border-color:rgba(92,150,255,.32)}
-#sidenav{display:none}
 .tab{display:none;padding:14px}
 .tab.active{display:block}
 .scard{background:var(--card);border:1px solid var(--border);border-radius:var(--r2);
@@ -609,8 +594,8 @@ body:not(.fs) .fs-hud{display:none!important}
   <div id="sp"></div>
   <div class="stat-chip" id="chip-viewers" title="Devices connected / controlling right now">👁 <span id="sv-viewers">-</span></div>
   <div class="stat-chip" id="chip-uptime" title="Device uptime">⏱ <span id="sv-uptime">-</span></div>
-  <div class="stat-chip" id="chip-temp">🌡 <span id="sv-temp">-</span></div>
-  <div class="stat-chip" id="chip-lat">⚡ <span id="sv-lat">-</span><span class="spark" id="lat-spark"></span></div>
+  <div class="stat-chip">🌡 <span id="sv-temp">-</span></div>
+  <div class="stat-chip">⚡ <span id="sv-lat">-</span></div>
   <button class="tbtn icon" onclick="toggleFS()" title="Fullscreen">⛶</button>
   <button class="tbtn" id="set-btn" onclick="toggleSidebar()">⚙</button>
   <button class="tbtn icon" onclick="mbLogout()" title="Sign out">⏏</button>
@@ -643,13 +628,13 @@ body:not(.fs) .fs-hud{display:none!important}
     <img id="stream" src="/stream" alt="" onerror="onErr()" onload="onLoad()">
     <video id="webrtc-view" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:contain;background:#000"></video>
     <div id="nosig">
-      <svg class="nsico" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1" style="display:none">
+      <svg class="nsico" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1">
         <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
         <line x1="4" y1="5" x2="20" y2="19" stroke="#ef4444" stroke-width="1.5"/>
       </svg>
-      <p class="nsh" id="ns-head">Connecting…</p>
-      <p class="nsp" id="ns-sub">Establishing video stream…</p>
-      <button id="retrybtn" onclick="retryVideo()" style="display:none">↺ Retry</button>
+      <p class="nsh">No Signal</p>
+      <p class="nsp">Connect HDMI from PC to capture card. Check ustreamer is running.</p>
+      <button id="retrybtn" onclick="retryStream()">↺ Retry</button>
     </div>
     <div id="cur-dot"></div>
     <div id="hint">Click to capture · Esc tap → sent to remote · hold Esc or Right Ctrl 2s to exit control</div>
@@ -700,11 +685,6 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
           <div class="srow"><span class="sk">Frame rate</span>
             <select class="ssel" id="sel-fps" style="width:auto;margin:0">
-              <!-- 50 is the ceiling on this hardware: the Pi 4B has only 2 CSI
-                   lanes, so 1080p60 is physically impossible. It exists here
-                   because the Sharp preset asks for 50 and had no option to
-                   land on, which blanked the row and dropped fps entirely. -->
-              <option value="50">50 fps</option>
               <option value="30">30 fps</option>
               <option value="25" selected>25 fps ★</option>
               <option value="20">20 fps</option>
@@ -719,10 +699,7 @@ body:not(.fs) .fs-hud{display:none!important}
             </span>
           </div>
           <button class="sbtn pri" style="margin-top:6px" onclick="applyVideo()">▶ Apply</button>
-          <!-- Says what is actually on the wire when an automatic fallback has
-               moved off the transport picked above (the dropdown deliberately
-               keeps showing the CHOICE, since that is what Apply persists). -->
-          <div id="mode-note" style="font-size:11px;opacity:.6;margin-top:6px">WebRTC by default, falls back to MJPEG if unavailable.</div>
+          <div style="font-size:11px;opacity:.6;margin-top:6px">WebRTC by default, falls back to MJPEG if unavailable.</div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Mouse Mode</div>
@@ -732,28 +709,8 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
           <div class="snote" id="mm-note" style="margin-top:6px">
             <b>Relative</b>: pointer-lock, most stealthy (looks like a normal mouse).
-            Works everywhere. <b>Absolute</b>: cursor maps 1:1 so you always see it.
-            Rebuilds the USB mouse, slightly less stealthy.
-          </div>
-          <div class="snote" style="margin-top:6px;color:var(--yellow)">
-            <b>iPad / iPhone: use Relative.</b> Verified on an iPad Air: iPadOS moves
-            the pointer from an absolute device but <b>ignores its clicks</b>. Relative
-            mode clicks work normally there.
-          </div>
-          <!-- Absolute-mode calibration. Only matters when the target does NOT
-               fill the frame (e.g. an iPad mirrors its 4:3-ish screen into a 16:9
-               signal, centred inside black bars). Default is the full frame, so a
-               normal laptop target needs nothing here. -->
-          <div id="sa-wrap" style="margin-top:10px;border-top:1px solid var(--border);padding-top:9px">
-            <div class="srow"><span class="sk">Target screen area</span><span class="sv" id="sa-val">full frame</span></div>
-            <div class="snote" style="margin-top:4px">
-              Absolute mode only. Needed when the target doesn't fill the picture
-              (black bars down the sides), e.g. a 4:3 screen or a tablet mirroring
-              into a 16:9 signal. Point the target at its home screen, then Detect.
-              Resets itself automatically if you connect a different target.
-            </div>
-            <button class="sbtn" id="sa-detect" onclick="screenAreaDetect()" style="margin-top:6px">◳ Detect screen area</button>
-            <button class="sbtn" onclick="screenAreaReset()" style="margin-top:4px">↺ Use full frame</button>
+            <b>Absolute</b>: cursor maps 1:1 so you always see it. Rebuilds the USB
+            mouse, slightly less stealthy.
           </div>
         </div>
         <div class="scard">
@@ -765,7 +722,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="cur-opt" data-c="dot" onclick="setCursor('dot')">Dot</button>
           </div>
           <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:pointer">
-            <input type="checkbox" id="overlay-chk" onchange="toggleOverlay(this.checked)" style="accent-color:var(--accent)">
+            <input type="checkbox" id="overlay-chk" onchange="toggleOverlay(this.checked)" checked style="accent-color:var(--accent)">
             Show predictive cursor when locked (relative mode)
           </label>
         </div>
@@ -1046,16 +1003,10 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="sys-cat" data-cat="update">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>Software Update</div>
-          <div class="snote" style="margin-bottom:8px">Updates MagicBridge from GitHub. Small changes apply in a few seconds; bigger ones reinstall and reconnect in about a minute.</div>
+          <div class="snote" style="margin-bottom:8px">Pulls the latest from GitHub. Small changes update instantly; big ones do a full reinstall.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="sys-avail">-</span></div>
-          <div class="srow"><span class="sk">Version</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:11px">-</span></div>
+          <div class="srow"><span class="sk">Commit</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:10px">-</span></div>
           <div class="srow"><span class="sk">Branch</span><span class="sv" id="sys-branch">-</span></div>
-          <!-- What's new: short one-line summary of EVERY pending commit, not just
-               the latest. Full-width block so long text never collides with a label. -->
-          <div id="sys-whatsnew" style="display:none;margin:10px 0 4px">
-            <div class="sk" style="margin-bottom:5px">What's new</div>
-            <ul id="sys-whatsnew-list" style="margin:0;padding-left:18px;font-size:11px;color:var(--text);line-height:1.65"></ul>
-          </div>
           <div id="sys-update-out" style="display:none;font-size:10px;background:var(--surf2);border:1px solid var(--border);border-radius:4px;padding:6px;margin:6px 0;white-space:pre-wrap;max-height:120px;overflow:auto;font-family:monospace;color:var(--muted)"></div>
           <button class="sbtn" onclick="sysCheckVer()" style="margin-top:6px">↺ Check for updates</button>
           <button class="sbtn suc" id="sys-update-btn" onclick="sysUpdate()" style="margin-top:4px">⬆ Update now</button>
@@ -1079,14 +1030,6 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="scard-title"><span class="dot-yel" style="background:var(--cyan,#39d0ff)"></span>Two-Factor (TOTP)</div>
           <div class="snote" style="margin-bottom:8px">An authenticator code on top of the password. You must enter a working code before it turns on, so a bad scan can't lock you out.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="tfa-status">-</span></div>
-          <!-- Re-enrolling while 2FA is ALREADY on needs the current password, so
-               a borrowed session can't silently swap the second factor to its own
-               authenticator and lock the owner out. Revealed only when a re-enroll
-               actually needs it; first-time setup never sees this field. -->
-          <div id="tfa-reauth" style="display:none;margin-top:8px">
-            <label class="wifi-label" for="tfa-setup-pw">Current password</label>
-            <input class="sinput wifi-field" type="password" id="tfa-setup-pw" placeholder="Current password" autocomplete="current-password" style="margin-bottom:6px">
-          </div>
           <div id="tfa-off">
             <button class="sbtn" onclick="tfaSetup()" style="margin-top:6px;width:100%">🔐 Set up 2FA</button>
           </div>
@@ -1270,12 +1213,6 @@ body:not(.fs) .fs-hud{display:none!important}
 
     </div>
   </aside>
-
-  <nav id="railnav">
-    <button class="railbtn active" data-tab="stream" onclick="railTab('stream')" title="Stream">📹</button>
-    <button class="railbtn" data-tab="network" onclick="railTab('network')" title="Network">📶</button>
-    <button class="railbtn" data-tab="system" onclick="railTab('system')" title="System">⚙</button>
-  </nav>
 </div>
 
 <!-- Bottom bar -->
@@ -1395,54 +1332,22 @@ function mbLogout(){ fetch('/logout',{method:'POST'}).finally(()=>{ location.hre
 function tfaMsg(t,ok){const e=document.getElementById('tfa-msg');e.style.display='block';
   e.textContent=t;e.style.background=ok?'rgba(0,200,120,.15)':'rgba(255,80,80,.15)';
   e.style.color=ok?'#7fe6b0':'#ff9d9d';}
-// Last known server state. Setting 2FA up AGAIN while it is already on requires
-// the current password (the backend enforces it): otherwise a borrowed session
-// could quietly re-enroll the second factor to its own authenticator and lock
-// the owner out of the only way into the device. First-time enrollment stays
-// password-free.
-let _tfaEnabled=false;
-function _tfaPw(){ const f=document.getElementById('tfa-setup-pw'); return f?f.value:''; }
-// The backend answers a missing/wrong password with an error that names it.
-function _tfaWantsPw(d){ return /password/i.test((d&&d.error)||''); }
-function _tfaAskPw(msg){
-  const w=document.getElementById('tfa-reauth'); if(w) w.style.display='block';
-  const f=document.getElementById('tfa-setup-pw'); if(f) f.focus();
-  tfaMsg(msg,false);
-}
 async function tfaRefresh(){
   try{
     const d=await (await fetch('/api/auth/2fa')).json();
     const on=!!d.enabled;
-    _tfaEnabled=on;
     document.getElementById('tfa-status').textContent=
       on?('ON · '+(d.recovery_left||0)+' recovery codes left'):'Off';
     document.getElementById('tfa-off').style.display  = on?'none':'block';
     document.getElementById('tfa-on').style.display   = on?'block':'none';
     if(on) document.getElementById('tfa-setup').style.display='none';
-    if(!on){   // nothing to re-authenticate against once 2FA is off
-      const w=document.getElementById('tfa-reauth'); if(w) w.style.display='none';
-      const f=document.getElementById('tfa-setup-pw'); if(f) f.value='';
-    }
   }catch(e){}
 }
 async function tfaSetup(){
-  const body={action:'setup'};
-  if(_tfaEnabled){
-    const pw=_tfaPw();
-    if(!pw){ _tfaAskPw('2FA is already on - enter your current password to re-enroll.'); return; }
-    body.password=pw;
-  }
   const r=await fetch('/api/auth/2fa',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)});
+    body:JSON.stringify({action:'setup'})});
   const d=await r.json().catch(()=>null);
-  if(!r.ok||!d||!d.ok){
-    // This panel can be stale (2FA switched on from another tab/session), in
-    // which case the server refuses without a password. Reveal the field and let
-    // them retry instead of leaving a dead-end error. Same path when the
-    // password they gave was wrong.
-    if(_tfaWantsPw(d)){ _tfaEnabled=true; _tfaAskPw((d&&d.error)||'Enter your current password, then try again.'); return; }
-    tfaMsg((d&&d.error)||'Setup failed',false); return;
-  }
+  if(!r.ok||!d||!d.ok){ tfaMsg((d&&d.error)||'Setup failed',false); return; }
   document.getElementById('tfa-uri').textContent=d.uri;
   document.getElementById('tfa-codes').innerHTML=(d.recovery||[]).join('<br>');
   document.getElementById('tfa-setup').style.display='block';
@@ -1452,23 +1357,11 @@ async function tfaSetup(){
 async function tfaEnable(){
   const code=document.getElementById('tfa-code').value.trim();
   if(!code){ tfaMsg('Enter the 6-digit code',false); return; }
-  const body={action:'enable',code};
-  if(_tfaEnabled){
-    const pw=_tfaPw();
-    if(!pw){ _tfaAskPw('2FA is already on - enter your current password to re-enroll.'); return; }
-    body.password=pw;
-  }
   const r=await fetch('/api/auth/2fa',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)});
+    body:JSON.stringify({action:'enable',code})});
   const d=await r.json().catch(()=>null);
-  if(!r.ok||!d||!d.ok){
-    if(_tfaWantsPw(d)){ _tfaEnabled=true; _tfaAskPw((d&&d.error)||'Enter your current password, then try again.'); return; }
-    tfaMsg((d&&d.error)||'Could not enable',false); return;
-  }
+  if(!r.ok||!d||!d.ok){ tfaMsg((d&&d.error)||'Could not enable',false); return; }
   document.getElementById('tfa-code').value='';
-  const _pf=document.getElementById('tfa-setup-pw');
-  if(_pf){ _pf.value=''; }
-  const _rw=document.getElementById('tfa-reauth'); if(_rw) _rw.style.display='none';
   tfaMsg('2FA is on. Keep those recovery codes somewhere safe.',true);
   tfaRefresh();
 }
@@ -1521,10 +1414,6 @@ let ws=null, captured=false, _toastT=null;
 const WS_URL=(location.protocol==='https:'?'wss:':'ws:')+'//'+location.host+'/ws';
 
 let _wsBackoff=1000;   // exponential backoff, reset on a clean open
-// Last viewer count from /api/status. Gates the reconnect reconciliation below:
-// only a SOLE operator may issue a target-wide release_all (see ws.onopen).
-// Defaults to 1 so a first connect (nothing held) takes the harmless sole path.
-let _lastViewerCount=1;
 function connect(){
   try{ ws=new WebSocket(WS_URL); }catch(e){ _scheduleReconnect(); return; }
   // Only (re)open the MJPEG stream if MJPEG is actually the active transport.
@@ -1535,24 +1424,6 @@ function connect(){
   let _wsOpened=false;
   ws.onopen=()=>{ _wsOpened=true; dot('ok','Connected'); _wsAuthFails=0; _wsBackoff=1000;
     if(_activeTransport !== 'h264') retryStream();
-    // Reconcile held input on every (re)connect. During an outage send() writes
-    // to the old CLOSED socket and silently drops the message, so a key/button
-    // RELEASED during the outage never reaches the target and can be stuck DOWN.
-    // SOLE operator: a target-wide release_all is safe and best - it also clears
-    // a key we released during the outage (whose keyup was the dropped message).
-    // With a 2nd viewer present we must NOT clobber their held input (the backend
-    // deliberately keeps held input alive across one client's drop, S6), so we
-    // release only OUR OWN tracked keys/buttons. Either way clear local tracking.
-    // First connect: nothing held + sole path, so a harmless idle report.
-    const _hb=(typeof _heldBtns!=='undefined')?_heldBtns:null;
-    if(_lastViewerCount<=1){
-      send({type:'release_all'});
-    } else {
-      _heldKeys.forEach(c=>send({type:'keyup',code:c}));
-      if(_hb) _hb.forEach(b=>send({type:'mouseup',button:b}));
-    }
-    _heldKeys.clear();
-    if(_hb) _hb.clear();
     ping(); };
   ws.onclose=(ev)=>{
     // Distinguish a genuine auth/handshake rejection (closes WITHOUT ever
@@ -1564,22 +1435,9 @@ function connect(){
     // connection kept the page LOOKING connected. That is exactly the state
     // where combos do nothing and you can't clear a target-side autoscroll.
     if(_wsOpened){ _wsAuthFails=0; }   // a real session dropped -> just reconnect
-    else { _wsAuthFails++; }           // never opened -> MIGHT be an auth reject
+    else { _wsAuthFails++; }           // never opened -> likely auth/handshake reject
     dot('warn','Reconnecting…');       // reflect reality: input is NOT live now
-    if(_wsAuthFails>=3){
-      // "Never opened" alone does NOT prove an auth reject: a 502 (backend
-      // restarting), connection-refused, or an offline blip ALSO closes /ws
-      // before onopen, and those must not log the operator out mid-session.
-      // Only a real HTTP 401 means the session is actually gone - verify with
-      // a cheap API call first, and otherwise keep reconnecting.
-      fetch('/api/status',{cache:'no-store'}).then(function(r){
-        if(r.status===401){ location.href='/login'; }
-        else { _wsAuthFails=0; _scheduleReconnect(); }   // backend up -> keep trying
-      }).catch(function(){
-        _wsAuthFails=0; _scheduleReconnect();             // offline/refused -> keep trying
-      });
-      return;
-    }
+    if(_wsAuthFails>=3){ location.href='/login'; return; }
     _scheduleReconnect();
   };
   ws.onerror=()=>{};
@@ -1612,91 +1470,27 @@ function onMsg(d){
     const ms=Date.now()-_pt;
     document.getElementById('sv-lat').textContent=ms+'ms';
     document.getElementById('s-lat').textContent=ms+' ms';
-    _railSpark(ms);
   }
   if(d.type==='status') applyStatus(d);
-}
-// Latency pill: threshold color (green/amber/red) + a rolling mini sparkline so
-// jitter is visible at a glance (the Wi-Fi story we chased).
-let _spk=[];
-function _railSpark(ms){
-  _spk.push(ms); if(_spk.length>12) _spk.shift();
-  const chip=document.getElementById('chip-lat');
-  if(chip){ chip.classList.remove('lv-g','lv-a','lv-r'); chip.classList.add('lv-'+(ms>150?'r':ms>80?'a':'g')); }
-  const s=document.getElementById('lat-spark'); if(!s) return;
-  const mx=Math.max(30,..._spk);
-  s.innerHTML=_spk.map(v=>'<i style="height:'+Math.max(2,Math.round(v/mx*11))+'px"></i>').join('');
 }
 function dot(cls,txt){
   document.getElementById('cdot').className=cls;
   document.getElementById('cdtxt').textContent=txt;
-  // The fullscreen HUD dot is the ONLY connection indicator in fullscreen (the
-  // whole top bar is hidden there). It was looked up as 'fs-dot' while the
-  // element is 'fshud-dot', so getElementById returned null every time and the
-  // dot stayed green with its "Live" tooltip even while the socket was down and
-  // input was silently dead. Drive the tooltip from the status text too.
-  const fd=document.getElementById('fshud-dot');
-  if(fd){
-    fd.style.background=cls==='ok'?'var(--green)':cls==='err'?'var(--red)':'var(--yellow)';
-    fd.title=txt;
-  }
+  const fd=document.getElementById('fs-dot');
+  if(fd) fd.style.background=cls==='ok'?'var(--green)':cls==='err'?'var(--red)':'var(--yellow)';
 }
 
 // Stream
 const $s=document.getElementById('stream');
 const $ns=document.getElementById('nosig');
 let _frameLoadTimes=[];
-// Auto-recovery for the MJPEG transport. Without this, any stream error
-// (first-load race before ustreamer is serving, the encoder restarting on a
-// resolution/fps change, a brief backend hiccup during a gadget rebuild) left
-// the "No Signal" overlay up until the user clicked Retry by hand.
-let _nosigTimer=null, _nosigDelay=800;
-// True while we have deliberately dropped the MJPEG <img> src because the tab
-// has been hidden for a while. display:none does NOT stop an <img> stream, and
-// MJPEG is the steady state after any WebRTC fallback, so a backgrounded tab
-// otherwise keeps a full video connection open: WiFi TX and power burned on the
-// stealth Pi for video nobody is watching. Gates retryStream() so an unrelated
-// caller (WS reconnect, the 15s anti-stall timer, the no-signal self-heal) can't
-// resurrect the connection we just closed.
-let _mjpegSuspended=false;
-// Overlay state helper. Three states so the user only ever sees the alarming
-// "No Signal" on a GENUINE failure, never during a normal connect: 'connecting'
-// (neutral, no Retry button), 'nosignal' (red copy + Retry), 'hide'.
-function _nsState(s){
-  if(!$ns) return;
-  if(s==='hide'){ $ns.style.display='none'; return; }
-  $ns.style.display='flex';
-  const h=document.getElementById('ns-head'), p=document.getElementById('ns-sub'),
-        b=document.getElementById('retrybtn'), ic=$ns.querySelector('.nsico');
-  if(s==='connecting'){
-    if(h) h.textContent='Connecting…';
-    if(p) p.textContent='Establishing video stream…';
-    if(b) b.style.display='none';
-    if(ic) ic.style.display='none';
-  } else {   // 'nosignal'
-    if(h) h.textContent='No Signal';
-    if(p) p.textContent='Connect HDMI from PC to capture card. Check ustreamer is running.';
-    if(b) b.style.display='';
-    if(ic) ic.style.display='';
-  }
-}
-function _mjpegOwnsOverlay(){
-  // MJPEG owns the overlay/pills only while it is the visible picture: on the
-  // mjpeg transport, and on h264 until the WebRTC track has taken over. Must go
-  // false at TRACK-up (not confirm), because that is when we close the <img> -
-  // otherwise the resulting img error would re-trigger onErr -> retryStream and
-  // reopen the very MJPEG stream we just closed, in a loop.
-  return !(typeof _activeTransport!=='undefined' && _activeTransport==='h264'
-           && (_webrtcTrackUp || _webrtcConfirmed));
-}
 function onLoad(){
-  // Once WebRTC has confirmed and taken over the picture, the background MJPEG
-  // <img> is closed and its stray events must not touch the WebRTC pills. Until
-  // then MJPEG is the visible picture, so let it clear the overlay.
-  if(!_mjpegOwnsOverlay()) return;
+  // The MJPEG <img> keeps running in the background even while WebRTC is
+  // the active/visible transport (see setVideoTransport) - its own
+  // load/error events shouldn't overwrite the status pills that are
+  // currently describing the WebRTC stream the user can actually see.
+  if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
   $ns.style.display='none';
-  if(_nosigTimer){ clearTimeout(_nosigTimer); _nosigTimer=null; }
-  _nosigDelay=800;                      // frames back -> reset the backoff
   document.getElementById('bd-stream').className='bd ok';
   document.getElementById('bv-stream').textContent='Live';
   document.getElementById('s-stream').textContent='Live';
@@ -1718,48 +1512,14 @@ function onLoad(){
   }
 }
 function onErr(){
-  // Ignore the stray error that fires when _confirmed() removes the <img> src
-  // after WebRTC has taken over; only react while MJPEG is the visible picture.
-  if(!_mjpegOwnsOverlay()) return;
-  if(_mjpegSuspended) return;   // same stray error, from our own hidden-tab close
-  // On the h264 path this is still the CONNECTING window (WebRTC not confirmed),
-  // so a momentary MJPEG hiccup is not a real "No Signal" - show the neutral
-  // connecting state and keep retrying. On the mjpeg transport it's a genuine
-  // no-signal, so show the red overlay + Retry.
-  _nsState((_activeTransport==='h264') ? 'connecting' : 'nosignal');
+  if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
+  $ns.style.display='flex';
   document.getElementById('bd-stream').className='bd err';
   document.getElementById('bv-stream').textContent='No signal';
   document.getElementById('s-stream').textContent='No signal';
   document.getElementById('s-stream').className='sv err';
-  // Self-heal: keep reconnecting on a capped backoff so the overlay clears the
-  // moment frames return, instead of stranding the user until a manual Retry.
-  if(_nosigTimer) return;               // one retry in flight already
-  _nosigTimer=setTimeout(function(){
-    _nosigTimer=null;
-    _nosigDelay=Math.min(_nosigDelay*1.6, 5000);
-    if(_mjpegOwnsOverlay()) retryStream();
-  }, _nosigDelay);
 }
-function retryStream(){
-  if(_mjpegSuspended) return;   // hidden tab: stay off the wire until we're visible again
-  $s.src='/stream?_='+Date.now(); _frameLoadTimes=[];
-}
-// Retry BUTTON handler: re-establish whatever transport is active. The old
-// button wired straight to retryStream(), which only pokes the MJPEG <img> -
-// a pure no-op on the default h264 path (img hidden, onLoad early-returns), so
-// it "worked" only because the 8s timeout had already fallen back to MJPEG by
-// the time a human clicked. Now it forces a real re-attempt of the CURRENT
-// transport.
-function retryVideo(){
-  const m = _activeTransport || ((document.getElementById('sel-mode')||{}).value);
-  if(m==='h264'){
-    _webrtcGaveUp=false; _webrtcRetries=0; _webrtcConfirmed=false; _webrtcTrackUp=false;
-    clearTimeout(_webrtcRearmTimer);
-    setVideoTransport('h264');
-  } else {
-    retryStream();
-  }
-}
+function retryStream(){ $s.src='/stream?_='+Date.now(); _frameLoadTimes=[]; }
 
 // MJPEG-over-HTTP has no frame-dropping: TCP guarantees in-order delivery,
 // so if the browser or network ever falls behind the capture card's output
@@ -1773,7 +1533,6 @@ function retryVideo(){
 // is hidden then and this would just churn its background connection.
 setInterval(()=>{
   if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
-  if(document.hidden) return;   // nobody is watching: don't churn a connection we may have closed
   const el=document.getElementById('s-stream');
   if(el && el.textContent==='Live') retryStream();
 }, 15000);
@@ -1793,14 +1552,6 @@ let _rCtrlSent=false;
 // released only the four LEFT modifiers, so AltGr / right-Shift/Ctrl / any held
 // letter stayed stuck on the target when the operator alt-tabbed away.
 const _heldKeys=new Set();
-// True when the keyboard event targets an on-page editable field (paste box,
-// forms, etc.) - those keystrokes belong to the UI and must NOT be forwarded to
-// the target or preventDefault'd (S3).
-function _overEditable(t){
-  if(!t) return false;
-  const tag=t.tagName;
-  return tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||t.isContentEditable===true;
-}
 function _sendDown(code){ _heldKeys.add(code); send({type:'keydown',code}); }
 function _sendUp(code){ _heldKeys.delete(code); send({type:'keyup',code}); }
 // Escape = hold-to-exit. A single tap is forwarded to the remote as a normal
@@ -1896,25 +1647,12 @@ function _setCaptured(on){
       showRecapture();
     }
     clearTimeout(_escHoldTimer); _escDown=0;
-    // Release everything still held on the TARGET. A browser-FORCED capture exit
-    // (pressing Esc while pointer-locked in relative mode) reaches here via
-    // pointerlockchange WITHOUT going through releaseAll(), so Escape (sent raw,
-    // never tracked in _heldKeys) and any key held at that instant would stay
-    // stuck DOWN on the target and auto-repeat (S4). Release them here too;
-    // duplicate keyups are harmless/idempotent.
-    send({type:'keyup',code:'Escape'});
-    _heldKeys.forEach(c=>send({type:'keyup',code:c}));
-    _heldKeys.clear();
-    ['ShiftLeft','ControlLeft','AltLeft','MetaLeft',
-     'ShiftRight','ControlRight','AltRight','MetaRight'].forEach(c=>send({type:'keyup',code:c}));
-    _rCtrlDown=0; _rCtrlSent=false;
     _intentional=false;
     _syncKbLock();   // released control -> drop keyboard lock (stays in FS if you chose it)
     document.getElementById('cur-dot').style.display='none';
     setSidebarForControl(true);
     if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();   // don't leave a button held after losing control
   }
-  if(typeof _applyViewCursor==='function') _applyViewCursor();   // hide/show OUR cursor for the new capture state
 }
 ['pointerlockchange','mozpointerlockchange','webkitpointerlockchange'].forEach(ev=>{
   document.addEventListener(ev,()=>{
@@ -1969,12 +1707,6 @@ function releaseAll(){
 // Keyboard
 document.addEventListener('keydown',e=>{
   if(!captured) return;
-  // S3: if the operator is typing into an on-page field (the paste box, WiFi
-  // form, any input), let the field have the keystrokes - do NOT forward them
-  // to the target or preventDefault. In absolute mode `captured` stays true
-  // while the cursor is visible and UI is clickable, so without this the paste
-  // box got nothing and every character leaked to the remote machine.
-  if(_overEditable(e.target)) return;
   // Esc: single tap is forwarded to the remote; hold ESC_HOLD_MS to exit control.
   if(e.code==='Escape'){
     e.preventDefault();
@@ -2019,7 +1751,6 @@ document.addEventListener('keydown',e=>{
 
 document.addEventListener('keyup',e=>{
   if(!captured) return;
-  if(_overEditable(e.target)) return;   // S3: matches the keydown guard above
   if(e.code==='Escape'){
     clearTimeout(_escHoldTimer);          // released before the hold fired = a tap
     _escDown=0;
@@ -2067,46 +1798,7 @@ function _releaseOnFocusLoss(){
   if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();   // stuck mouse button (e.g. autoscroll) on focus loss
 }
 window.addEventListener('blur', _releaseOnFocusLoss);
-let _hideSuspendTimer=null;
-document.addEventListener('visibilitychange', ()=>{
-  if(document.hidden){
-    _releaseOnFocusLoss();
-    // Tear down WebRTC after a short grace period when the tab is backgrounded.
-    // A hidden tab keeps the Janus session + memsink watcher open, pinning the
-    // ustreamer plugin's capture thread at ~100% CPU for video nobody is
-    // watching (heat/power/anonymity on the stealth Pi). The grace period means
-    // a quick tab-switch doesn't churn the connection.
-    // MJPEG gets the same treatment after the same grace period: it is the
-    // steady state after any WebRTC fallback, and a hidden <img> keeps its
-    // stream connection wide open (display:none doesn't stop it), so the tab
-    // you left in the background keeps costing WiFi TX and Pi power. Drop the
-    // src; retryStream() puts it back the moment the tab is visible again.
-    clearTimeout(_hideSuspendTimer);
-    _hideSuspendTimer=setTimeout(function(){
-      if(!document.hidden) return;
-      if(_activeTransport==='h264'){ _webrtcSuspended=true; stopWebRTC(); }
-      // Covers the plain mjpeg transport AND the h264 path before WebRTC has
-      // taken the screen, where MJPEG is still the picture on the wire.
-      const im=document.getElementById('stream');
-      if(im && im.getAttribute('src')){ _mjpegSuspended=true; im.removeAttribute('src'); }
-    }, 10000);
-  } else {
-    clearTimeout(_hideSuspendTimer);
-    if(_mjpegSuspended){ _mjpegSuspended=false; retryStream(); }
-    if(_webrtcSuspended){
-      _webrtcSuspended=false;
-      // Re-establish on return. The status poll can't do this: syncVideoTransport
-      // early-returns because _activeTransport is still 'h264'. MJPEG-first gives
-      // an instant picture while WebRTC reconnects.
-      if(_activeTransport==='h264'){ _webrtcConfirmed=false; _webrtcTrackUp=false; setVideoTransport('h264'); }
-    }
-  }
-});
-// Hang up the Janus session when the page goes away (logout, reload, tab close),
-// so the server frees the memsink watcher immediately instead of spinning the
-// capture thread until its own timeout. pagehide is more reliable than
-// beforeunload/unload on mobile Safari/Chrome.
-window.addEventListener('pagehide', function(){ try{ stopWebRTC(); }catch(e){} });
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) _releaseOnFocusLoss(); });
 
 // Mouse
 // Mouse mode: 'relative' (default, pointer-lock + deltas, stealthiest USB
@@ -2115,13 +1807,7 @@ window.addEventListener('pagehide', function(){ try{ stopWebRTC(); }catch(e){} }
 // overlay dot is only useful/needed in relative mode (pointer lock hides the
 // real cursor); in absolute mode the real cursor is visible so it's off.
 let _mouseMode='relative';
-// Predictive local cursor: OFF by default. It draws a dot that tracks your hand
-// instantly while the real remote pointer catches up - but that means TWO cursors
-// on screen that never quite agree, and on a target with its own pointer
-// acceleration (iPadOS) they diverge badly and it just reads as broken. Only the
-// target's real pointer is the truth, so show that alone unless the operator
-// deliberately opts in.
-let _cx=0,_cy=0,_showOverlay=false;
+let _cx=0,_cy=0,_showOverlay=true;
 // The video is object-fit:contain inside #view, so a 16:9 stream is LETTERBOXED
 // (black bars) inside a differently-shaped container. Absolute mouse mapping
 // must use the video's ACTUAL displayed rectangle, not the container's - mapping
@@ -2130,10 +1816,7 @@ let _cx=0,_cy=0,_showOverlay=false;
 function _videoRect(){
   const r=$view.getBoundingClientRect();
   let iw=0,ih=0;
-  // Use whichever element is actually ON SCREEN: during the MJPEG-first WebRTC
-  // connect window the <img> is still the visible picture, so only read the
-  // <video> once WebRTC has confirmed and swapped in.
-  if(_activeTransport==='h264' && _webrtcConfirmed){ const v=document.getElementById('webrtc-view'); iw=v.videoWidth; ih=v.videoHeight; }
+  if(_activeTransport==='h264'){ const v=document.getElementById('webrtc-view'); iw=v.videoWidth; ih=v.videoHeight; }
   else { const im=document.getElementById('stream'); iw=im.naturalWidth; ih=im.naturalHeight; }
   if(!iw||!ih||!r.width||!r.height) return r;                 // not ready -> container
   const cAR=r.width/r.height, vAR=iw/ih;
@@ -2170,31 +1853,12 @@ function _flushMouse(){
 function _queueMouse(){ if(!_mvRAF){ _mvRAF=true; requestAnimationFrame(_flushMouse); } }
 // Map a screen position to absolute HID coords (0..32767) over the actual
 // (letterboxed) video area. Returns null if off the video.
-// The TARGET's screen inside the captured frame, as fractions (see
-// /api/screen-area). An absolute pointer addresses 0..32767 across the target's
-// OWN screen, which equals the whole frame only when the target fills it. A
-// source that pillar/letterboxes (an iPad mirroring its 4:3-ish screen into a
-// 16:9 signal centres it inside black bars) occupies just an inset rect, so
-// mapping across the whole frame puts the pointer far from the cursor and makes
-// clicks land somewhere else entirely.
-// Default {0,0,1,1} = the full frame = exactly the old math, so a 16:9 laptop
-// target behaves identically.
-let _screenArea={x0:0,y0:0,x1:1,y1:1};
 function _absFromXY(cx,cy){
   const r=_videoRect();
   if(!(r.width>0 && r.height>0)) return null;
   const nx=(cx-r.left)/r.width, ny=(cy-r.top)/r.height;
   if(nx<0||nx>1||ny<0||ny>1) return null;
-  const a=_screenArea||{}, aw=a.x1-a.x0, ah=a.y1-a.y0;
-  // Enforce the same invariant the server does instead of trusting it: anything
-  // degenerate, out-of-frame or NaN falls back to the plain full-frame mapping.
-  if(!(aw>0&&ah>0&&a.x0>=0&&a.y0>=0&&a.x1<=1&&a.y1<=1))
-    return {x:Math.round(nx*32767), y:Math.round(ny*32767)};
-  // Re-base the frame fraction onto the target's screen rect, then clamp: the
-  // black bars are not part of the target's screen, so a pointer out there maps
-  // to the nearest screen edge instead of running off into nothing.
-  const sx=Math.max(0,Math.min(1,(nx-a.x0)/aw)), sy=Math.max(0,Math.min(1,(ny-a.y0)/ah));
-  return {x:Math.round(sx*32767), y:Math.round(sy*32767)};
+  return {x:Math.round(nx*32767), y:Math.round(ny*32767)};
 }
 function _absFromEvent(e){ return _absFromXY(e.clientX,e.clientY); }
 // Pin the pointer to a given position on the wire before a button event, so a
@@ -2231,25 +1895,11 @@ function _lpdArm(){        // commit the pending down as a real held drag
   const x=_lpd.x,y=_lpd.y; _lpd=null;
   _pinXY(x,y); _heldBtns.add(0); send({type:'mousedown',button:0});
 }
-// Minimum press duration for a synthesised click. _lpdClick used to emit
-// mousedown and mouseup back-to-back, i.e. a ZERO-millisecond press - something
-// no physical mouse ever produces, and which a picky target can legitimately
-// drop. Holding it for a normal human click length costs nothing and makes the
-// click unambiguous. (Does not affect double-click, which keys off the interval
-// BETWEEN clicks, not the press length.)
-const _CLICK_MS=60;
 function _lpdClick(){      // quick release, little movement -> a click (tap)
   if(!_lpd) return;
   clearTimeout(_lpdTimer); _lpdTimer=0;
   const x=_lpd.x,y=_lpd.y; _lpd=null;
-  _pinXY(x,y);
-  _heldBtns.add(0); send({type:'mousedown',button:0});
-  // Hold briefly, then release - see _CLICK_MS. Tracked in _heldBtns meanwhile so
-  // the existing stuck-button self-heals (focus loss, capture change, reconnect)
-  // still cover it if this timer never fires.
-  setTimeout(function(){
-    if(_heldBtns.has(0)){ _heldBtns.delete(0); send({type:'mouseup',button:0}); }
-  }, _CLICK_MS);
+  _pinXY(x,y); send({type:'mousedown',button:0}); send({type:'mouseup',button:0});
 }
 function _lpdCancel(){     // touchpad glide tap-drag -> phantom down, drop it
   if(!_lpd) return;
@@ -2322,10 +1972,7 @@ function _releaseMouseButtons(){
 // own UI to the target - that used to send stray clicks to the remote PC.
 function _overUI(e){
   const t=e.target;
-  // #botbar, #mb-health-banner, #sbdrop and #retrybtn were missing: a click on
-  // any of those is a click on OUR chrome, and forwarding it sent a stray click
-  // at a stale cursor position to the target.
-  return !!(t && t.closest && t.closest('#relbar,#topbar,#cmenu,#fs-bot,#sidebar,#recapture,#fshud,#vkbd,#railnav,#botbar,#mb-health-banner,#sbdrop,#retrybtn'));
+  return !!(t && t.closest && t.closest('#relbar,#topbar,#cmenu,#fs-bot,#sidebar,#recapture,#fshud,#vkbd'));
 }
 document.addEventListener('mousedown',e=>{
   if(!captured) return;
@@ -2378,82 +2025,9 @@ let _cursorStyle='default';
 function setCursor(c){
   _cursorStyle=c;
   document.querySelectorAll('.cur-opt').forEach(b=>b.classList.toggle('active',b.dataset.c===c));
-  _applyViewCursor();
+  $view.style.cursor=c==='dot'?'none':c==='default'?'default':c;
 }
-// In ABSOLUTE mode our cursor maps 1:1 onto the target's own pointer, so drawing
-// both just shows two arrows a few frames apart - which reads as "they don't
-// line up". While actually controlling, hide ours and let the target's pointer
-// be the single source of truth. It comes back the moment you release control,
-// so you can still see where you're aiming to click back in. Picking any cursor
-// style other than Arrow is treated as a deliberate override and is honoured
-// even while captured.
-function _applyViewCursor(){
-  const hideOurs = (_mouseMode==='absolute' && captured && _cursorStyle==='default');
-  $view.style.cursor = hideOurs ? 'none'
-                     : (_cursorStyle==='dot' ? 'none' : _cursorStyle);
-}
-function toggleOverlay(on){
-  _showOverlay=!!on;
-  if(!_showOverlay){ const d=document.getElementById('cur-dot'); if(d) d.style.display='none'; }
-  try{ localStorage.setItem('mb_predcursor', _showOverlay?'1':'0'); }catch(e){}
-}
-// Restore the operator's choice; default OFF (see _showOverlay above).
-(function(){
-  let on=false;
-  try{ on = localStorage.getItem('mb_predcursor')==='1'; }catch(e){}
-  _showOverlay=on;
-  const c=document.getElementById('overlay-chk'); if(c) c.checked=on;
-  if(!on){ const d=document.getElementById('cur-dot'); if(d) d.style.display='none'; }
-})();
-
-// --- Target screen area (absolute-mouse calibration) -----------------------
-function _renderScreenArea(){
-  const el=document.getElementById('sa-val'); if(!el) return;
-  const a=_screenArea;
-  const full=(a.x1-a.x0)>0.995 && (a.y1-a.y0)>0.995 && a.x0<0.005 && a.y0<0.005;
-  el.textContent = full ? 'full frame'
-    : Math.round((a.x1-a.x0)*100)+'% × '+Math.round((a.y1-a.y0)*100)+'% (inset)';
-  el.className = 'sv'+(full?'':' ac');
-}
-async function screenAreaDetect(){
-  const btn=document.getElementById('sa-detect');
-  if(btn){ btn.disabled=true; btn.textContent='Detecting…'; }
-  try{
-    const r=await fetch('/api/screen-area',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'detect'})});
-    const d=await r.json();
-    if(!d.ok){ toast(d.error||'Detect failed'); return; }
-    const t=d.detected, b=t.bars_px||{}, br=t.bars_raw||b;
-    if(d.fills_frame){
-      toast('Target already fills the picture — no calibration needed');
-      return;
-    }
-    if(!(t && typeof t.x1==='number')){ toast('Detect returned no usable area'); return; }
-    if(!confirm('Detected the target screen as '+Math.round((t.x1-t.x0)*100)+'% × '
-        +Math.round((t.y1-t.y0)*100)+'% of the picture\n'
-        +'Black bars used — left '+b.left+'px, right '+b.right+'px, top '+b.top+'px, bottom '+b.bottom+'px\n'
-        +'(measured raw: '+br.left+'/'+br.right+'/'+br.top+'/'+br.bottom+' — bars are assumed centred)\n\n'
-        +'Use this for absolute-mouse mapping?')) return;
-    const s=await fetch('/api/screen-area',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'set',x0:t.x0,y0:t.y0,x1:t.x1,y1:t.y1})});
-    const sd=await s.json();
-    if(!sd.ok){ toast(sd.error||'Could not save'); return; }
-    if(sd.screen_area && typeof sd.screen_area.x1==='number'){ _screenArea=sd.screen_area; }
-    _renderScreenArea();
-    toast('Screen area calibrated ✓ — absolute cursor should line up now');
-  }catch(e){ toast('Detect failed'); }
-  finally{ if(btn){ btn.disabled=false; btn.textContent='◳ Detect screen area'; } }
-}
-async function screenAreaReset(){
-  try{
-    const r=await fetch('/api/screen-area',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'reset'})});
-    const d=await r.json();
-    if(d.ok){
-      if(d.screen_area && typeof d.screen_area.x1==='number'){ _screenArea=d.screen_area; }
-      else { _screenArea={x0:0,y0:0,x1:1,y1:1}; }
-      _renderScreenArea(); toast('Using the full frame');
-    } else { toast(d.error||'Reset failed'); }
-  }catch(e){ toast('Reset failed'); }
-}
+function toggleOverlay(on){ _showOverlay=on; if(!on) document.getElementById('cur-dot').style.display='none'; }
 
 // Mouse mode (relative | absolute). Switching posts to the backend, which
 // rebuilds the USB gadget with the matching HID descriptor, then updates the UI.
@@ -2463,21 +2037,12 @@ function _applyMouseModeUI(m){
   if(rel) rel.classList.toggle('active',_mouseMode==='relative');
   if(abs) abs.classList.toggle('active',_mouseMode==='absolute');
   if(_mouseMode==='absolute'){ document.getElementById('cur-dot').style.display='none'; }
-  _applyViewCursor();   // absolute+captured hides ours; see _applyViewCursor
+  // In absolute mode the real cursor should be visible over the view.
+  if(_mouseMode==='absolute' && _cursorStyle==='none') setCursor('default');
 }
 async function setMouseMode(m){
   if(m!=='relative' && m!=='absolute') return;
   if(m===_mouseMode) return;
-  // Absolute is genuinely unusable on iPadOS/iOS: verified on an iPad Air that it
-  // moves the pointer and even draws hover highlights from an absolute device but
-  // NEVER acts on its clicks (tested 70ms/300ms/800ms/double/move-then-click).
-  // Silently letting someone pick it on a tablet just looks like "clicks are
-  // broken", so say so up front - they can still proceed on a PC target.
-  if(m==='absolute' && !confirm(
-      'Absolute mode does not work on iPad / iPhone.\n\n'
-     +'iOS moves the pointer but ignores clicks from an absolute mouse. If your '
-     +'target is an iPad or iPhone, stay on Relative - clicks work there.\n\n'
-     +'Switch to Absolute anyway? (fine for a PC/laptop target)')) return;
   if(captured){ _intentional=true; releaseAll(); }   // drop control before changing model
   toast('Switching mouse mode… (USB gadget rebuilds, ~1s)',4000);
   try{
@@ -2617,7 +2182,8 @@ document.getElementById('fh-input').addEventListener('keydown',e=>{if(e.key==='E
 // Sidebar
 // On phones/narrow viewports start closed (it's an overlay there and would
 // otherwise cover the video on first load); desktop keeps its old default.
-let _sideOpen=false;   // Rail: start collapsed (rail only) so the video is full-width; open via a rail icon or ⚙
+let _sideOpen=window.matchMedia('(min-width:721px)').matches;
+if(_sideOpen){document.getElementById('sidebar').classList.add('open');document.getElementById('set-btn').classList.add('active');}
 function toggleSidebar(){
   _sideOpen=!_sideOpen;
   document.getElementById('sidebar').classList.toggle('open',_sideOpen);
@@ -2638,19 +2204,10 @@ function showTab(name){
   if(name==='agent') name='stream'; // Agent tab hidden this build - see nav comment above
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.snav-btn').forEach(b=>b.classList.remove('active'));
-  document.querySelectorAll('.railbtn').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
   document.getElementById('panel-'+name).classList.add('active');
   document.getElementById('tab-'+name).classList.add('active');
   if(name==='system'){refreshStatus();refreshJigglerStatus();refreshHidAutoDcStatus();sysCheckVer();refreshOledSettings();identityRefresh();}
   if(name==='network'){wifiRefresh();tsRefresh();}
-}
-// Rail icon click: open the panel to that tab; clicking the already-open tab
-// collapses it back to the rail (video full-width again).
-function railTab(name){
-  const isActive=document.getElementById('tab-'+name).classList.contains('active');
-  if(_sideOpen && isActive){ toggleSidebar(); return; }
-  showTab(name);
-  if(!_sideOpen) toggleSidebar();
 }
 
 // Combos
@@ -2699,41 +2256,13 @@ document.getElementById('pinput').addEventListener('keydown',e=>{if(e.key==='Ent
 const _BW_BITRATE = {low: 1500, bal: 4000, sharp: 8000};
 function setBandwidth(res,fps,tier){
   const r=document.getElementById('sel-res'), f=document.getElementById('sel-fps');
-  if(r) r.value=res;
-  // Only assign an fps the select can actually hold. Assigning a value with no
-  // matching <option> silently sets selectedIndex=-1: the Frame rate row renders
-  // blank and applyVideo's parseInt('') is NaN, so fps is dropped server-side -
-  // which is exactly what "Sharp" (50) used to do before 50 fps existed here.
-  if(f && Array.prototype.some.call(f.options,o=>o.value===String(fps))) f.value=String(fps);
+  if(r) r.value=res; if(f) f.value=String(fps);
   applyVideo(_BW_BITRATE[tier]);
-}
-// The transport the OPERATOR chose, kept apart from whatever is on the wire
-// right now. applyVideo POSTs this and the backend persists it into config.json
-// and re-reads it at every boot, so it must only ever change on a deliberate
-// pick. The automatic client-side fallback (janus.js missing, connect timeout,
-// ICE failed, frames stalled) used to rewrite the dropdown itself - so a WiFi
-// hiccup, then one click on a bandwidth preset (which is exactly what you reach
-// for when video just got worse) pinned EVERY viewer to MJPEG permanently,
-// across reboots, defeating the whole rearm/decay machinery below.
-let _preferredTransport = 'h264';        // matches the selected <option> in the markup
-let _transportPrefLoaded = false;        // first /api/status carries the persisted choice
-const _selMode = document.getElementById('sel-mode');
-if(_selMode) _selMode.addEventListener('change', function(){
-  _preferredTransport = _selMode.value;   // the ONLY user-driven write, besides the initial load
-  _showActualTransport();
-});
-// Says what is ACTUALLY on the wire when it differs from the pick above, since
-// the dropdown now keeps showing the choice rather than the fallback.
-function _showActualTransport(){
-  const n=document.getElementById('mode-note'); if(!n) return;
-  n.textContent = (_activeTransport && _activeTransport!==_preferredTransport)
-    ? 'Running on '+(_activeTransport==='h264'?'WebRTC · H.264':'MJPEG')+' right now (automatic fallback). Your choice above is unchanged.'
-    : 'WebRTC by default, falls back to MJPEG if unavailable.';
 }
 async function applyVideo(bitrate){
   const res=document.getElementById('sel-res').value;
   const fps=parseInt(document.getElementById('sel-fps').value);
-  const mode=_preferredTransport;
+  const mode=document.getElementById('sel-mode') ? document.getElementById('sel-mode').value : 'mjpeg';
   try{
     const r=await fetch('/api/stream/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(bitrate?{resolution:res,fps,mode,bitrate}:{resolution:res,fps,mode})});
     const d=await r.json();
@@ -2783,63 +2312,25 @@ let _webrtcFpsTimer = null;   // polls receiver stats for the Video-FPS readout
 // 8s-black-then-fallback toast loop when WebRTC genuinely can't run.
 let _webrtcRearmTimer = null, _webrtcRetries = 0;
 const _WEBRTC_MAX_RETRIES = 4, _WEBRTC_REARM_MS = 30000;
-// After the per-session retry budget is spent we used to stay on MJPEG for the
-// WHOLE session (the give-up latch never decayed). This lets a link that has
-// since recovered climb back to low-latency h264: once exhausted, wait a longer
-// cooldown, then refill the budget and clear the latch so the next status poll
-// re-attempts WebRTC. A genuinely dead Janus just re-exhausts and re-arms this
-// same slow decay, so it can't flap.
-const _WEBRTC_DECAY_MS = 300000;   // 5 min
-// Media-stall watchdog for the h264/WebRTC path. A frozen-but-'connected'
-// stream (HDMI source unplugged, C790 sink/encoder stall, sender-side media
-// freeze) never trips an ICE/DTLS callback, so none of janus.js's recovery
-// hooks fire and the picture stays frozen forever. framesDecoded is monotonic
-// while video actually renders; if it stops advancing we recover here. This is
-// the h264 twin of the MJPEG onErr() self-heal.
-let _wrtcLastFrames = -1, _wrtcStallPolls = 0;
-// MJPEG-first model: h264 keeps the working MJPEG picture on screen and only
-// swaps to the <video> once WebRTC has REAL pixels. _webrtcConfirmed marks that
-// swap so the MJPEG onLoad/onErr paths know when to stop owning the overlay.
-let _webrtcConfirmed = false;
-// True once the WebRTC video TRACK has arrived (media negotiated), which happens
-// well before the first frame decodes. We close MJPEG at THAT point rather than
-// waiting for pixels: MJPEG can saturate the WiFi link on its own, so leaving it
-// running until first-paint starves the very WebRTC stream we are waiting for and
-// makes the first minute feel slow. Closing at track-up frees the link, so the
-// first h264 frame lands almost immediately.
-let _webrtcTrackUp = false;
-// Generation token: every startWebRTC captures the current value; stopWebRTC and
-// the fallback bump it. Async Janus callbacks bail if their captured gen is
-// stale, so a handshake that completes AFTER a fallback/teardown self-destructs
-// instead of orphaning a Janus session (which pins the plugin at ~100% CPU).
-let _webrtcGen = 0;
-// True while WebRTC was deliberately torn down because the tab is hidden, so the
-// visibility handler knows to re-establish it on return (the status poll can't:
-// syncVideoTransport early-returns since _activeTransport stays 'h264').
-let _webrtcSuspended = false;
 
 function setVideoTransport(mode){
   _activeTransport = mode;
-  _showActualTransport();   // note under the dropdown, which now shows the CHOICE not the reality
   const img = document.getElementById('stream');
   const vid = document.getElementById('webrtc-view');
   if(mode === 'h264'){
-    _webrtcGaveUp = false;      // a genuine attempt is starting; give it a fair try
-    _webrtcConfirmed = false;   // not swapped to <video> until real pixels arrive
-    _webrtcTrackUp   = false;   // MJPEG keeps the screen until the track arrives
-    // MJPEG-FIRST. Keep the <img> visible and streaming so there is an INSTANT
-    // picture, and connect WebRTC underneath into the (still hidden) <video>.
-    // The actual swap - hide + CLOSE the MJPEG connection, reveal the <video> -
-    // happens in _confirmed() only once WebRTC truly has pixels. Rationale for
-    // closing MJPEG at all: display:none does NOT stop an <img> stream, so a
-    // live unit had ~50-100 Mbit/s of MJPEG competing over WiFi with the very
-    // WebRTC stream that replaced it; we still close it, just at confirm-time
-    // instead of eagerly. The win: a WebRTC that is slow or never confirms now
-    // leaves the WORKING MJPEG on screen instead of a black frame under a stale
-    // "No Signal" overlay - which was the first-load bug.
-    if(!img.getAttribute('src')) retryStream();   // ensure MJPEG is actually live
-    img.style.display = '';
-    vid.style.display = 'none';    // revealed by _confirmed() once it has pixels
+    _webrtcGaveUp = false;   // a genuine attempt is starting; give it a fair try
+    img.style.display = 'none';
+    // CLOSE the MJPEG connection, don't just hide it. display:none does NOT
+    // stop an in-flight <img> stream - the browser keeps the HTTP request open
+    // and ustreamer keeps encoding and sending. Measured on a live unit while
+    // WebRTC was working: h264 sink had a client AND mjpeg clients was still 1,
+    // so ~50-100 Mbit/s of MJPEG was competing over WiFi with the very stream
+    // it had been replaced by, on a link we already proved MJPEG can saturate.
+    // Dropping the src is what actually ends the request. onErr() already
+    // returns early while _activeTransport is 'h264', so this cannot raise a
+    // spurious "No signal", and the periodic reconnect above is skipped too.
+    img.removeAttribute('src');
+    vid.style.display = '';
     startWebRTC();
   } else {
     stopWebRTC();
@@ -2850,21 +2341,16 @@ function setVideoTransport(mode){
 }
 
 // Called whenever WebRTC can't actually be delivered client-side, even
-// though the dropdown/server said h264. Drops back to MJPEG and says so in the
-// note under the dropdown, leaving the dropdown itself (the stored preference)
-// exactly as the operator set it.
+// though the dropdown/server said h264. Drops back to MJPEG and corrects
+// the dropdown so the UI reflects what's actually on screen.
 function _webrtcFallbackToMjpeg(reason){
   console.warn('WebRTC unavailable, falling back to MJPEG:', reason);
   _webrtcGaveUp = true;         // pause the status poll from re-triggering WebRTC…
   clearTimeout(_webrtcTimeout);
   stopWebRTC();
-  // NOTE: deliberately does NOT touch the transport dropdown. That value is the
-  // operator's stored preference and applyVideo POSTs it straight into
-  // config.json, so a fallback that rewrote it made the next bandwidth-preset
-  // click persist MJPEG for every viewer, permanently. Report reality in the
-  // note under the dropdown instead.
+  const sel = document.getElementById('sel-mode');
+  if(sel) sel.value = 'mjpeg';
   _activeTransport = 'mjpeg';
-  _showActualTransport();
   document.getElementById('webrtc-view').style.display = 'none';
   document.getElementById('stream').style.display = '';
   retryStream();
@@ -2881,15 +2367,6 @@ function _webrtcFallbackToMjpeg(reason){
     if(_webrtcRetries === 0) toast('Video dropped to MJPEG — retrying WebRTC…');
   } else {
     toast('WebRTC unstable on this link — staying on MJPEG');
-    // Budget spent: instead of stranding on MJPEG for the rest of the session,
-    // decay the latch. After a longer cooldown, refill the budget and clear the
-    // give-up flag so a link that has since recovered re-attempts h264 on the
-    // next status poll. If WebRTC is still dead it just re-exhausts and re-arms
-    // this same slow timer, so it can't flap.
-    _webrtcRearmTimer = setTimeout(function(){
-      _webrtcRetries = 0;
-      _webrtcGaveUp = false;
-    }, _WEBRTC_DECAY_MS);
   }
 }
 
@@ -2899,15 +2376,14 @@ function startWebRTC(){
     _webrtcFallbackToMjpeg('janus.js not loaded');
     return;
   }
-  stopWebRTC();               // bumps _webrtcGen, killing any prior in-flight attempt
-  const gen = _webrtcGen;     // this attempt's generation; async callbacks bail if stale
+  stopWebRTC();
   // Give the whole attach/watch/jsep handshake a bounded amount of time.
   // If no video track has arrived by then (Janus not running, plugin not
   // loaded, ustreamer's h264-sink not actually feeding it, etc.), fall
   // back rather than leaving the viewer stuck on a black video element.
   clearTimeout(_webrtcTimeout);
   _webrtcTimeout = setTimeout(()=>{
-    if(_activeTransport === 'h264' && gen === _webrtcGen) _webrtcFallbackToMjpeg('connect timeout (8s)');
+    if(_activeTransport === 'h264') _webrtcFallbackToMjpeg('connect timeout (8s)');
   }, 8000);
   // Callback names/shape below (onremotetrack + manual MediaStream assembly,
   // watch/start/jsep flow) match janus.js v1.0.0 specifically - that's the
@@ -2917,7 +2393,6 @@ function startWebRTC(){
   // upgraded independently of the server, re-check pikvm/ustreamer's
   // docs/h264.md sample against whatever version is in use.
   Janus.init({debug: false, dependencies: Janus.useDefaultDependencies(), callback: function(){
-    if(gen !== _webrtcGen) return;   // a fallback/teardown happened during init - don't orphan a session
     _janus = new Janus({
       server: (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/janus-ws',
       // LAN-direct only: no external STUN. janus.js defaults to Google's public
@@ -2928,29 +2403,21 @@ function startWebRTC(){
       // only, which is all that's needed when the browser and Pi share a LAN.
       iceServers: [],
       success: function(){
-        if(gen !== _webrtcGen) return;   // stale session (fallback ran); _janus already destroyed by stopWebRTC
         _janus.attach({
           plugin: 'janus.plugin.ustreamer',
           success: function(handle){
-            if(gen !== _webrtcGen){ try{ handle && handle.detach(); }catch(e){} return; }
             _janusHandle = handle;
-            _sendWatch(1, gen);
+            _sendWatch(1);
           },
           onmessage: function(msg, jsep){
-            if(gen !== _webrtcGen) return;
             if(jsep) _janusHandle.createAnswer({
               jsep: jsep,
               media: {audioSend: false, videoSend: false},
-              // createAnswer resolves LATER than onmessage's gen check above, so
-              // re-check: a stale attempt whose SDP negotiation completes after a
-              // teardown must not send a stray 'start' onto a newer session, nor
-              // fire a fallback that overrides the user's mode / kills a live attempt.
-              success: function(answerJsep){ if(gen !== _webrtcGen) return; _janusHandle.send({message: {request: 'start'}, jsep: answerJsep}); },
-              error: function(err){ if(gen !== _webrtcGen) return; _webrtcFallbackToMjpeg('createAnswer error: '+err); }
+              success: function(answerJsep){ _janusHandle.send({message: {request: 'start'}, jsep: answerJsep}); },
+              error: function(err){ _webrtcFallbackToMjpeg('createAnswer error: '+err); }
             });
           },
           onremotetrack: function(track, mid, added){
-            if(gen !== _webrtcGen) return;
             if(!added) return;
             const vid = document.getElementById('webrtc-view');
             if(vid.srcObject === null) vid.srcObject = new MediaStream();
@@ -2960,17 +2427,6 @@ function startWebRTC(){
             // and never render - a live track with no pixels.
             vid.srcObject.addTrack(track);
             if(track.kind === 'video'){
-              // Media is negotiated and flowing. Hand the screen over NOW and
-              // close the MJPEG connection: keeping it open until first-paint let
-              // it hog the link and delayed this stream's own first frame (the
-              // "laggy for the first minute" symptom). Show the neutral
-              // "Connecting…" overlay for the brief gap until pixels land; if
-              // they never do, the 8s timeout / confirm-poll falls back to MJPEG.
-              _webrtcTrackUp = true;
-              const _im = document.getElementById('stream');
-              _im.style.display = 'none'; _im.removeAttribute('src');
-              vid.style.display = '';
-              if(!_webrtcConfirmed) _nsState('connecting');
               // A track ARRIVING is not video PLAYING. The old code cancelled
               // the fallback timer here, which disarmed the safety net before
               // it could help: if no frames ever decoded you got a black video
@@ -2988,31 +2444,14 @@ function startWebRTC(){
               // It was only ever hidden on the MJPEG <img> onload path, so on
               // the WebRTC transport it stayed visible ON TOP of working video.
               const _confirmed = function(){
-                if(gen !== _webrtcGen) return;   // stale attempt must never flip the UI to Live
                 clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
                 _webrtcRetries = 0;   // good connection -> refill the recovery budget
-                _wrtcLastFrames = -1; _wrtcStallPolls = 0;   // restart stall baseline
-                _webrtcConfirmed = true;
-                // The MJPEG handover already happened at track-up (above); by
-                // here we just have real pixels, so drop the overlay. Belt and
-                // braces in case a track event was missed.
-                const _img=document.getElementById('stream');
-                if(_img.getAttribute('src')){ _img.style.display='none'; _img.removeAttribute('src'); }
-                vid.style.display='';
                 if($ns) $ns.style.display='none';
                 document.getElementById('bd-stream').className='bd ok';
                 const ss=document.getElementById('s-stream'); if(ss){ss.textContent='Live';ss.className='sv ac';}
               };
-              // Exactly one confirm path per session: clear any listeners/timer a
-              // prior attempt left on this persistent <video> (P5 listener leak).
-              if(vid._mbConfirmPlaying){
-                vid.removeEventListener('playing', vid._mbConfirmPlaying);
-                vid.removeEventListener('loadeddata', vid._mbConfirmPlaying);
-              }
-              if(vid._mbConfirmTimer){ clearInterval(vid._mbConfirmTimer); }
               let _confirmTries = 0;
               const _confirmTimer = setInterval(function(){
-                if(gen !== _webrtcGen){ clearInterval(_confirmTimer); return; }
                 if(vid.videoWidth > 0){
                   _confirmed();
                   clearInterval(_confirmTimer);
@@ -3020,14 +2459,12 @@ function startWebRTC(){
                   clearInterval(_confirmTimer);
                 }
               }, 250);
-              vid._mbConfirmTimer = _confirmTimer;
               const confirmPlaying = function(){
                 if(vid.videoWidth > 0){
                   _confirmed();
                   clearInterval(_confirmTimer);
                 }
               };
-              vid._mbConfirmPlaying = confirmPlaying;
               vid.addEventListener('playing', confirmPlaying);
               vid.addEventListener('loadeddata', confirmPlaying);
               // Video-FPS readout for the WebRTC path. The "s-vfps" pill is fed
@@ -3038,31 +2475,12 @@ function startWebRTC(){
                 if(pc0 && pc0.getStats){
                   clearInterval(_webrtcFpsTimer);
                   _webrtcFpsTimer = setInterval(function(){
-                    if(_activeTransport !== 'h264' || gen !== _webrtcGen){ clearInterval(_webrtcFpsTimer); return; }
+                    if(_activeTransport !== 'h264'){ clearInterval(_webrtcFpsTimer); return; }
                     pc0.getStats(null).then(function(stats){
-                      if(gen !== _webrtcGen) return;   // promise resolved after teardown
                       stats.forEach(function(r){
-                        if(r.type==='inbound-rtp' && r.kind==='video'){
-                          if(r.framesPerSecond!=null){
-                            const el=document.getElementById('s-vfps');
-                            if(el) el.textContent=Math.round(r.framesPerSecond)+' fps';
-                          }
-                          // Stall detection: framesDecoded stops advancing while
-                          // ICE stays 'connected' -> the feed froze with no event
-                          // to catch it. After ~3 flat polls (~6s) of a stream
-                          // that WAS live, fall back (which re-arms WebRTC), so
-                          // the h264 path self-heals like MJPEG's onErr does.
-                          if(r.framesDecoded!=null){
-                            if(_wrtcLastFrames >= 0 && r.framesDecoded === _wrtcLastFrames && r.framesDecoded > 0){
-                              if(++_wrtcStallPolls >= 3){
-                                _wrtcStallPolls = 0; _wrtcLastFrames = -1;
-                                _webrtcFallbackToMjpeg('video stalled (no new frames)');
-                              }
-                            } else {
-                              _wrtcStallPolls = 0;
-                            }
-                            _wrtcLastFrames = r.framesDecoded;
-                          }
+                        if(r.type==='inbound-rtp' && r.kind==='video' && r.framesPerSecond!=null){
+                          const el=document.getElementById('s-vfps');
+                          if(el) el.textContent=Math.round(r.framesPerSecond)+' fps';
                         }
                       });
                     }).catch(function(){});
@@ -3109,16 +2527,13 @@ function startWebRTC(){
           // back to MJPEG so video keeps flowing - and because the fallback now
           // auto-retries WebRTC on a cooldown, it recovers to h264 on its own
           // instead of stranding you on slow MJPEG for the rest of the session.
-          // gen guard on each: a stale session's drop/cleanup (including the
-          // oncleanup fired by our OWN stopWebRTC, which bumps _webrtcGen) must
-          // not knock a newer, live h264 attempt down to MJPEG.
-          webrtcState: function(up){ if(!up && gen === _webrtcGen && _activeTransport === 'h264') _webrtcFallbackToMjpeg('webrtc connection down'); },
-          iceState: function(st){ if(st === 'failed' && gen === _webrtcGen && _activeTransport === 'h264') _webrtcFallbackToMjpeg('ice '+st); },
-          oncleanup: function(){ if(gen === _webrtcGen && _activeTransport === 'h264') _webrtcFallbackToMjpeg('session ended'); },
-          error: function(err){ if(gen === _webrtcGen) _webrtcFallbackToMjpeg('plugin attach error: '+err); }
+          webrtcState: function(up){ if(!up && _activeTransport === 'h264') _webrtcFallbackToMjpeg('webrtc connection down'); },
+          iceState: function(st){ if(st === 'failed' && _activeTransport === 'h264') _webrtcFallbackToMjpeg('ice '+st); },
+          oncleanup: function(){ if(_activeTransport === 'h264') _webrtcFallbackToMjpeg('session ended'); },
+          error: function(err){ _webrtcFallbackToMjpeg('plugin attach error: '+err); }
         });
       },
-      error: function(err){ if(gen === _webrtcGen) _webrtcFallbackToMjpeg('janus connect error: '+err); }
+      error: function(err){ _webrtcFallbackToMjpeg('janus connect error: '+err); }
     });
   }});
 }
@@ -3126,16 +2541,15 @@ function startWebRTC(){
 // ustreamer's Janus plugin needs a moment after attach before it has a
 // video frame to hand back; per pikvm/ustreamer docs/h264.md, the first
 // "watch" can fail and the client is expected to retry.
-function _sendWatch(attemptsLeft, gen){
-  if(gen !== _webrtcGen || !_janusHandle) return;   // stale attempt: don't watch/retry
+function _sendWatch(attemptsLeft){
+  if(!_janusHandle) return;
   _janusHandle.send({
     // audio:true just asks Janus to include an audio track IF the plugin's
     // audio block resolved a real device - harmless to always send even
     // with no C790/audio wired yet, it just won't produce an audio track.
     message: {request: 'watch', params: {audio: true}},
     error: function(){
-      if(gen !== _webrtcGen) return;
-      if(attemptsLeft > 0) setTimeout(function(){ _sendWatch(attemptsLeft - 1, gen); }, 1000);
+      if(attemptsLeft > 0) setTimeout(function(){ _sendWatch(attemptsLeft - 1); }, 1000);
       else _webrtcFallbackToMjpeg('watch request failed after retries');
     },
   });
@@ -3157,16 +2571,6 @@ function toggleAudioMute(){
 // acts on real changes so this is safe to call on every status poll.
 function syncVideoTransport(mode){
   if(!mode) return;
-  // The FIRST report is the mode the backend booted with, i.e. the operator's
-  // persisted choice - load it into the dropdown/preference once. Later reports
-  // only move the ACTIVE transport: a client-side fallback must never rewrite
-  // the stored preference (see _preferredTransport).
-  if(!_transportPrefLoaded){
-    _transportPrefLoaded = true;
-    _preferredTransport = mode;
-    const s0 = document.getElementById('sel-mode');
-    if(s0) s0.value = mode;
-  }
   // Server left h264 (sink genuinely gone) -> allow WebRTC to be retried later.
   // Checked BEFORE the no-change return: the UI is already on mjpeg after a
   // fallback, so a server drop-to-mjpeg wouldn't change _activeTransport and
@@ -3176,16 +2580,12 @@ function syncVideoTransport(mode){
   // Server still says h264 but we already gave up this session: stay on MJPEG
   // instead of re-entering the connect/fallback loop every poll.
   if(mode === 'h264' && _webrtcGaveUp) return;
-  // Follows the ACTIVE transport only; the dropdown keeps showing the operator's
-  // stored choice (setVideoTransport updates the note under it).
+  const sel = document.getElementById('sel-mode');
+  if(sel) sel.value = mode;
   setVideoTransport(mode);
 }
 
 function stopWebRTC(){
-  _webrtcGen++;                 // invalidate any in-flight attempt's async callbacks (P4)
-  _webrtcConfirmed = false;
-  _webrtcTrackUp   = false;     // hand the screen back to MJPEG
-  clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
   clearInterval(_webrtcFpsTimer); _webrtcFpsTimer = null;
   const _vf=document.getElementById('s-vfps'); if(_vf) _vf.textContent='-';
   try{
@@ -3193,17 +2593,7 @@ function stopWebRTC(){
     if(_janus){ _janus.destroy(); _janus = null; }
   }catch(e){}
   const vid = document.getElementById('webrtc-view');
-  if(vid){
-    // Remove the confirm listeners/timer this session wired onto the persistent
-    // <video>, so they don't accumulate across re-arms (P5) or fire stale.
-    if(vid._mbConfirmPlaying){
-      vid.removeEventListener('playing', vid._mbConfirmPlaying);
-      vid.removeEventListener('loadeddata', vid._mbConfirmPlaying);
-      vid._mbConfirmPlaying = null;
-    }
-    if(vid._mbConfirmTimer){ clearInterval(vid._mbConfirmTimer); vid._mbConfirmTimer = null; }
-    vid.srcObject = null; vid.muted = true;
-  }
+  if(vid){ vid.srcObject = null; vid.muted = true; }
   // No audio without an active WebRTC session (MJPEG carries no audio at
   // all) - hide the controls rather than leave a stale enabled-looking
   // button around with nothing behind it.
@@ -3235,15 +2625,13 @@ function _escHtml(s){ return String(s==null?'':s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function applyStatus(d){
-  if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;
-    const ct=document.getElementById('chip-temp'); if(ct){ct.classList.remove('lv-g','lv-a','lv-r');ct.classList.add('lv-'+(d.temp_c>75?'r':d.temp_c>65?'a':'g'));}}
+  if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;}
   if(d.uptime){
     document.getElementById('s-uptime').textContent=d.uptime;
     const uc=document.getElementById('sv-uptime'); if(uc) uc.textContent=d.uptime.trim();
   }
   // Who's connected now: top-bar count chip + the System-tab device list.
   if(Array.isArray(d.viewers)){
-    _lastViewerCount=d.viewers.length;   // gates the reconnect release_all (ws.onopen)
     const vc=document.getElementById('sv-viewers'), chip=document.getElementById('chip-viewers');
     if(vc) vc.textContent=String(d.viewers.length);
     if(chip) chip.classList.toggle('multi', d.viewers.length>1);
@@ -3255,25 +2643,6 @@ function applyStatus(d){
             +'<span class="vw-dur">'+durShort(v.secs)+'</span></div>').join('')
         : '<div class="vw-none">no active connections</div>';
     }
-  }
-  if(d.screen_area && typeof d.screen_area.x1==='number'){
-    _screenArea=d.screen_area;                 // absolute-mouse mapping rect
-    _renderScreenArea();
-  }
-  // Follow the mode the gadget is ACTUALLY in. Without this a tab that was open
-  // when the mode changed (from another tab, the API, or a reboot) keeps speaking
-  // the wrong protocol - absolute coords into a relative gadget get discarded and
-  // it just looks like the mouse died. Reconciling here means no reload is needed.
-  if((d.mouse_mode==='absolute'||d.mouse_mode==='relative') && d.mouse_mode!==_mouseMode){
-    // _setCaptured(false) synchronously (it is idempotent): releaseAll() on the
-    // relative path only asks for pointer-lock exit, and the pointerlockchange
-    // that would have run _setCaptured(false) arrives AFTER _applyMouseModeUI
-    // has switched us to absolute, where that handler early-returns. Capture
-    // state ended up right by luck, but _intentional stayed true and _syncKbLock
-    // never re-ran, so Keyboard Lock could latch and was never re-requested.
-    if(captured){ _intentional=true; releaseAll(); _setCaptured(false); }   // drop control before switching model
-    _applyMouseModeUI(d.mouse_mode);
-    toast('Mouse mode is now '+d.mouse_mode+' (changed on the device)');
   }
   if(d.local_ip) document.getElementById('ss-ip').textContent=d.local_ip;
   if(d.hid_kb!=null) document.getElementById('ss-hkb').textContent=d.hid_kb?'✓ /dev/hidg0':'✗';
@@ -3669,22 +3038,6 @@ async function sysCheckVer(){
       btn.classList.remove('pulse');
       btn.disabled=true;
       const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='sys-dot ok';
-    }
-    // "What's new": a short one-line summary of EVERY pending commit (newest
-    // first), not just the latest. Strip the conventional-commit "type(scope):"
-    // prefix so each line reads as plain English.
-    const wn=document.getElementById('sys-whatsnew'), wnl=document.getElementById('sys-whatsnew-list');
-    if(wn&&wnl){
-      const pend=Array.isArray(d.pending)?d.pending:[];
-      if(d.update_available&&pend.length){
-        const clean=s=>String(s).replace(/^[a-z]+(\([^)]*\))?!?:\s*/i,'').replace(/^./,c=>c.toUpperCase()).trim();
-        const items=pend.slice(0,8).map(clean).filter(Boolean);
-        wnl.innerHTML=items.map(s=>'<li>'+_escHtml(s)+'</li>').join('')
-          +(pend.length>8?'<li>…and '+(pend.length-8)+' more</li>':'');
-        wn.style.display='';
-      }else{
-        wnl.innerHTML=''; wn.style.display='none';
-      }
     }
     const out=document.getElementById('sys-update-out');
     out.textContent=d.out||'';out.style.display=d.out?'block':'none';
@@ -4409,18 +3762,7 @@ loadMouseMode();
 
 // Keep connections, uptime and temp live: poll status every 5s while the page
 // is visible and not actively controlling (the top bar is hidden during capture).
-// Also poll at a slower 15s cadence DURING capture: the give-up-latch decay and
-// h264 re-upgrade are reconciled through syncVideoTransport(), which only runs
-// off a status poll. Without a poll during capture, a link that recovered while
-// you were controlling would never climb back to low-latency h264 until you let
-// go, and a server-side fallback would go unnoticed.
-let _pollTick=0;
-setInterval(()=>{
-  if(document.visibilityState!=='visible') return;
-  _pollTick++;
-  if(!captured) refreshStatus();
-  else if(_pollTick % 3 === 0) refreshStatus();   // ~15s while capturing
-}, 5000);
+setInterval(()=>{ if(document.visibilityState==='visible' && !captured) refreshStatus(); }, 5000);
 </script>
 </body>
 </html>

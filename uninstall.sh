@@ -21,7 +21,12 @@ read -r -p "Continue? [y/N]: " ANS
 
 # ── Stop & disable services ───────────────────────────────────────────────────
 info "Stopping services…"
-for svc in magicbridge stealth-dashboard mb-gadget mb-provision mb-mac; do
+# Every MagicBridge unit install.sh enables. The old list stopped at five and
+# left mb-oled / mb-hdmi-init / mb-hdmi-watch / mb-mdns-alias / mb-firstboot-late
+# ENABLED but pointing at files this script then deletes, so they failed on every
+# boot after an uninstall. mb-mac is a legacy unit kept here as a harmless no-op.
+for svc in magicbridge stealth-dashboard mb-gadget mb-provision mb-mac \
+           mb-oled mb-hdmi-init mb-hdmi-watch mb-mdns-alias mb-firstboot-late; do
     systemctl stop    "$svc" 2>/dev/null || true
     systemctl disable "$svc" 2>/dev/null || true
     rm -f "/etc/systemd/system/${svc}.service"
@@ -59,8 +64,20 @@ ok "nginx config removed"
 # ── Application files ─────────────────────────────────────────────────────────
 info "Removing application files…"
 rm -rf /opt/magicbridge
+# Every helper install.sh drops into /usr/local/bin. The old list removed only
+# two, leaving the rest behind as orphaned scripts (and mb-hdmi-init.sh is what
+# mb-hdmi-watch.service ExecStarts, so its unit above pointed at a live-but-soon-
+# deleted file). Remove the whole set that install.sh installs.
 rm -f /usr/local/bin/mb-gadget.sh \
-      /usr/local/bin/mb-provision.sh
+      /usr/local/bin/mb-provision.sh \
+      /usr/local/bin/mb-lockdown.sh \
+      /usr/local/bin/mb-mdns-alias.sh \
+      /usr/local/bin/mb-hdmi-init.sh \
+      /usr/local/bin/mb-setup-fan.sh \
+      /usr/local/bin/mb-firstboot.sh \
+      /usr/local/bin/mb-firstboot-late.sh \
+      /usr/local/bin/mb-secret-reset.sh \
+      /usr/local/bin/mb-power-test.sh
 ok "Application files removed"
 
 # ── Config (ask first) ────────────────────────────────────────────────────────

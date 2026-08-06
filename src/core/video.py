@@ -28,6 +28,12 @@ log = logging.getLogger("magicbridge.video")
 STREAM_HOST = "127.0.0.1"
 STREAM_PORT = 8081   # nginx proxies /stream → this port
 
+# How long a probed device inventory/classification stays trusted. The V4L2
+# picture only changes on hot-plug, but /api/status polls it every 5s per
+# connected client and each poll forked one `v4l2-ctl --info` per /dev/video*
+# node (~15 fork+execs per poll on the C790 Pi) just to redraw the same values.
+_DEV_CACHE_TTL = 30.0
+
 
 def _clean_divisor_fps(req: int, src: int) -> int:
     """Largest clean-integer-divisor of the source refresh that is <= the
@@ -73,11 +79,32 @@ class VideoManager:
         self.h264_sink  = None    # ustreamer memsink name, set when h264 mode starts
         self._lock      = threading.Lock()
         self._mon_thr   = None    # watchdog thread
+        self._dev_cache    = None  # memoized detect_devices() result
+        self._dev_cache_at = 0.0   # time.monotonic() of that result
+        self._dtype_cache  = {}    # dev -> (kind, time.monotonic())
 
     # Device discovery
 
+    def _invalidate_device_cache(self):
+        """Forget the memoized device inventory and classifications.
+
+        Called from start()/restart(), i.e. exactly the moments the hardware
+        picture may have changed (hot-plug, a USB node re-enumerating, a capture
+        board that vanished). A stale answer must never be what tells us the
+        C790 is still there, so recovery paths always re-probe."""
+        self._dev_cache    = None
+        self._dev_cache_at = 0.0
+        self._dtype_cache  = {}
+
     def detect_devices(self) -> list:
-        """Return list of V4L2 VIDEO_CAPTURE devices with metadata."""
+        """Return list of V4L2 VIDEO_CAPTURE devices with metadata.
+
+        Memoized for _DEV_CACHE_TTL (see the constant: this is the /api/status
+        polling cost). start()/restart() invalidate explicitly, so a hot-plug is
+        never hidden for longer than one stream (re)start."""
+        now = time.monotonic()
+        if self._dev_cache is not None and (now - self._dev_cache_at) < _DEV_CACHE_TTL:
+            return self._dev_cache
         devices = []
         for dev in sorted(glob.glob("/dev/video*")):
             try:
@@ -98,6 +125,8 @@ class VideoManager:
                 devices.append({"device": dev, "name": name, "bus": bus})
             except Exception:
                 continue
+        self._dev_cache    = devices
+        self._dev_cache_at = now
         return devices
 
     def get_best_device(self) -> str:
@@ -147,22 +176,33 @@ class VideoManager:
         """Classify a capture device so the stream mode can auto-follow the
         hardware: 'csi' (C790/TC358743 on the Pi CSI port), 'usb' (a UVC HDMI
         dongle like the MS2109), or 'other'. CSI -> hardware H.264/WebRTC (the
-        preferred/default path); USB -> MJPEG."""
+        preferred/default path); USB -> MJPEG.
+
+        Memoized for _DEV_CACHE_TTL like detect_devices (status() classifies on
+        every poll), but the cache is BYPASSED the moment the node itself is
+        gone: the watchdog classifies on the live recovery path and restart()
+        re-resolves the capture mode from this, so a stale 'csi' must never mask
+        a capture board that actually disappeared."""
         dev = dev or self.device
         if not dev:
             return "other"
+        now = time.monotonic()
+        hit = self._dtype_cache.get(dev)
+        if hit and (now - hit[1]) < _DEV_CACHE_TTL and os.path.exists(dev):
+            return hit[0]
         try:
             r = subprocess.run(["v4l2-ctl", "--device", dev, "--info"],
                                capture_output=True, text=True, timeout=2)
             blob = r.stdout.lower()
         except Exception:
-            return "other"
+            return "other"     # a probe that blew up is not a fact worth caching
         if "tc358743" in blob or "unicam" in blob or "fe801000" in blob:
-            return "csi"
-        m = re.search(r"bus info\s*:\s*(\S+)", blob)
-        if m and m.group(1).startswith("usb"):
-            return "usb"
-        return "other"
+            kind = "csi"
+        else:
+            m = re.search(r"bus info\s*:\s*(\S+)", blob)
+            kind = "usb" if (m and m.group(1).startswith("usb")) else "other"
+        self._dtype_cache[dev] = (kind, now)
+        return kind
 
     # Audio (C790 I2S HDMI de-embedded audio -> Janus, see h264.md's audio block)
 
@@ -265,26 +305,45 @@ class VideoManager:
         ]
         paths = [p for p in candidates if os.path.isfile(p)]
         if not paths:
+            self._audio_cfg_written = False
             return
         dev = self.detect_audio_device()
         working = bool(dev) and self._probe_audio_capture(dev)
         self._audio_active = dev if working else None
+        # SCHEMA AMBIGUITY, still to be confirmed ON THE DEVICE: src/
+        # install_janus_webrtc.sh and docs/DIY_PROGRESS.md say the pinned
+        # ustreamer v6.61 plugin reads "acap.device" (section "acap"), while
+        # upstream PiKVM ships an "audio: { ... }" block for the same plugin.
+        # Nothing in this tree can settle which one the BUILT plugin parses, so
+        # don't flip the key on a guess: keep writing the block we have always
+        # written, and strip BOTH spellings below so a stale block of either
+        # schema can never be left behind pointing Janus at a dead capture card.
+        # Settle it by reading janus/src/config.c in the ustreamer source that
+        # was actually built on the Pi, then drop the spelling that isn't real.
         new_block = (
             "audio: {\n"
             f'    device = "{dev}"\n'
             f'    tc358743 = "{self.device}"\n'
             "}\n"
         ) if working else ""
+        stale_re = re.compile(r"(?m)^[ \t]*(?:audio|acap)\s*:\s*\{[^}]*\}[ \t]*\r?\n?", re.S)
+        wrote = False
         for jcfg_path in paths:
             try:
                 text = open(jcfg_path).read()
-                if re.search(r"audio:\s*\{[^}]*\}", text, re.S):
-                    text = re.sub(r"audio:\s*\{[^}]*\}\s*", new_block, text, flags=re.S)
-                elif working:
+                # Strip every stale audio block (either schema) first, then
+                # re-append. Replacing in place would have inserted the new
+                # block once per match if both spellings were present.
+                text = stale_re.sub("", text)
+                if working:
                     text = text.rstrip() + "\n" + new_block
                 open(jcfg_path, "w").write(text)
+                wrote = wrote or working
             except Exception as e:
                 log.warning("Could not sync Janus audio config at %s (non-fatal): %s", jcfg_path, e)
+        # Only a block that really reached a Janus config counts as configured
+        # audio; status() reports from this, not from the bare arecord probe.
+        self._audio_cfg_written = wrote
         log.info("Synced Janus audio config: device=%s working=%s -> %d file(s)",
                  dev, working, len(paths))
 
@@ -410,6 +469,12 @@ class VideoManager:
             if quality is not None: self.quality    = _clampi(quality, 1, 100, self.quality)
             if mode:                self.mode       = mode
 
+            # Everything below picks the device and resolves the capture mode
+            # from probed hardware, so throw away the memoized inventory first:
+            # a (re)start is exactly when the board may have been plugged,
+            # unplugged or re-enumerated to a different /dev/videoN.
+            self._invalidate_device_cache()
+
             if not self.device:
                 self.device = self.get_best_device()
             if not self.device:
@@ -502,6 +567,10 @@ class VideoManager:
         mode, and holds the lock across stop+launch - so delegating to it fixes
         all of the above atomically.
         """
+        # Re-probe from scratch: this is a recovery path, so the cached
+        # inventory/classification below must not be able to report a board
+        # that is no longer there (or miss one that just appeared).
+        self._invalidate_device_cache()
         # If the current node vanished (USB re-enumerated to a new /dev/videoN),
         # forget it so start() re-detects instead of looping on a dead node.
         if self.device and not os.path.exists(self.device):
@@ -559,6 +628,11 @@ class VideoManager:
         except Exception:
             pass
         self._running = False
+        # MJPEG produces no memsink. Clear any sink name left over from an
+        # earlier h264 run: it was only ever cleared in _fallback_or_fail, so
+        # after a deliberate h264 -> mjpeg switch status() kept reporting the
+        # (long gone) sink, and the UI kept ticking WebRTC audio green with it.
+        self.h264_sink = None
         cmd = [
             "ustreamer",
             "--device",         self.device,
@@ -788,15 +862,21 @@ class VideoManager:
             WebRTC clients must re-attach anyway - so it never disrupts a
             healthy, steady stream.
         Fully swallowed; never affects the video path's own success."""
+        active = False
         try:
             r = subprocess.run(["systemctl", "is-active", "janus-webrtc.service"],
                                capture_output=True, text=True, timeout=3)
-            if r.stdout.strip() == "active":
+            active = r.stdout.strip() == "active"
+            if active:
                 subprocess.run(["systemctl", "try-restart", "janus-webrtc.service"],
                                capture_output=True, timeout=5)
                 log.info("Notified Janus of fresh h264 sink (try-restart janus-webrtc.service)")
         except Exception:
             log.debug("Janus sink-ready notify skipped", exc_info=True)
+        # Remember whether there is actually a consumer for the sink and the
+        # audio config we just wrote. Checked here rather than in status() so
+        # the poll path stays fork-free.
+        self._janus_active = active
 
     def _fallback_or_fail(self) -> bool:
         """H.264 launch failed. Fall back to MJPEG ONLY on a device that can
@@ -1003,7 +1083,16 @@ class VideoManager:
             "streamer":   streamer,
             "devices":    self.detect_devices(),
             "h264_sink":  self.h264_sink,
-            "audio_device": getattr(self, "_audio_active", None) if self.h264_sink else None,
+            # Audio only counts as configured when something can actually
+            # consume it: the h264 sink is up, a Janus plugin config really got
+            # the block written, and Janus itself was running when we notified
+            # it. Reporting the bare `arecord` probe made the UI tick audio
+            # green on a unit where nothing was reading that card at all.
+            "audio_device": (getattr(self, "_audio_active", None)
+                             if (self.h264_sink
+                                 and getattr(self, "_audio_cfg_written", False)
+                                 and getattr(self, "_janus_active", False))
+                             else None),
         }
 
     def start_watchdog(self):

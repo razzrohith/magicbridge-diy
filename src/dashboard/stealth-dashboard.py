@@ -5,6 +5,7 @@
 """
 import json, os, re, subprocess, secrets, time, datetime, hashlib, hmac, logging
 from pathlib import Path
+from urllib.parse import quote as _urlq
 from flask import (Flask, jsonify, request, render_template_string,
                    session, redirect, Response)
 
@@ -496,6 +497,18 @@ NM_MAC_CONF = "/etc/NetworkManager/conf.d/00-mb-macspoof.conf"
 def _iface_is_wifi(iface: str) -> bool:
     return iface.startswith("wl") or Path(f"/sys/class/net/{iface}/wireless").exists()
 
+def _valid_iface(iface) -> bool:
+    """True only for something that could be a real kernel interface name.
+
+    Interface names arrive from JSON (the mac / rand_mac actions, and a
+    restored config) and end up interpolated into the ExecStart shell line of
+    mb-mac.service, so an unchecked name was arbitrary code running as root on
+    every boot - and it survived a password change. Deliberately name-agnostic:
+    end0, enx001122334455, usb0 and wlan0.1 all pass, because pinning this to
+    eth0/wlan0 would break the exact units _wired_ifaces() exists for. 15 chars
+    is the kernel's IFNAMSIZ limit minus the NUL."""
+    return bool(isinstance(iface, str) and re.match(r"^[A-Za-z0-9_.-]{1,15}$", iface))
+
 def _wired_ifaces() -> list:
     """Real wired NIC name(s), detected by hardware so they're name-agnostic:
     catches eth0, end0, and USB ethernet (enx*/eth1) regardless of how the
@@ -568,7 +581,7 @@ def _write_nm_mac_conf(cfg: dict):
     rx = re.compile(r'^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$')
     wifi = eth = ""
     for inf, m in persist.items():
-        if not (m and rx.match(m)):
+        if not (_valid_iface(inf) and m and rx.match(m)):
             continue
         if _iface_is_wifi(inf): wifi = m
         else:                   eth = m
@@ -589,8 +602,12 @@ def _write_nm_mac_conf(cfg: dict):
 def _write_mac_svc(cfg: dict):
     _write_nm_mac_conf(cfg)   # NM-layer (authoritative) - stops NM reverting it
     persist = cfg.get("mac_persist", {})
+    # The iface name is checked as strictly as the MAC value: both are
+    # interpolated into the ExecStart shell line below, so an unchecked key
+    # here was a root command-injection that re-ran on every boot.
     valid   = {k: v for k, v in persist.items()
-               if v and re.match(r'^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$', v)}
+               if _valid_iface(k) and v
+               and re.match(r'^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$', v)}
     if not valid:
         return
     cmds = []
@@ -990,11 +1007,35 @@ def _purge_old_logs_if_due():
     _purge_old_log_lines(SESS_LOG)
 
 # DuckDNS
+_DDNS_HOST_RX  = re.compile(r"^[A-Za-z0-9-]{1,63}$")
+_DDNS_TOKEN_RX = re.compile(r"^[A-Za-z0-9-]{8,64}$")
+
+def _ddns_clean(host, token) -> tuple:
+    """Validate/normalise a DuckDNS pair; returns ("", "") if either is bad.
+
+    These two values used to be pasted straight into the single-quoted curl URL
+    written to /etc/cron.d/mb-duckdns: one apostrophe in the token field closed
+    the string and everything after it ran as root every 5 minutes, and it
+    outlived a password change. A DuckDNS name is a single DNS label and its
+    token is letters/digits/dashes, so both fit a strict charset with nothing
+    legitimate lost. A pasted "myname.duckdns.org" is accepted and trimmed back
+    to the label, since that is the form people copy off the DuckDNS page."""
+    host = str(host or "").strip().lower()
+    if host.endswith(".duckdns.org"):
+        host = host[:-len(".duckdns.org")]
+    token = str(token or "").strip()
+    if not _DDNS_HOST_RX.match(host) or not _DDNS_TOKEN_RX.match(token):
+        return "", ""
+    return host, token
+
 def _ddns_update(host: str, token: str) -> bool:
+    host, token = _ddns_clean(host, token)
+    if not host or not token:
+        return False
     try:
         r = subprocess.run(
             ["curl","-s","--max-time","8",
-             f"https://www.duckdns.org/update?domains={host}&token={token}&ip="],
+             f"https://www.duckdns.org/update?domains={_urlq(host)}&token={_urlq(token)}&ip="],
             capture_output=True, text=True)
         return r.stdout.strip() == "OK"
     except Exception:
@@ -1008,11 +1049,24 @@ def _ext_ip() -> str:
         return ""
 
 def _ddns_cron(host: str, token: str):
+    """Write the 5-minutely refresh job. Three things this line has to get
+    right: the values are validated and URL-encoded, never trusted to be
+    shell-safe (this runs as root); the file is 0600 because it holds the
+    token in cleartext and cron.d is world-readable by default; and the output
+    goes to the RAM log dir (or /dev/null when that isn't a tmpfs) rather than
+    the SD card, since a DuckDNS log on the card is leak-class residue naming
+    the unit's public hostname."""
+    host, token = _ddns_clean(host, token)
+    if not host or not token:
+        return
     try:
-        Path("/etc/cron.d/mb-duckdns").write_text(
+        log_to = f"{RAM_LOG_DIR}/mb-duckdns.log" if os.path.ismount(RAM_LOG_DIR) else "/dev/null"
+        p = Path("/etc/cron.d/mb-duckdns")
+        p.write_text(
             f"*/5 * * * * root curl -s 'https://www.duckdns.org/update"
-            f"?domains={host}&token={token}&ip=' >/var/log/mb-duckdns.log 2>&1\n"
+            f"?domains={_urlq(host)}&token={_urlq(token)}&ip=' >{log_to} 2>&1\n"
         )
+        p.chmod(0o600)
     except Exception:
         pass
 
@@ -1713,7 +1767,10 @@ async function applyId() {
 }
 
 async function randSerial() {
-  const r = await api('/stealth/api/randomize');
+  // POST with a body so api() sends the CSRF token: rotating the live USB
+  // serial is a state change (Windows re-enumerates it as a new device
+  // instance), and as a GET a hostile page could trigger it cross-site.
+  const r = await api('/stealth/api/randomize', {});
   if (r.serial) { document.getElementById('u-ser').value = r.serial; toast('Serial: '+r.serial); }
 }
 
@@ -1766,9 +1823,14 @@ async function randEdidSerial() {
 }
 
 async function resetEdid() {
-  if (!confirm('Reset display identity to default? The connected PC will see a brief HDMI/EDID reload.')) return;
+  if (!confirm('Reset display identity to default? If the capture device is attached, the connected PC will see a brief HDMI/EDID reload.')) return;
   const r = await api('/stealth/api/apply', {action:'edid_reset'});
-  toast(r.ok ? 'Display identity reset' : (r.error||'Error'), r.ok?'ok':'er');
+  // Say what actually happened: the base EDID only reaches the connected PC
+  // when the capture hardware is present, otherwise this is a saved-only
+  // change and the target keeps the identity it has until then.
+  toast(r.ok ? (r.applied_live ? 'Display identity reset, base EDID reloaded'
+                               : 'Display identity reset (saved, ' + (r.reason||'hardware pending') + ')')
+             : (r.error||'Error'), r.ok?'ok':'er');
   if (r.ok) loadStatus();
 }
 
@@ -1925,7 +1987,8 @@ async function loadStatus() {
   const macEntries = Object.entries(mp).filter(([,v]) => v);
   if (mps) {
     mps.innerHTML = macEntries.length
-      ? '<span class="dot d-ok"></span>Boot persist: '+macEntries.map(([i,m])=>i+'→'+m).join(', ')
+      ? '<span class="dot d-ok"></span>Boot persist: '
+        + macEntries.map(([i,m])=>escT(i)+'→'+escT(m)).join(', ')
       : '';
   }
   sysState.usb = r.usb_bound ? 'ok' : 'er';
@@ -1993,7 +2056,7 @@ async function loadWifiStatus() {
   const r = await api('/stealth/api/wifi/status');
   const el = document.getElementById('wifi-st');
   if (r.connected)
-    el.innerHTML = '<span class="dot d-ok"></span>'+r.ssid+' · '+r.ip+(r.signal?' · '+r.signal+'%':'');
+    el.innerHTML = '<span class="dot d-ok"></span>'+escT(r.ssid)+' · '+escT(r.ip)+(r.signal?' · '+escT(r.signal)+'%':'');
   else
     el.innerHTML = '<span class="dot d-er"></span>Not connected';
   sysState.wifi = r.connected ? 'ok' : 'er';
@@ -2006,7 +2069,7 @@ async function loadSavedWifi() {
   if (!r || !r.length) { el.textContent = 'No saved networks.'; return; }
   el.innerHTML = r.map(n =>
     '<div data-net="'+esc(n.name)+'" style="display:flex;align-items:center;gap:8px;margin-bottom:5px">'
-    + '<span style="flex:1;color:var(--t2)">'+(n.active?'● ':'')+n.name+'</span>'
+    + '<span style="flex:1;color:var(--t2)">'+(n.active?'● ':'')+escT(n.name)+'</span>'
     + '<span class="psk-out" style="font-size:10px;color:var(--t3);font-family:monospace"></span>'
     + '<button class="btn" style="font-size:10px;padding:2px 7px" onclick="revealPsk(this)">Show</button>'
     + (n.active ? '' : '<button class="btn" style="font-size:10px;padding:2px 7px" onclick="connectWifi(\''+esc(n.name)+'\')">Connect</button>')
@@ -2059,6 +2122,20 @@ function esc(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// For values rendered as VISIBLE text inside innerHTML. The previous fix
+// escaped the data-net attribute and the onclick arguments but left the
+// displayed name and the WiFi SSID raw, and loadWifiStatus() repaints on a
+// 30s timer - so a connection named by the (deliberately weaker-password)
+// main KVM page executed script here, in the root admin panel, defeating the
+// two-password separation. HTML-escape only: esc()'s extra backslash/quote
+// escaping is for JS-string contexts and would show a literal \' in an SSID
+// like "Bob's iPhone".
+function escT(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /* Logs */
 async function refreshLogs() {
   const src = document.getElementById('log-src').value;
@@ -2075,7 +2152,13 @@ async function ulRestore(input) {
   let d;
   try { d = JSON.parse(await f.text()); } catch { toast('Invalid JSON', 'er'); return; }
   const r = await api('/stealth/api/restore', d);
-  toast(r.ok ? 'Restored, reload page' : (r.error||'Error'), r.ok?'ok':'er');
+  // Restore only writes whitelisted, re-validated settings now, so tell the
+  // operator when part of the uploaded file was skipped instead of letting it
+  // look like everything came back.
+  const ig = (r.ignored || []).length;
+  toast(r.ok ? (ig ? 'Restored, reload page (' + ig + ' unsupported key(s) ignored)'
+                   : 'Restored, reload page')
+             : (r.error||'Error'), r.ok?'ok':'er');
 }
 
 /* Reboot */
@@ -2248,6 +2331,144 @@ def api_backup():
     )
 
 
+# Restore whitelist.
+#
+# /api/restore used to write the uploaded JSON out as the ENTIRE config, so an
+# uploaded file could set anything the rest of the system trusts, with no key
+# or value checks at all. The sinks are real: an interface name under
+# mac_persist reaches a root shell through _write_mac_svc (and
+# _backfill_wired_mac replays it on the next dashboard start, so it lands even
+# without another click), a bogus usb idVendor/idProduct leaves the target with
+# no keyboard and no mouse after the next gadget rebuild, and edid.applied_file
+# is a WRITE TARGET, so a restored path aimed at a source file gets overwritten
+# with EDID hex the next time a display identity is applied.
+#
+# So: only these sections restore, only these keys inside them, every value is
+# re-checked the way the API that normally sets it checks it, and the result is
+# MERGED onto the live config rather than replacing it (sections owned by the
+# main service and not listed here survive untouched). Anything dropped is
+# named back to the operator instead of failing the whole restore.
+def _r_pick(sec: str, v, keys: dict, out: dict, bad: list):
+    """Copy v's keys into out[sec] when the per-key checker accepts them."""
+    if not isinstance(v, dict):
+        bad.append(sec)
+        return
+    clean = {}
+    for k, val in v.items():
+        chk = keys.get(k)
+        if chk is None:
+            bad.append(f"{sec}.{k}")
+            continue
+        got = chk(val)
+        if got is None:
+            bad.append(f"{sec}.{k}")
+        else:
+            clean[k] = got
+    if clean:
+        out[sec] = clean
+
+def _c_bool(v):  return v if isinstance(v, bool) else None
+def _c_int(lo, hi):
+    def _f(v):
+        if isinstance(v, bool) or not isinstance(v, int): return None
+        return v if lo <= v <= hi else None
+    return _f
+def _c_rx(pat, maxlen=128):
+    rx = re.compile(pat)
+    def _f(v):
+        if not isinstance(v, str) or len(v) > maxlen: return None
+        return v if rx.match(v) else None
+    return _f
+def _c_usbstr(v):
+    # Same sanitiser the live identity path uses: printable ASCII, <=126 chars.
+    # Empty is rejected here: a blank manufacturer/product string written to the
+    # descriptor at boot is itself a stealth tell, so drop the key and keep
+    # whatever identity the unit already wears.
+    return (_usb_str(v, "") or None) if isinstance(v, str) else None
+def _c_usbser(v):
+    # Serial may legitimately be empty (a real Unifying Receiver reports none).
+    return _usb_str(v, "") if isinstance(v, str) else None
+def _c_choice(*opts):
+    return lambda v: v if isinstance(v, str) and v in opts else None
+def _c_num01(v):
+    return float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) \
+                       and 0.0 <= float(v) <= 1.0 else None
+def _c_screen_area(v):
+    if not isinstance(v, dict): return None
+    out = {}
+    for k in ("x0", "y0", "x1", "y1"):
+        got = _c_num01(v.get(k))
+        if got is None: return None
+        out[k] = got
+    return out
+_RESTORE_USB = {
+    "manufacturer": _c_usbstr, "product": _c_usbstr, "serial": _c_usbser,
+    "idVendor":  _c_rx(r"^0x[0-9a-fA-F]{4}$", 6),
+    "idProduct": _c_rx(r"^0x[0-9a-fA-F]{4}$", 6),
+    "has_serial": _c_bool, "extra_iface": _c_bool,
+    "mouse_mode": _c_choice("relative", "absolute"),
+    "profile_idx": _c_int(0, len(USB_PROFILES) - 1),
+}
+_RESTORE_EDID = {
+    # base_file/applied_file are deliberately NOT restorable: applied_file is
+    # the path _apply_edid WRITES to, so accepting one from an uploaded file
+    # turns the next display-identity apply into an arbitrary file overwrite.
+    # They always come from EDID_DEFAULTS.
+    "enabled": _c_bool,
+    "profile_idx": _c_int(0, len(EDID_PROFILES) - 1),
+    "mfr": _c_rx(r"^[A-Za-z]{3}$", 3),
+    "product_name": _c_rx(r"^[\x20-\x7E]{0,13}$", 13),
+    "product_id": _c_int(0, 0xFFFF),
+    "serial": _c_rx(r"^[\x20-\x7E]{0,32}$", 32),
+}
+_RESTORE_DDNS = {
+    "host":  _c_rx(r"^[A-Za-z0-9-]{1,63}$", 63),
+    "token": _c_rx(r"^[A-Za-z0-9-]{8,64}$", 64),
+    "last_ip": _c_rx(r"^[0-9a-fA-F.:]{0,45}$", 45),
+    "last_update": _c_rx(r"^[0-9T:.\- ]{0,32}$", 32),
+}
+_RESTORE_VIDEO = {
+    "device":     _c_rx(r"^/dev/video\d{1,3}$", 20),
+    "resolution": _c_rx(r"^\d{3,4}x\d{3,4}$", 9),
+    "fps":     _c_int(1, 120),
+    "quality": _c_int(1, 100),
+    "bitrate": _c_int(100, 50000),
+    "mode":    _c_choice("auto", "h264", "mjpeg"),
+    "screen_area": _c_screen_area,
+}
+
+def _restore_filter(d: dict) -> tuple:
+    """(clean sections, list of ignored keys)."""
+    out, bad = {}, []
+    for k, v in d.items():
+        if   k == "usb":     _r_pick("usb",     v, _RESTORE_USB,   out, bad)
+        elif k == "edid":    _r_pick("edid",    v, _RESTORE_EDID,  out, bad)
+        elif k == "duckdns": _r_pick("duckdns", v, _RESTORE_DDNS,  out, bad)
+        elif k == "video":   _r_pick("video",   v, _RESTORE_VIDEO, out, bad)
+        elif k == "mac_persist":
+            # Both halves are checked: the KEY is the command-injection vector
+            # (see _valid_iface), the value is what gets written to the link.
+            if not isinstance(v, dict):
+                bad.append("mac_persist")
+                continue
+            macs = {}
+            for inf, m in v.items():
+                if _valid_iface(inf) and isinstance(m, str) and \
+                   re.match(r"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$", m):
+                    macs[inf] = m
+                else:
+                    bad.append(f"mac_persist.{inf}")
+            if macs:
+                out["mac_persist"] = macs
+        elif k in ("mac_autospoof", "safe_mode", "leds_enabled"):
+            got = _c_bool(v)
+            if got is None: bad.append(k)
+            else: out[k] = got
+        else:
+            bad.append(k)
+    return out, bad
+
+
 @app.route("/api/restore", methods=["POST"])
 def api_restore():
     if not _authed(): return jsonify({"error":"auth"}), 401
@@ -2255,11 +2476,24 @@ def api_restore():
     d = request.get_json(force=True, silent=True) or {}
     if not isinstance(d, dict):
         return jsonify({"error": "Invalid format"}), 400
+    clean, ignored = _restore_filter(d)
+    if not clean:
+        return jsonify({"ok": False, "error": "Nothing restorable in that file",
+                        "ignored": ignored}), 400
     cfg = _load()
-    d["auth"] = cfg.get("auth", {})
-    _save(d)
-    _log_sess(f"Config restored from {_client_ip()}")
-    return jsonify({"ok": True})
+    # Merge, never wholesale-replace: auth and the main service's own sections
+    # (oled, wol, jiggler…) survive, and inside a restored section the keys this
+    # panel doesn't own survive too - dropping usb.mouse_mode on a restore would
+    # silently put the target's pointer back to relative.
+    for sec, val in clean.items():
+        if isinstance(val, dict) and isinstance(cfg.get(sec), dict):
+            cfg[sec].update(val)
+        else:
+            cfg[sec] = val
+    _save(cfg)
+    _log_sess(f"Config restored from {_client_ip()}"
+              + (f" ({len(ignored)} key(s) ignored)" if ignored else ""))
+    return jsonify({"ok": True, "restored": sorted(clean), "ignored": ignored})
 
 
 @app.route("/api/lock", methods=["POST"])
@@ -2270,9 +2504,14 @@ def api_lock():
     return jsonify({"ok": True})
 
 
-@app.route("/api/randomize")
+# POST + CSRF like every other mutating route: this writes a new serial to the
+# live gadget, and a SameSite=Lax cookie IS sent on a top-level GET navigation,
+# so as a GET any page the operator visited could silently re-roll the USB
+# serial (a fresh device instance on the target's side).
+@app.route("/api/randomize", methods=["POST"])
 def api_randomize():
     if not _authed(): return jsonify({"error":"auth"}), 401
+    if not _csrf_ok(): return jsonify({"error":"csrf"}), 403
     cfg = _load()
     idx = cfg.get("usb", {}).get("profile_idx", 0)
     p = USB_PROFILES[idx] if 0 <= idx < len(USB_PROFILES) else USB_PROFILES[0]
@@ -2396,11 +2635,34 @@ def api_apply():
             cfg2 = _load()
             cfg2["edid"] = dict(EDID_DEFAULTS)
             _save(cfg2)
-            _log_sess("Display identity reset to default")
-            return jsonify({"ok": True})
+            # Push the plain base blob back to the capture device too. Writing
+            # the config alone left the TARGET still holding the previous
+            # monitor identity until the next reboot, while the dialog promised
+            # a brief HDMI/EDID reload and the toast said it had been reset.
+            ready, reason = _edid_hw_ready(cfg2)
+            if ready:
+                dev = reason   # _edid_hw_ready returns the device node when ready
+                try:
+                    subprocess.run(["v4l2-ctl", "-d", dev,
+                                    f"--set-edid=file={EDID_DEFAULTS['base_file']}",
+                                    "--fix-edid-checksums"],
+                                   capture_output=True, text=True, timeout=10, check=True)
+                    result = {"ok": True, "applied_live": True, "device": dev}
+                except Exception as ex:
+                    result = {"ok": True, "applied_live": False,
+                              "reason": f"v4l2-ctl reload failed: {ex}"}
+            else:
+                result = {"ok": True, "applied_live": False, "reason": reason}
+            _log_sess("Display identity reset to default"
+                      + ("" if result.get("applied_live") else " (saved, hardware pending)"))
+            return jsonify(result)
 
         elif act == "mac":
             iface, mac = d.get("iface", _primary_wired()), d.get("mac","")
+            # The iface is checked as hard as the MAC: it ends up in the
+            # mb-mac.service ExecStart line, i.e. root at every boot.
+            if not _valid_iface(iface):
+                return jsonify({"error": "Invalid interface name"}), 400
             if not re.match(r"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$", mac):
                 return jsonify({"error": "Invalid MAC format"}), 400
             _set_mac(iface, mac)
@@ -2410,6 +2672,8 @@ def api_apply():
 
         elif act == "rand_mac":
             iface = d.get("iface", _primary_wired())
+            if not _valid_iface(iface):   # same root-shell sink as "mac" above
+                return jsonify({"error": "Invalid interface name"}), 400
             idx = d.get("vendor_idx")
             oui = None
             vendor_name = "random"
@@ -2459,10 +2723,17 @@ def api_apply():
             return jsonify({"ok": True, "safe": new_safe})
 
         elif act == "duckdns":
-            host  = d.get("host","").strip()
-            token = d.get("token","").strip()
+            host  = str(d.get("host","")).strip()
+            token = str(d.get("token","")).strip()
             if not host or not token:
                 return jsonify({"error": "Hostname and token required"}), 400
+            # Normalise/validate BEFORE either value reaches the root cron line
+            # (see _ddns_clean), and store the cleaned pair, not the raw input.
+            host, token = _ddns_clean(host, token)
+            if not host or not token:
+                return jsonify({"error": "Hostname must be a plain DuckDNS name "
+                                          "(letters, digits, dashes) and the token "
+                                          "its letters/digits/dashes only"}), 400
             if _ddns_update(host, token):
                 ip = _ext_ip()
                 cfg["duckdns"] = {"host": host, "token": token, "last_ip": ip,

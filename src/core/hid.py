@@ -162,6 +162,14 @@ KEY_MAP: dict = {
     "Digit9": 0x26, "Digit0": 0x27,
     # Core keys
     "Enter":        0x28,
+    # "Return" is the SAME HID usage as Enter (0x28). The AI-agent prompt and the
+    # macro runner advertise the code "Return" (an Enter macro step sends
+    # code:'Return', and the headline example presses it), but key_down/key_up are
+    # if/elif over MODIFIER_MAP then KEY_MAP with no else, so an unmapped "Return"
+    # falls through silently, emitting nothing and logging nothing. Every macro's
+    # final Enter was being dropped with no feedback. Alias it so the documented
+    # contract actually fires.
+    "Return":       0x28,
     "Escape":       0x29,
     "Backspace":    0x2A,
     "Tab":          0x2B,
@@ -382,15 +390,37 @@ class HIDKeyboard:
     def combo(self, codes: list, cancel=None):
         """
         Press all codes simultaneously (modifier + key combos),
-        hold 80 ms, then RESTORE whatever was held before.
+        hold 80 ms, then SETTLE back to whatever is live-held.
         Safe to call from a thread pool executor.
 
         S5: the tail used to force self.modifiers=0 / self.pressed.clear(),
         which released any key the operator was physically holding (tracked in
         that same shared state by the live-key path) and desynced the later
-        keyup. Snapshot the held state before the macro and restore it after,
-        so a self-contained macro never clobbers independently-held keys.
-        `cancel` (a threading.Event) is accepted for API parity with send_text.
+        keyup. We settle to the current live state instead, so a self-contained
+        macro never clobbers independently-held keys.
+
+        F14: the settle writes the CURRENT live state, never a pre-sleep
+        snapshot. The 80 ms hold is slept OUTSIDE the lock, and combo runs on the
+        executor while keydown/keyup/release_all run on the HID worker thread, so
+        self.modifiers/self.pressed really can change under us during the hold.
+        Reasserting a snapshot would (A) resurrect a modifier the operator
+        released mid-hold, or (B) re-press keys after a disconnect's release_all
+        already cleared them: either way a key is left DOWN on the target with no
+        keyup coming, a stuck-key usability failure and a stealth tell that only
+        heals on reconnect. Writing the live state lets a mid-hold release STICK
+        and lets a mid-hold press survive; an independently-held key is part of
+        that live state, so S5 still holds. combo never mutates
+        self.modifiers/self.pressed, so it only ever releases its own combo keys.
+
+        `cancel` (a threading.Event) is set in the ws handler's finally when THIS
+        client disconnects mid-combo. We honour it by cutting the hold short, so a
+        dying session settles at once instead of pinning the combo keys down for
+        the full 80 ms. We deliberately still RUN the settle write on cancel
+        rather than returning untouched: the ws handler only calls release_all()
+        when NO clients remain (S6), so with another operator still connected an
+        untouched return would strand the combo keys asserted on the shared
+        gadget, exactly the stuck modifier we are fixing. The live-state settle
+        releases the combo keys in every case.
         """
         mods = 0
         keys: set = set()
@@ -400,13 +430,14 @@ class HIDKeyboard:
             elif code in KEY_MAP:
                 keys.add(KEY_MAP[code])
         with self._lock:
-            saved_mods = self.modifiers
-            saved_keys = set(self.pressed)
             self._write(mods, keys)
-        time.sleep(0.08)
+        # Hold ~80 ms, but wake early if THIS client disconnects mid-combo so a
+        # dead session doesn't pin the combo keys down for the full hold.
+        if cancel is not None:
+            cancel.wait(0.08)
+        else:
+            time.sleep(0.08)
         with self._lock:
-            self.modifiers = saved_mods
-            self.pressed = saved_keys
             self._write(self.modifiers, self.pressed)
 
     def send_text(self, text: str, delay: float = 0.012, human: bool = True, cancel=None):

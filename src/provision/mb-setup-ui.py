@@ -169,9 +169,15 @@ class Handler(BaseHTTPRequestHandler):
             page = HTML.replace("MSGBLOCK",
                 '<div class="msg er">SSID is required.</div>')
             self._send(400, page); return
-        # Write wifi credentials
+        # Write wifi credentials. 0600: this file holds the target LAN's WiFi PSK
+        # in plaintext. A plain open() creates it 0644 in a 0755 dir, so the
+        # non-root account could read the secret off disk. os.open sets 0600 on
+        # create; the fchmod tightens it even if a stale file pre-existed at 0644.
+        # mb-provision.sh reads it back as root, so nothing else needs to change.
         try:
-            with open(WIFI_FILE, "w") as f:
+            fd = os.open(WIFI_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w") as f:
                 f.write(ssid + "\n")
                 f.write(pw + "\n")
         except Exception as e:
