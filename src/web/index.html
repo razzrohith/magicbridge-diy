@@ -1605,9 +1605,13 @@ function _nsState(s){
   }
 }
 function _mjpegOwnsOverlay(){
-  // MJPEG owns the overlay/pills whenever it's the visible picture: on the mjpeg
-  // transport, and on h264 UNTIL WebRTC has actually swapped in (confirmed).
-  return !(typeof _activeTransport!=='undefined' && _activeTransport==='h264' && _webrtcConfirmed);
+  // MJPEG owns the overlay/pills only while it is the visible picture: on the
+  // mjpeg transport, and on h264 until the WebRTC track has taken over. Must go
+  // false at TRACK-up (not confirm), because that is when we close the <img> -
+  // otherwise the resulting img error would re-trigger onErr -> retryStream and
+  // reopen the very MJPEG stream we just closed, in a loop.
+  return !(typeof _activeTransport!=='undefined' && _activeTransport==='h264'
+           && (_webrtcTrackUp || _webrtcConfirmed));
 }
 function onLoad(){
   // Once WebRTC has confirmed and taken over the picture, the background MJPEG
@@ -1669,7 +1673,7 @@ function retryStream(){ $s.src='/stream?_='+Date.now(); _frameLoadTimes=[]; }
 function retryVideo(){
   const m = _activeTransport || ((document.getElementById('sel-mode')||{}).value);
   if(m==='h264'){
-    _webrtcGaveUp=false; _webrtcRetries=0; _webrtcConfirmed=false;
+    _webrtcGaveUp=false; _webrtcRetries=0; _webrtcConfirmed=false; _webrtcTrackUp=false;
     clearTimeout(_webrtcRearmTimer);
     setVideoTransport('h264');
   } else {
@@ -1829,6 +1833,7 @@ function _setCaptured(on){
     setSidebarForControl(true);
     if(typeof _releaseMouseButtons==='function') _releaseMouseButtons();   // don't leave a button held after losing control
   }
+  if(typeof _applyViewCursor==='function') _applyViewCursor();   // hide/show OUR cursor for the new capture state
 }
 ['pointerlockchange','mozpointerlockchange','webkitpointerlockchange'].forEach(ev=>{
   document.addEventListener(ev,()=>{
@@ -2003,7 +2008,7 @@ document.addEventListener('visibilitychange', ()=>{
       // Re-establish on return. The status poll can't do this: syncVideoTransport
       // early-returns because _activeTransport is still 'h264'. MJPEG-first gives
       // an instant picture while WebRTC reconnects.
-      if(_activeTransport==='h264'){ _webrtcConfirmed=false; setVideoTransport('h264'); }
+      if(_activeTransport==='h264'){ _webrtcConfirmed=false; _webrtcTrackUp=false; setVideoTransport('h264'); }
     }
   }
 });
@@ -2280,7 +2285,19 @@ let _cursorStyle='default';
 function setCursor(c){
   _cursorStyle=c;
   document.querySelectorAll('.cur-opt').forEach(b=>b.classList.toggle('active',b.dataset.c===c));
-  $view.style.cursor=c==='dot'?'none':c==='default'?'default':c;
+  _applyViewCursor();
+}
+// In ABSOLUTE mode our cursor maps 1:1 onto the target's own pointer, so drawing
+// both just shows two arrows a few frames apart - which reads as "they don't
+// line up". While actually controlling, hide ours and let the target's pointer
+// be the single source of truth. It comes back the moment you release control,
+// so you can still see where you're aiming to click back in. Picking any cursor
+// style other than Arrow is treated as a deliberate override and is honoured
+// even while captured.
+function _applyViewCursor(){
+  const hideOurs = (_mouseMode==='absolute' && captured && _cursorStyle==='default');
+  $view.style.cursor = hideOurs ? 'none'
+                     : (_cursorStyle==='dot' ? 'none' : _cursorStyle);
 }
 function toggleOverlay(on){
   _showOverlay=!!on;
@@ -2353,8 +2370,7 @@ function _applyMouseModeUI(m){
   if(rel) rel.classList.toggle('active',_mouseMode==='relative');
   if(abs) abs.classList.toggle('active',_mouseMode==='absolute');
   if(_mouseMode==='absolute'){ document.getElementById('cur-dot').style.display='none'; }
-  // In absolute mode the real cursor should be visible over the view.
-  if(_mouseMode==='absolute' && _cursorStyle==='none') setCursor('default');
+  _applyViewCursor();   // absolute+captured hides ours; see _applyViewCursor
 }
 async function setMouseMode(m){
   if(m!=='relative' && m!=='absolute') return;
@@ -2664,6 +2680,13 @@ let _wrtcLastFrames = -1, _wrtcStallPolls = 0;
 // swaps to the <video> once WebRTC has REAL pixels. _webrtcConfirmed marks that
 // swap so the MJPEG onLoad/onErr paths know when to stop owning the overlay.
 let _webrtcConfirmed = false;
+// True once the WebRTC video TRACK has arrived (media negotiated), which happens
+// well before the first frame decodes. We close MJPEG at THAT point rather than
+// waiting for pixels: MJPEG can saturate the WiFi link on its own, so leaving it
+// running until first-paint starves the very WebRTC stream we are waiting for and
+// makes the first minute feel slow. Closing at track-up frees the link, so the
+// first h264 frame lands almost immediately.
+let _webrtcTrackUp = false;
 // Generation token: every startWebRTC captures the current value; stopWebRTC and
 // the fallback bump it. Async Janus callbacks bail if their captured gen is
 // stale, so a handshake that completes AFTER a fallback/teardown self-destructs
@@ -2681,6 +2704,7 @@ function setVideoTransport(mode){
   if(mode === 'h264'){
     _webrtcGaveUp = false;      // a genuine attempt is starting; give it a fair try
     _webrtcConfirmed = false;   // not swapped to <video> until real pixels arrive
+    _webrtcTrackUp   = false;   // MJPEG keeps the screen until the track arrives
     // MJPEG-FIRST. Keep the <img> visible and streaming so there is an INSTANT
     // picture, and connect WebRTC underneath into the (still hidden) <video>.
     // The actual swap - hide + CLOSE the MJPEG connection, reveal the <video> -
@@ -2809,6 +2833,17 @@ function startWebRTC(){
             // and never render - a live track with no pixels.
             vid.srcObject.addTrack(track);
             if(track.kind === 'video'){
+              // Media is negotiated and flowing. Hand the screen over NOW and
+              // close the MJPEG connection: keeping it open until first-paint let
+              // it hog the link and delayed this stream's own first frame (the
+              // "laggy for the first minute" symptom). Show the neutral
+              // "Connecting…" overlay for the brief gap until pixels land; if
+              // they never do, the 8s timeout / confirm-poll falls back to MJPEG.
+              _webrtcTrackUp = true;
+              const _im = document.getElementById('stream');
+              _im.style.display = 'none'; _im.removeAttribute('src');
+              vid.style.display = '';
+              if(!_webrtcConfirmed) _nsState('connecting');
               // A track ARRIVING is not video PLAYING. The old code cancelled
               // the fallback timer here, which disarmed the safety net before
               // it could help: if no frames ever decoded you got a black video
@@ -2831,13 +2866,11 @@ function startWebRTC(){
                 _webrtcRetries = 0;   // good connection -> refill the recovery budget
                 _wrtcLastFrames = -1; _wrtcStallPolls = 0;   // restart stall baseline
                 _webrtcConfirmed = true;
-                // THE SWAP. WebRTC now has real pixels, so close the MJPEG
-                // connection (frees the ~50-100 Mbit/s that was competing on
-                // WiFi during the connect window) and reveal the <video>. Doing
-                // it here instead of eagerly at attempt-start is what keeps a
-                // working MJPEG picture on screen the whole time WebRTC connects.
+                // The MJPEG handover already happened at track-up (above); by
+                // here we just have real pixels, so drop the overlay. Belt and
+                // braces in case a track event was missed.
                 const _img=document.getElementById('stream');
-                _img.style.display='none'; _img.removeAttribute('src');
+                if(_img.getAttribute('src')){ _img.style.display='none'; _img.removeAttribute('src'); }
                 vid.style.display='';
                 if($ns) $ns.style.display='none';
                 document.getElementById('bd-stream').className='bd ok';
@@ -3014,6 +3047,7 @@ function syncVideoTransport(mode){
 function stopWebRTC(){
   _webrtcGen++;                 // invalidate any in-flight attempt's async callbacks (P4)
   _webrtcConfirmed = false;
+  _webrtcTrackUp   = false;     // hand the screen back to MJPEG
   clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
   clearInterval(_webrtcFpsTimer); _webrtcFpsTimer = null;
   const _vf=document.getElementById('s-vfps'); if(_vf) _vf.textContent='-';
