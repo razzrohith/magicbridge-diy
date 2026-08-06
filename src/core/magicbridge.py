@@ -1522,6 +1522,11 @@ async def api_status(request: web.Request) -> web.Response:
         "hid_ms":     os.path.exists("/dev/hidg1"),
         "stream":     stream_status,
         "screen_area": _get_screen_area(),   # absolute-mouse mapping (see api_screen_area)
+        # Live mouse mode, so an open tab can't drift out of sync with the gadget
+        # that is ACTUALLY bound. A stale tab still believing it is in absolute
+        # mode keeps sending absolute coords a relative gadget silently discards,
+        # which looks exactly like "the mouse stopped working".
+        "mouse_mode": (_load_cfg().get("usb", {}) or {}).get("mouse_mode", "relative"),
         "uptime":     uptime,
         "temp_c":     temp,
         "local_ip":     local_ip,

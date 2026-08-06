@@ -3071,6 +3071,15 @@ function applyStatus(d){
     _screenArea=d.screen_area;                 // absolute-mouse mapping rect
     _renderScreenArea();
   }
+  // Follow the mode the gadget is ACTUALLY in. Without this a tab that was open
+  // when the mode changed (from another tab, the API, or a reboot) keeps speaking
+  // the wrong protocol - absolute coords into a relative gadget get discarded and
+  // it just looks like the mouse died. Reconciling here means no reload is needed.
+  if((d.mouse_mode==='absolute'||d.mouse_mode==='relative') && d.mouse_mode!==_mouseMode){
+    if(captured){ _intentional=true; releaseAll(); }   // drop control before switching model
+    _applyMouseModeUI(d.mouse_mode);
+    toast('Mouse mode is now '+d.mouse_mode+' (changed on the device)');
+  }
   if(d.local_ip) document.getElementById('ss-ip').textContent=d.local_ip;
   if(d.hid_kb!=null) document.getElementById('ss-hkb').textContent=d.hid_kb?'✓ /dev/hidg0':'✗';
   if(d.hid_ms!=null) document.getElementById('ss-hms').textContent=d.hid_ms?'✓ /dev/hidg1':'✗';
