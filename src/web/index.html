@@ -724,8 +724,13 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
           <div class="snote" id="mm-note" style="margin-top:6px">
             <b>Relative</b>: pointer-lock, most stealthy (looks like a normal mouse).
-            <b>Absolute</b>: cursor maps 1:1 so you always see it. Rebuilds the USB
-            mouse, slightly less stealthy.
+            Works everywhere. <b>Absolute</b>: cursor maps 1:1 so you always see it.
+            Rebuilds the USB mouse, slightly less stealthy.
+          </div>
+          <div class="snote" style="margin-top:6px;color:var(--yellow)">
+            <b>iPad / iPhone: use Relative.</b> Verified on an iPad Air: iPadOS moves
+            the pointer from an absolute device but <b>ignores its clicks</b>. Relative
+            mode clicks work normally there.
           </div>
           <!-- Absolute-mode calibration. Only matters when the target does NOT
                fill the frame (e.g. an iPad mirrors its 4:3-ish screen into a 16:9
@@ -734,9 +739,10 @@ body:not(.fs) .fs-hud{display:none!important}
           <div id="sa-wrap" style="margin-top:10px;border-top:1px solid var(--border);padding-top:9px">
             <div class="srow"><span class="sk">Target screen area</span><span class="sv" id="sa-val">full frame</span></div>
             <div class="snote" style="margin-top:4px">
-              Only needed in Absolute mode when the target doesn't fill the picture
-              (black bars), like an iPad or a 4:3 screen. Point the target at its
-              home screen, then Detect.
+              Absolute mode only. Needed when the target doesn't fill the picture
+              (black bars down the sides), e.g. a 4:3 screen or a tablet mirroring
+              into a 16:9 signal. Point the target at its home screen, then Detect.
+              Resets itself automatically if you connect a different target.
             </div>
             <button class="sbtn" id="sa-detect" onclick="screenAreaDetect()" style="margin-top:6px">◳ Detect screen area</button>
             <button class="sbtn" onclick="screenAreaReset()" style="margin-top:4px">↺ Use full frame</button>
