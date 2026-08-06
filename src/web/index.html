@@ -727,6 +727,20 @@ body:not(.fs) .fs-hud{display:none!important}
             <b>Absolute</b>: cursor maps 1:1 so you always see it. Rebuilds the USB
             mouse, slightly less stealthy.
           </div>
+          <!-- Absolute-mode calibration. Only matters when the target does NOT
+               fill the frame (e.g. an iPad mirrors its 4:3-ish screen into a 16:9
+               signal, centred inside black bars). Default is the full frame, so a
+               normal laptop target needs nothing here. -->
+          <div id="sa-wrap" style="margin-top:10px;border-top:1px solid var(--border);padding-top:9px">
+            <div class="srow"><span class="sk">Target screen area</span><span class="sv" id="sa-val">full frame</span></div>
+            <div class="snote" style="margin-top:4px">
+              Only needed in Absolute mode when the target doesn't fill the picture
+              (black bars), like an iPad or a 4:3 screen. Point the target at its
+              home screen, then Detect.
+            </div>
+            <button class="sbtn" id="sa-detect" onclick="screenAreaDetect()" style="margin-top:6px">◳ Detect screen area</button>
+            <button class="sbtn" onclick="screenAreaReset()" style="margin-top:4px">↺ Use full frame</button>
+          </div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Mouse Cursor</div>
@@ -2049,12 +2063,31 @@ function _flushMouse(){
 function _queueMouse(){ if(!_mvRAF){ _mvRAF=true; requestAnimationFrame(_flushMouse); } }
 // Map a screen position to absolute HID coords (0..32767) over the actual
 // (letterboxed) video area. Returns null if off the video.
+// The TARGET's screen inside the captured frame, as fractions (see
+// /api/screen-area). An absolute pointer addresses 0..32767 across the target's
+// OWN screen, which equals the whole frame only when the target fills it. A
+// source that pillar/letterboxes (an iPad mirroring its 4:3-ish screen into a
+// 16:9 signal centres it inside black bars) occupies just an inset rect, so
+// mapping across the whole frame puts the pointer far from the cursor and makes
+// clicks land somewhere else entirely.
+// Default {0,0,1,1} = the full frame = exactly the old math, so a 16:9 laptop
+// target behaves identically.
+let _screenArea={x0:0,y0:0,x1:1,y1:1};
 function _absFromXY(cx,cy){
   const r=_videoRect();
   if(!(r.width>0 && r.height>0)) return null;
   const nx=(cx-r.left)/r.width, ny=(cy-r.top)/r.height;
   if(nx<0||nx>1||ny<0||ny>1) return null;
-  return {x:Math.round(nx*32767), y:Math.round(ny*32767)};
+  const a=_screenArea||{}, aw=a.x1-a.x0, ah=a.y1-a.y0;
+  // Enforce the same invariant the server does instead of trusting it: anything
+  // degenerate, out-of-frame or NaN falls back to the plain full-frame mapping.
+  if(!(aw>0&&ah>0&&a.x0>=0&&a.y0>=0&&a.x1<=1&&a.y1<=1))
+    return {x:Math.round(nx*32767), y:Math.round(ny*32767)};
+  // Re-base the frame fraction onto the target's screen rect, then clamp: the
+  // black bars are not part of the target's screen, so a pointer out there maps
+  // to the nearest screen edge instead of running off into nothing.
+  const sx=Math.max(0,Math.min(1,(nx-a.x0)/aw)), sy=Math.max(0,Math.min(1,(ny-a.y0)/ah));
+  return {x:Math.round(sx*32767), y:Math.round(sy*32767)};
 }
 function _absFromEvent(e){ return _absFromXY(e.clientX,e.clientY); }
 // Pin the pointer to a given position on the wire before a button event, so a
@@ -2224,6 +2257,55 @@ function setCursor(c){
   $view.style.cursor=c==='dot'?'none':c==='default'?'default':c;
 }
 function toggleOverlay(on){ _showOverlay=on; if(!on) document.getElementById('cur-dot').style.display='none'; }
+
+// --- Target screen area (absolute-mouse calibration) -----------------------
+function _renderScreenArea(){
+  const el=document.getElementById('sa-val'); if(!el) return;
+  const a=_screenArea;
+  const full=(a.x1-a.x0)>0.995 && (a.y1-a.y0)>0.995 && a.x0<0.005 && a.y0<0.005;
+  el.textContent = full ? 'full frame'
+    : Math.round((a.x1-a.x0)*100)+'% × '+Math.round((a.y1-a.y0)*100)+'% (inset)';
+  el.className = 'sv'+(full?'':' ac');
+}
+async function screenAreaDetect(){
+  const btn=document.getElementById('sa-detect');
+  if(btn){ btn.disabled=true; btn.textContent='Detecting…'; }
+  try{
+    const r=await fetch('/api/screen-area',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'detect'})});
+    const d=await r.json();
+    if(!d.ok){ toast(d.error||'Detect failed'); return; }
+    const t=d.detected, b=t.bars_px||{}, br=t.bars_raw||b;
+    if(d.fills_frame){
+      toast('Target already fills the picture — no calibration needed');
+      return;
+    }
+    if(!(t && typeof t.x1==='number')){ toast('Detect returned no usable area'); return; }
+    if(!confirm('Detected the target screen as '+Math.round((t.x1-t.x0)*100)+'% × '
+        +Math.round((t.y1-t.y0)*100)+'% of the picture\n'
+        +'Black bars used — left '+b.left+'px, right '+b.right+'px, top '+b.top+'px, bottom '+b.bottom+'px\n'
+        +'(measured raw: '+br.left+'/'+br.right+'/'+br.top+'/'+br.bottom+' — bars are assumed centred)\n\n'
+        +'Use this for absolute-mouse mapping?')) return;
+    const s=await fetch('/api/screen-area',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'set',x0:t.x0,y0:t.y0,x1:t.x1,y1:t.y1})});
+    const sd=await s.json();
+    if(!sd.ok){ toast(sd.error||'Could not save'); return; }
+    if(sd.screen_area && typeof sd.screen_area.x1==='number'){ _screenArea=sd.screen_area; }
+    _renderScreenArea();
+    toast('Screen area calibrated ✓ — absolute cursor should line up now');
+  }catch(e){ toast('Detect failed'); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='◳ Detect screen area'; } }
+}
+async function screenAreaReset(){
+  try{
+    const r=await fetch('/api/screen-area',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'reset'})});
+    const d=await r.json();
+    if(d.ok){
+      if(d.screen_area && typeof d.screen_area.x1==='number'){ _screenArea=d.screen_area; }
+      else { _screenArea={x0:0,y0:0,x1:1,y1:1}; }
+      _renderScreenArea(); toast('Using the full frame');
+    } else { toast(d.error||'Reset failed'); }
+  }catch(e){ toast('Reset failed'); }
+}
 
 // Mouse mode (relative | absolute). Switching posts to the backend, which
 // rebuilds the USB gadget with the matching HID descriptor, then updates the UI.
@@ -2954,6 +3036,10 @@ function applyStatus(d){
             +'<span class="vw-dur">'+durShort(v.secs)+'</span></div>').join('')
         : '<div class="vw-none">no active connections</div>';
     }
+  }
+  if(d.screen_area && typeof d.screen_area.x1==='number'){
+    _screenArea=d.screen_area;                 // absolute-mouse mapping rect
+    _renderScreenArea();
   }
   if(d.local_ip) document.getElementById('ss-ip').textContent=d.local_ip;
   if(d.hid_kb!=null) document.getElementById('ss-hkb').textContent=d.hid_kb?'✓ /dev/hidg0':'✗';

@@ -1521,6 +1521,7 @@ async def api_status(request: web.Request) -> web.Response:
         "hid_kb":     os.path.exists("/dev/hidg0"),
         "hid_ms":     os.path.exists("/dev/hidg1"),
         "stream":     stream_status,
+        "screen_area": _get_screen_area(),   # absolute-mouse mapping (see api_screen_area)
         "uptime":     uptime,
         "temp_c":     temp,
         "local_ip":     local_ip,
@@ -2308,6 +2309,202 @@ async def api_mouse_mode(request):
     })
 
 
+# ---------------------------------------------------------------------------
+# Target screen area (absolute-mouse calibration).
+#
+# WHY: an absolute pointer sends 0..32767 across the TARGET'S OWN SCREEN. That
+# only equals "across the captured frame" when the target fills the frame - true
+# for a 16:9 laptop, FALSE for anything that pillar/letterboxes into the HDMI
+# signal. Measured on an iPad Air M1 mirroring to 720p: the iPad's screen is
+# 4:3-ish, so iPadOS centred it with 174px black bars left and right - it
+# occupies only x 13.6%..86.5% of the frame. Mapping across the whole frame
+# therefore lands the pointer far from the cursor (worse toward the edges), and
+# clicks land on whatever is actually under it. Storing the active rect lets the
+# client map into the target's real screen.
+#
+# DEFAULT IS THE FULL FRAME (0,0,1,1) => byte-for-byte the previous behaviour,
+# so a normal 16:9 laptop target is completely unaffected.
+# ---------------------------------------------------------------------------
+_SCREEN_AREA_DEFAULT = {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 1.0}
+
+def _screen_src_tag() -> str:
+    """Cheap fingerprint of the CURRENT source, used to bind a calibration to the
+    target it was measured on. Deliberately reads plain attributes only - this
+    runs on every /api/status poll, so it must not enumerate devices or shell
+    out (video.status() does both)."""
+    try:
+        return "%s@%s" % (getattr(video, "resolution", "?"), getattr(video, "device", "?"))
+    except Exception:
+        return "?"
+
+
+def _get_screen_area(cfg: dict = None) -> dict:
+    try:
+        c = cfg if cfg is not None else _load_cfg()
+        a = (c.get("video", {}) or {}).get("screen_area") or {}
+        out = {k: float(a.get(k, _SCREEN_AREA_DEFAULT[k])) for k in _SCREEN_AREA_DEFAULT}
+    except Exception:
+        return dict(_SCREEN_AREA_DEFAULT)
+    # Sanity: keep it inside the frame and non-degenerate, else fall back to full.
+    if not (0.0 <= out["x0"] < out["x1"] <= 1.0 and 0.0 <= out["y0"] < out["y1"] <= 1.0):
+        return dict(_SCREEN_AREA_DEFAULT)
+    if (out["x1"] - out["x0"]) < 0.2 or (out["y1"] - out["y0"]) < 0.2:
+        return dict(_SCREEN_AREA_DEFAULT)     # implausibly small -> ignore
+    # BIND THE CALIBRATION TO THE SOURCE IT WAS MEASURED ON. Without this, a rect
+    # measured on a pillarboxed target (iPad) stays in force after you unplug it
+    # and attach a normal 16:9 laptop, which would then crush the outer ~13% of
+    # the picture onto the screen edges - i.e. the very bug this feature fixes,
+    # in reverse, on the primary target. On any mismatch we silently fall back to
+    # the full frame, which is always the safe/previous behaviour.
+    src = a.get("src")
+    if src and src != _screen_src_tag():
+        return dict(_SCREEN_AREA_DEFAULT)
+    return out
+
+
+def _detect_screen_area() -> dict:
+    """Measure the non-black content rect of a live frame (blocking; run in an
+    executor). Returns fractions of the frame, or None if it can't tell.
+
+    Deliberately NOT run automatically: a genuinely dark screen (a black desktop,
+    a dark video) would measure small and would then MIS-map a target that
+    actually fills the frame. It only runs when the operator asks to calibrate,
+    and the result is shown for confirmation before it is saved."""
+    try:
+        import io as _io
+        import urllib.request as _u
+        from PIL import Image as _Image
+    except Exception as e:
+        raise RuntimeError("Pillow/urllib unavailable: %s" % e)
+    url = "http://127.0.0.1:%d/snapshot" % getattr(video, "port", 8081)
+    # CAP THE READ. ustreamer serves a finite /snapshot, but the ffmpeg fallback
+    # server ignores the request path and streams multipart frames forever - an
+    # uncapped read() would never hit EOF (so the socket timeout never fires),
+    # pinning an executor thread and growing without bound until the pool is
+    # exhausted and every client's status poll stalls.
+    raw = _u.urlopen(url, timeout=8).read(8 * 1024 * 1024)
+    im = _Image.open(_io.BytesIO(raw)).convert("L")
+    W, H = im.size
+    px = im.load()
+    THRESH, FRAC, STEP = 18, 0.012, 4
+
+    def col_lit(x):
+        n = sum(1 for y in range(0, H, STEP) if px[x, y] > THRESH)
+        return n / (H / float(STEP))
+
+    def row_lit(y):
+        n = sum(1 for x in range(0, W, STEP) if px[x, y] > THRESH)
+        return n / (W / float(STEP))
+
+    left = 0
+    while left < W - 1 and col_lit(left) < FRAC:
+        left += 1
+    right = W - 1
+    while right > left and col_lit(right) < FRAC:
+        right -= 1
+    top = 0
+    while top < H - 1 and row_lit(top) < FRAC:
+        top += 1
+    bottom = H - 1
+    while bottom > top and row_lit(bottom) < FRAC:
+        bottom -= 1
+    if right - left < W * 0.2 or bottom - top < H * 0.2:
+        raise RuntimeError("could not find a plausible screen area (is the picture very dark?)")
+    # Enforce SYMMETRY. Pillar/letterboxing is always centred, and dark content
+    # can only ever make a bar measure LARGER than it really is (never smaller),
+    # so the smaller of each opposing pair is the better estimate of the true
+    # bar. Measured on the iPad: left/right came out 174/173 (symmetric, good)
+    # while top/bottom read 33/80 because the wallpaper is dark near the bottom -
+    # taking the min recovers the true ~33px letterbox instead of eating 47px of
+    # real screen (which would squash the vertical mapping).
+    bl, br = left, W - 1 - right
+    bt, bb = top, H - 1 - bottom
+    bx, by = min(bl, br), min(bt, bb)
+    left, right = bx, W - 1 - bx
+    top, bottom = by, H - 1 - by
+    return {"x0": left / float(W), "y0": top / float(H),
+            "x1": (right + 1) / float(W), "y1": (bottom + 1) / float(H),
+            "frame": "%dx%d" % (W, H),
+            "bars_px": {"left": bx, "right": bx, "top": by, "bottom": by},
+            "bars_raw": {"left": bl, "right": br, "top": bt, "bottom": bb}}
+
+
+async def api_screen_area(request):
+    """GET  /api/screen-area                      -> current active rect
+    POST  {"action":"detect"}                     -> measure it from a live frame (no save)
+    POST  {"action":"set","x0":..,"y0":..,"x1":..,"y1":..} -> save
+    POST  {"action":"reset"}                      -> back to the full frame"""
+    if request.method == "GET":
+        return web.json_response({"ok": True, "screen_area": _get_screen_area()})
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    if not isinstance(d, dict):        # a bare list/string/number would 500 on .get
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    action = str(d.get("action", "set")).lower()
+    # Reject anything unrecognised. Falling through to "set" meant a typo'd action
+    # (or a body whose coordinates got dropped) silently SAVED the full frame and
+    # reported success - i.e. it wiped the calibration while claiming to apply it.
+    if action not in ("detect", "set", "reset"):
+        return web.json_response({"ok": False, "error": "unknown action"}, status=400)
+
+    if action == "detect":
+        loop = asyncio.get_running_loop()
+        try:
+            det = await loop.run_in_executor(None, _detect_screen_area)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)})
+        # Judge "fills the frame" from the RAW bars, not the symmetrised ones: a
+        # source that pads only one side symmetrises to zero bars and would
+        # otherwise be reported as needing no calibration when it does.
+        raw = det.get("bars_raw", {})
+        full = all(raw.get(k, 0) <= 2 for k in ("left", "right", "top", "bottom"))
+        return web.json_response({"ok": True, "detected": det, "fills_frame": full,
+                                  "src": _screen_src_tag()})
+
+    def _persist(area_obj):
+        try:
+            cfg = _read_config()
+        except Exception as e:
+            return web.json_response({"ok": False,
+                "error": "config unreadable, refusing to overwrite: %s" % e}, status=500)
+        cfg.setdefault("video", {})["screen_area"] = area_obj
+        try:
+            _write_config(cfg)            # atomic; a silent failure must not read as success
+        except Exception as e:
+            return web.json_response({"ok": False, "error": "could not save: %s" % e}, status=500)
+        return None
+
+    if action == "reset":
+        err = _persist(dict(_SCREEN_AREA_DEFAULT))
+        if err is not None:
+            return err
+        log.info("Screen area reset to the full frame")
+        return web.json_response({"ok": True, "screen_area": dict(_SCREEN_AREA_DEFAULT)})
+
+    missing = [k for k in _SCREEN_AREA_DEFAULT if k not in d]
+    if missing:
+        return web.json_response({"ok": False,
+            "error": "set needs x0/y0/x1/y1 (missing: %s)" % ",".join(missing)}, status=400)
+    try:
+        area = {k: float(d[k]) for k in _SCREEN_AREA_DEFAULT}
+    except (TypeError, ValueError):
+        return web.json_response({"ok": False, "error": "x0/y0/x1/y1 must be numbers"}, status=400)
+    if not (0.0 <= area["x0"] < area["x1"] <= 1.0 and 0.0 <= area["y0"] < area["y1"] <= 1.0):
+        return web.json_response({"ok": False, "error": "need 0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1"}, status=400)
+    if (area["x1"] - area["x0"]) < 0.2 or (area["y1"] - area["y0"]) < 0.2:
+        return web.json_response({"ok": False, "error": "area is implausibly small"}, status=400)
+    # Tag it with the source it was measured on so it can't leak onto a different
+    # target later (see _get_screen_area).
+    area["src"] = _screen_src_tag()
+    err = _persist(area)
+    if err is not None:
+        return err
+    log.info("Screen area set to %s", area)
+    return web.json_response({"ok": True, "screen_area": area})
+
+
 async def api_wifi(request):
     import subprocess as _sp, json as _j
     if request.method == "GET":
@@ -3002,6 +3199,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/hid-autodisconnect", api_hid_autodisconnect)
     app.router.add_get("/api/mouse-mode",  api_mouse_mode)
     app.router.add_post("/api/mouse-mode", api_mouse_mode)
+    app.router.add_get("/api/screen-area",  api_screen_area)
+    app.router.add_post("/api/screen-area", api_screen_area)
     app.router.add_get("/api/networks",   api_wifi)
     app.router.add_post("/api/networks",  api_wifi)
     app.router.add_get("/api/tailscale",  api_tailscale_get)
