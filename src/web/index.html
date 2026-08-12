@@ -765,7 +765,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="cur-opt" data-c="dot" onclick="setCursor('dot')">Dot</button>
           </div>
           <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:pointer">
-            <input type="checkbox" id="overlay-chk" onchange="toggleOverlay(this.checked)" style="accent-color:var(--accent)">
+            <input type="checkbox" id="overlay-chk" onchange="toggleOverlay(this.checked)" checked style="accent-color:var(--accent)">
             Show predictive cursor when locked (relative mode)
           </label>
         </div>
@@ -2132,7 +2132,7 @@ let _mouseMode='relative';
 // acceleration (iPadOS) they diverge badly and it just reads as broken. Only the
 // target's real pointer is the truth, so show that alone unless the operator
 // deliberately opts in.
-let _cx=0,_cy=0,_showOverlay=false;
+let _cx=0,_cy=0,_showOverlay=true;
 // The video is object-fit:contain inside #view, so a 16:9 stream is LETTERBOXED
 // (black bars) inside a differently-shaped container. Absolute mouse mapping
 // must use the video's ACTUAL displayed rectangle, not the container's - mapping
@@ -2399,9 +2399,16 @@ function setCursor(c){
 // style other than Arrow is treated as a deliberate override and is honoured
 // even while captured.
 function _applyViewCursor(){
-  const hideOurs = (_mouseMode==='absolute' && captured && _cursorStyle==='default');
-  $view.style.cursor = hideOurs ? 'none'
-                     : (_cursorStyle==='dot' ? 'none' : _cursorStyle);
+  // Show OUR cursor unless the operator explicitly picked "Hidden".
+  // This used to auto-hide in absolute mode on the theory that the target draws
+  // its own 1:1 pointer, so two arrows only look mismatched. That reasoning
+  // holds ONLY when the target's pointer is actually visible in the capture. It
+  // often is not: on an extended desktop the target's cursor lives on the other
+  // monitor, and some targets hide the pointer when idle. Auto-hiding then left
+  // NO cursor at all and control felt dead. Being able to see where you are
+  // pointing beats avoiding a second arrow, so hiding is now opt-in via the
+  // Mouse Cursor buttons rather than automatic.
+  $view.style.cursor = (_cursorStyle==='dot' || _cursorStyle==='none') ? 'none' : _cursorStyle;
 }
 function toggleOverlay(on){
   _showOverlay=!!on;
@@ -2410,8 +2417,12 @@ function toggleOverlay(on){
 }
 // Restore the operator's choice; default OFF (see _showOverlay above).
 (function(){
-  let on=false;
-  try{ on = localStorage.getItem('mb_predcursor')==='1'; }catch(e){}
+  // Default ON: under pointer lock the browser hides the real cursor, so this
+  // dot is the ONLY thing showing where you are pointing. Off by default left
+  // relative mode with no cursor at all whenever the target's own pointer was
+  // not visible in the capture (extended desktop, idle-hidden pointer).
+  let on=true;
+  try{ const v=localStorage.getItem('mb_predcursor'); if(v!==null) on = (v==='1'); }catch(e){}
   _showOverlay=on;
   const c=document.getElementById('overlay-chk'); if(c) c.checked=on;
   if(!on){ const d=document.getElementById('cur-dot'); if(d) d.style.display='none'; }

@@ -299,6 +299,57 @@ video: {
 }
 EOF
     ok "Wrote $JANUS_CONF_DIR/janus.plugin.ustreamer.jcfg (video.sink=${MEMSINK_NAME}, video-only)"
+
+    # ── ICE hygiene: this is what makes WebRTC actually deliver ──────────────
+    # Symptom this fixes (measured on the unit): Janus completed the DTLS
+    # handshake and then logged "only sent -1 bytes? (was 1166)" FIFTY-ONE
+    # THOUSAND times, i.e. every media packet failed, so the browser never got a
+    # frame, hit its connect timeout and fell back to MJPEG - over and over. The
+    # cause is that Janus gathers an ICE candidate from EVERY up interface,
+    # including tailscale0. The tailnet interface is up even when the tailnet
+    # itself is offline, so that candidate is unreachable and every send to it
+    # errors. Removing it took the failure count to zero.
+    # Trade-off, stated plainly: with tailscale0 ignored, a REMOTE session over
+    # Tailscale uses the MJPEG path instead of WebRTC. That is the status quo for
+    # remote use anyway (host-only candidates over a DERP relay rarely work), and
+    # a LAN session - the normal case - now gets working low-latency video.
+    # Delete tailscale0 from the list below if you specifically want to try
+    # WebRTC over a healthy tailnet.
+    JCFG="$JANUS_CONF_DIR/janus.jcfg"
+    if [[ -f "$JCFG" ]]; then
+        python3 - "$JCFG" <<'PYEOF'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+# nat: only offer candidates we can actually reach
+if re.search(r'^\s*ice_ignore_list\s*=', s, re.M):
+    s = re.sub(r'^(\s*)ice_ignore_list\s*=.*$',
+               r'\1ice_ignore_list = "vmnet,tailscale0"', s, count=1, flags=re.M)
+else:
+    s = re.sub(r'(nat:\s*\{)', r'\1\n\tice_ignore_list = "vmnet,tailscale0"', s, count=1)
+# media: pin RTP to a known range so the firewall can allow exactly that,
+# instead of relying on a conntrack entry existing for every ephemeral port
+# (INPUT policy is DROP on this unit).
+if re.search(r'^\s*rtp_port_range\s*=', s, re.M):
+    s = re.sub(r'^(\s*)rtp_port_range\s*=.*$',
+               r'\1rtp_port_range = "20000-20100"', s, count=1, flags=re.M)
+else:
+    s = re.sub(r'(media:\s*\{)', r'\1\n\trtp_port_range = "20000-20100"', s, count=1)
+open(p, "w").write(s)
+print("patched")
+PYEOF
+        ok "janus.jcfg: ICE ignores tailscale0, RTP pinned to 20000-20100"
+    else
+        warn "janus.jcfg not found at $JCFG - ICE hygiene not applied"
+    fi
+
+    # Let the pinned media range through the firewall (INPUT policy is DROP).
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -C INPUT -p udp --dport 20000:20100 -j ACCEPT 2>/dev/null \
+          || iptables -I INPUT -p udp --dport 20000:20100 -j ACCEPT
+        iptables-save > /etc/iptables/rules.v4 2>/dev/null || true
+        ok "Firewall: UDP 20000-20100 open for WebRTC media"
+    fi
 else
     warn "Skipping Janus plugin wiring (plugin .so not built or plugin dir missing)."
 fi
