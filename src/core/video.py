@@ -844,6 +844,7 @@ class VideoManager:
                 self._sync_janus_audio_cfg()   # write audio cfg BEFORE (re)starting Janus
             except Exception:
                 pass  # audio is additive - never let it affect the video path's return value
+            self._tune_janus_ice()             # offer tailscale0 only while the tailnet is up
             self._notify_janus_sink_ready()    # bounce Janus so it reads the fresh cfg + re-attaches
             return True
         except FileNotFoundError:
@@ -852,6 +853,49 @@ class VideoManager:
         except Exception as e:
             log.error("ustreamer H.264 start error: %s", e)
             return self._fallback_or_fail()
+
+    def _tune_janus_ice(self) -> bool:
+        """Offer the Tailscale interface as a WebRTC path only while the tailnet
+        is actually UP. Returns True if the config changed.
+
+        The problem this solves, both directions:
+          - tailscale0 stays UP as an interface even when the tailnet is OFFLINE.
+            Janus then advertises that address as an ICE candidate, every media
+            packet sent to it fails, and the log fills with "only sent -1 bytes"
+            while the browser waits for video that can never arrive.
+          - But when the tailnet IS up (and especially when it negotiates a
+            DIRECT path rather than a DERP relay), that candidate is exactly how
+            a REMOTE operator gets low-latency H.264 instead of falling back to
+            MJPEG. Blacklisting it permanently would throw that away.
+        So decide per stream start instead of hardcoding either answer. Cheap:
+        one short `tailscale status` call, and Janus is only restarted when the
+        setting actually flips."""
+        cfg = "/opt/janus/etc/janus/janus.jcfg"
+        if not os.path.isfile(cfg):
+            return False
+        up = False
+        try:
+            r = subprocess.run(["tailscale", "status", "--json"],
+                               capture_output=True, text=True, timeout=4)
+            if r.returncode == 0:
+                import json as _json
+                up = _json.loads(r.stdout).get("BackendState") == "Running"
+        except Exception:
+            up = False
+        want = 'ice_ignore_list = "vmnet"' if up else 'ice_ignore_list = "vmnet,tailscale0"'
+        try:
+            text = open(cfg).read()
+            cur = re.search(r'ice_ignore_list\s*=\s*"[^"]*"', text)
+            if cur and cur.group(0) == want:
+                return False                      # already correct, leave Janus alone
+            new = (re.sub(r'ice_ignore_list\s*=\s*"[^"]*"', want, text, count=1) if cur
+                   else re.sub(r'(nat:\s*\{)', r'\1\n\t' + want, text, count=1))
+            open(cfg, "w").write(new)
+            log.info("Janus ICE: tailnet %s -> %s", "up" if up else "down", want)
+            return True
+        except Exception as e:
+            log.warning("Could not tune Janus ICE list (non-fatal): %s", e)
+            return False
 
     def _notify_janus_sink_ready(self):
         """Best-effort: if the Janus WebRTC gateway is running, bounce it so it
