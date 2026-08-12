@@ -278,6 +278,19 @@ body:not(.fs) .fs-hud{display:none!important}
   border-radius:var(--r);margin-bottom:8px}
 
 /* WiFi add/update network: bigger, clearer, easier to hit on touch */
+/* Collapsible section. Native <details>, so it works with no JS and stays
+   keyboard/screen-reader accessible. Used for lists and forms that are only
+   occasionally needed: showing them all expanded made a panel scroll for
+   screens at a time and buried the thing you actually came for. */
+.mbacc{border:1px solid var(--border);border-radius:6px;margin:6px 0;overflow:hidden;background:var(--surf2)}
+.mbacc>summary{list-style:none;cursor:pointer;padding:8px 10px;font-size:11px;font-weight:600;
+  color:var(--sub);display:flex;align-items:center;gap:7px;user-select:none}
+.mbacc>summary::-webkit-details-marker{display:none}
+.mbacc>summary::before{content:'B8';font-size:9px;color:var(--muted);transition:transform .15s}
+.mbacc[open]>summary::before{transform:rotate(90deg)}
+.mbacc>summary:hover{color:var(--text)}
+.mbacc-count{margin-left:auto;font-size:10px;color:var(--muted);font-weight:500}
+.mbacc-body{padding:0 10px 10px}
 .wifi-add{border-top:1px solid var(--border);padding-top:12px;margin-top:4px}
 .wifi-add-title{font-size:10px;letter-spacing:.07em;color:var(--accent-l);font-weight:700;
   text-transform:uppercase;margin-bottom:10px}
@@ -817,12 +830,19 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
           <div class="srow" style="margin-bottom:8px"><span class="sk">This device's IP</span><span class="sv" id="ss-ip">-</span></div>
 
-          <!-- Saved networks list -->
-          <div id="wifi-list" style="margin:4px 0 8px"></div>
+          <!-- Saved networks: collapsed by default. The active network is
+               already shown as a pill in the card title, so the full list is
+               only needed when actually switching networks. Expanded, three or
+               four saved networks pushed the Add form off-screen. -->
+          <details class="mbacc" id="wifi-saved-acc">
+            <summary>Saved networks <span class="mbacc-count" id="wifi-count"></span></summary>
+            <div class="mbacc-body"><div id="wifi-list" style="margin:4px 0 0"></div></div>
+          </details>
 
           <!-- Add / Update section -->
-          <div class="wifi-add">
-            <div class="wifi-add-title">Add / Update Network</div>
+          <details class="mbacc" id="wifi-add-acc">
+            <summary>Add / update network</summary>
+            <div class="mbacc-body wifi-add" style="border-top:none;padding-top:2px;margin-top:0">
             <label class="wifi-label" for="wifi-ssid">Network name (SSID)</label>
             <input class="sinput wifi-field" type="text" id="wifi-ssid" placeholder="e.g. Home-WiFi-5G" autocomplete="off" spellcheck="false">
             <label class="wifi-label" for="wifi-psk">Password <span class="wifi-label-hint">(leave blank for open networks)</span></label>
@@ -831,7 +851,8 @@ body:not(.fs) .fs-hud{display:none!important}
               <button class="wifi-eye" onclick="wifiTogglePsk()" title="Show/hide password" aria-label="Show or hide password">👁</button>
             </div>
             <button class="sbtn suc wifi-save-btn" onclick="wifiAdd()">+ Save Network</button>
-          </div>
+            </div>
+          </details>
           <div id="wifi-msg" style="display:none;margin-top:6px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
         <div class="scard">
@@ -3604,7 +3625,14 @@ async function wifiRefresh(){
     const pill=document.getElementById('wifi-active-pill');
     if(active){pill.textContent='● '+active;pill.style.display='';}else{pill.style.display='none';}
     const list=document.getElementById('wifi-list');
+    const cnt=document.getElementById('wifi-count');
+    const acc=document.getElementById('wifi-saved-acc');
+    const n=(d.networks||[]).length;
+    if(cnt) cnt.textContent=n?(n+(n===1?' network':' networks')):'none';
     if(!d.networks||!d.networks.length){
+      // Nothing saved yet: open it, so a fresh unit does not hide the only
+      // thing the operator needs to see here.
+      if(acc) acc.open=true;
       list.innerHTML='<div style="font-size:11px;color:var(--muted);padding:8px 0;text-align:center">No saved networks</div>';return;
     }
     list.innerHTML=d.networks.map(n=>{
