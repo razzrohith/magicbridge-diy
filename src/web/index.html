@@ -545,7 +545,7 @@ body:not(.fs) .fs-hud{display:none!important}
 <div id="fshud">
   <span id="fshud-dot" title="Live"></span>
   <div class="fshud-cwrap">
-    <button class="fshud-btn" onclick="toggleFsCombos(event)">⌨ Combos ▾</button>
+    <button class="fshud-btn" onclick="toggleFsCombos(event)" title="Send a key combination such as Ctrl+Alt+Del to the target">⌨ Combos ▾</button>
     <div id="fshud-combos">
       <div class="ci" onclick="combo(['ControlLeft','AltLeft','Delete']);toggleFsCombos()">Ctrl+Alt+Del<span class="kbd">⌃⌥⌦</span></div>
       <div class="ci" onclick="combo(['MetaLeft','KeyL']);toggleFsCombos()">Win+L · Lock<span class="kbd">⊞L</span></div>
@@ -556,10 +556,10 @@ body:not(.fs) .fs-hud{display:none!important}
       <div class="ci" onclick="combo(['MetaLeft','ShiftLeft','KeyS']);toggleFsCombos()">Snip tool<span class="kbd">⊞⇧S</span></div>
     </div>
   </div>
-  <button class="fshud-btn" onclick="toggleVKBD()">⌨ Keyboard</button>
-  <button class="fshud-btn" onclick="fsPaste()">📋 Paste</button>
+  <button class="fshud-btn" onclick="toggleVKBD()" title="On-screen keyboard">⌨ Keyboard</button>
+  <button class="fshud-btn" onclick="fsPaste()" title="Type a block of text onto the target computer">📋 Paste</button>
   <span class="fshud-sep"></span>
-  <button class="fshud-btn danger" onclick="releaseAll()">Release</button>
+  <button class="fshud-btn danger" onclick="releaseAll()" title="Stop sending your keyboard and mouse to the target, and release any key stuck down">Release</button>
   <button class="fshud-x" onclick="toggleFS()" title="Exit fullscreen (or hold Esc 2s)" aria-label="Exit fullscreen">✕</button>
 </div>
 
@@ -593,7 +593,7 @@ body:not(.fs) .fs-hud{display:none!important}
   <div id="connpill"><div id="cdot" class="info"></div><span id="cdtxt">Connecting…</span></div>
   <button class="tbtn" id="reltop" onclick="releaseAll()" title="Release control (or hold Esc / Right Ctrl 2s)" style="display:none">✕ Release</button>
   <div id="cwrap">
-    <button class="tbtn" onclick="toggleCombos()">⌨ Combos ▾</button>
+    <button class="tbtn" onclick="toggleCombos()" title="Send a key combination to the target computer, such as Ctrl+Alt+Del or Win+L">⌨ Combos ▾</button>
     <div id="cmenu">
       <div class="ci" onclick="combo(['ControlLeft','AltLeft','Delete'])">Ctrl+Alt+Del<span class="kbd">⌃⌥⌦</span></div>
       <div class="ci" onclick="combo(['MetaLeft','KeyL'])">Win+L · Lock<span class="kbd">⊞L</span></div>
@@ -604,16 +604,16 @@ body:not(.fs) .fs-hud{display:none!important}
       <div class="ci" onclick="combo(['MetaLeft','ShiftLeft','KeyS'])">Snip tool<span class="kbd">⊞⇧S</span></div>
     </div>
   </div>
-  <button class="tbtn icon" id="kb-btn" onclick="toggleVKBD()" title="Virtual keyboard">⌨</button>
-  <button class="tbtn icon" id="audio-btn" onclick="toggleAudioMute()" title="Unmute target audio" style="display:none">🔇</button>
+  <button class="tbtn icon" id="kb-btn" onclick="toggleVKBD()" title="On-screen keyboard: click keys to type on the target, useful on a tablet or phone">⌨</button>
+  <button class="tbtn icon" id="audio-btn" onclick="toggleAudioMute()" title="Turn the target computer's sound on or off (only if audio capture is available)" style="display:none">🔇</button>
   <div id="sp"></div>
-  <div class="stat-chip" id="chip-viewers" title="Devices connected / controlling right now">👁 <span id="sv-viewers">-</span></div>
-  <div class="stat-chip" id="chip-uptime" title="Device uptime">⏱ <span id="sv-uptime">-</span></div>
-  <div class="stat-chip" id="chip-temp">🌡 <span id="sv-temp">-</span></div>
-  <div class="stat-chip" id="chip-lat">⚡ <span id="sv-lat">-</span><span class="spark" id="lat-spark"></span></div>
-  <button class="tbtn icon" onclick="toggleFS()" title="Fullscreen">⛶</button>
-  <button class="tbtn" id="set-btn" onclick="toggleSidebar()">⚙</button>
-  <button class="tbtn icon" onclick="mbLogout()" title="Sign out">⏏</button>
+  <div class="stat-chip" id="chip-viewers" title="Viewers: how many browsers are connected to this KVM right now. More than one means someone else is also watching or controlling.">👁 <span id="sv-viewers">-</span></div>
+  <div class="stat-chip" id="chip-uptime" title="Uptime: how long the MagicBridge device itself has been running since its last boot.">⏱ <span id="sv-uptime">-</span></div>
+  <div class="stat-chip" id="chip-temp" title="Temperature of the MagicBridge device. Green is fine, amber is warm, red means it may slow itself down to cool off.">🌡 <span id="sv-temp">-</span></div>
+  <div class="stat-chip" id="chip-lat" title="Control delay: how long a keypress or mouse move takes to reach the target computer. The small bars show how steady it is. Lower and flatter is better.">⚡ <span id="sv-lat">-</span><span class="spark" id="lat-spark"></span></div>
+  <button class="tbtn icon" onclick="toggleFS()" title="Fullscreen: fill the whole screen with the target. Press Esc to come back.">⛶</button>
+  <button class="tbtn" id="set-btn" onclick="toggleSidebar()" title="Settings: video quality, mouse mode, keyboard, network, power and updates">⚙</button>
+  <button class="tbtn icon" onclick="mbLogout()" title="Sign out of MagicBridge on this browser">⏏</button>
 </div>
 
 <!-- FS HUD Top -->
@@ -634,7 +634,7 @@ body:not(.fs) .fs-hud{display:none!important}
   </select>
   <button id="fh-send" onclick="fhSend()">Send ↵</button>
   <div class="fh-sep"></div>
-  <button class="fh-btn" onclick="releaseAll()">Release Input</button>
+  <button class="fh-btn" onclick="releaseAll()" title="Stop sending your keyboard and mouse to the target, and release any key stuck down">Release Input</button>
 </div>
 
 <!-- Main -->
@@ -1742,6 +1742,17 @@ function onErr(){
 }
 function retryStream(){
   if(_mjpegSuspended) return;   // hidden tab: stay off the wire until we're visible again
+  // ABORT the previous multipart connection before opening a new one. Assigning
+  // .src alone does NOT reliably tear down an in-flight multipart/x-mixed-replace
+  // stream, so every retry (the 15s anti-stall reconnect, each WebRTC fallback,
+  // each WS reconnect) could leave the old reader ALIVE server-side. Measured on
+  // the unit: 7 concurrent MJPEG clients from a couple of tabs. At 1080p that is
+  // well over a hundred Mbit/s of duplicate video competing on the same WiFi
+  // link, which starves WebRTC into its 8s connect timeout, which triggers
+  // another fallback, which opens another reader: a death spiral that reads as
+  // "the video keeps failing and drops to MJPEG". Clearing src first forces the
+  // browser to close the old request before we ask for a new one.
+  try{ $s.removeAttribute('src'); }catch(e){}
   $s.src='/stream?_='+Date.now(); _frameLoadTimes=[];
 }
 // Retry BUTTON handler: re-establish whatever transport is active. The old
