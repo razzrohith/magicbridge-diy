@@ -789,7 +789,15 @@ class VideoManager:
             "--buffers",          "8",
             "--persistent",
             "--dv-timings",
-            "--drop-same-frames", "30",
+            # 10, not 30. This drops up to N IDENTICAL frames before emitting
+            # one, so on an idle desktop it decides how often the stream still
+            # "ticks". At 30 a static screen could go ~0.6s+ between frames,
+            # which starves the WebRTC receiver of anything to decode and makes a
+            # healthy-but-idle session look frozen to any liveness check. 10 keeps
+            # a few frames per second flowing on a still screen for negligible
+            # bandwidth (identical frames compress to almost nothing), and does
+            # not affect a screen that is actually changing.
+            "--drop-same-frames", "10",
             "--resolution",       cmd_res,
             "--desired-fps",      str(_eff_fps),
             "--host",             STREAM_HOST,

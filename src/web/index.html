@@ -2928,9 +2928,17 @@ function startWebRTC(){
   // loaded, ustreamer's h264-sink not actually feeding it, etc.), fall
   // back rather than leaving the viewer stuck on a black video element.
   clearTimeout(_webrtcTimeout);
+  // 20s, not 8s. ICE has to try every candidate pair the BROWSER offers, and a
+  // laptop typically offers many: the real LAN address plus a VPN tunnel
+  // (NordLynx 10.5.x), Tailscale, and several 169.254 link-local ones. The Pi
+  // cannot reach most of those, so Janus logs a burst of send failures while
+  // ICE works down the list to the pair that does work. 8s often expired DURING
+  // that legitimate negotiation and threw away a connection that was about to
+  // succeed, which is what made it look like "WebRTC always fails, drops to
+  // MJPEG". MJPEG stays on screen throughout, so a longer wait costs nothing.
   _webrtcTimeout = setTimeout(()=>{
-    if(_activeTransport === 'h264' && gen === _webrtcGen) _webrtcFallbackToMjpeg('connect timeout (8s)');
-  }, 8000);
+    if(_activeTransport === 'h264' && gen === _webrtcGen) _webrtcFallbackToMjpeg('connect timeout (20s)');
+  }, 20000);
   // Callback names/shape below (onremotetrack + manual MediaStream assembly,
   // watch/start/jsep flow) match janus.js v1.0.0 specifically - that's the
   // tag install_janus_webrtc.sh pins the server + this client library to,
@@ -3071,12 +3079,20 @@ function startWebRTC(){
                           }
                           // Stall detection: framesDecoded stops advancing while
                           // ICE stays 'connected' -> the feed froze with no event
-                          // to catch it. After ~3 flat polls (~6s) of a stream
-                          // that WAS live, fall back (which re-arms WebRTC), so
-                          // the h264 path self-heals like MJPEG's onErr does.
+                          // to catch it. Fall back so the h264 path self-heals
+                          // like MJPEG's onErr does.
+                          // 30s, not 6s. A genuinely STATIC target screen (an idle
+                          // desktop, which is most of the time) produces no new
+                          // frames by design, and no stat can tell "nothing
+                          // changed on screen" apart from "the stream died". At 6s
+                          // this fired on a perfectly healthy idle desktop and
+                          // demoted it to MJPEG, so the thing meant to recover a
+                          // frozen stream was itself causing the drop-outs. A real
+                          // freeze still recovers, just 30s later, and the picture
+                          // is not lost in the meantime.
                           if(r.framesDecoded!=null){
                             if(_wrtcLastFrames >= 0 && r.framesDecoded === _wrtcLastFrames && r.framesDecoded > 0){
-                              if(++_wrtcStallPolls >= 3){
+                              if(++_wrtcStallPolls >= 15){
                                 _wrtcStallPolls = 0; _wrtcLastFrames = -1;
                                 _webrtcFallbackToMjpeg('video stalled (no new frames)');
                               }
