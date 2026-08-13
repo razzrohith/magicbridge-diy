@@ -743,28 +743,15 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="cur-opt active" id="mm-rel" onclick="setMouseMode('relative')">Relative</button>
             <button class="cur-opt" id="mm-abs" onclick="setMouseMode('absolute')">Absolute</button>
           </div>
-          <div class="snote" id="mm-note" style="margin-top:6px">
-            <b>Relative</b>: pointer-lock, most stealthy (looks like a normal mouse).
-            Works everywhere. <b>Absolute</b>: cursor maps 1:1 so you always see it.
-            Rebuilds the USB mouse, slightly less stealthy.
-          </div>
-          <div class="snote" style="margin-top:6px;color:var(--yellow)">
-            <b>iPad / iPhone: use Relative.</b> Verified on an iPad Air: iPadOS moves
-            the pointer from an absolute device but <b>ignores its clicks</b>. Relative
-            mode clicks work normally there.
-          </div>
+          <div class="snote" id="mm-note" style="margin-top:6px"><b>Relative</b>: works everywhere, stealthiest. <b>Absolute</b>: 1:1 cursor.</div>
+          <div class="snote" style="margin-top:6px;color:var(--yellow)"><b>iPad / iPhone: use Relative.</b> Absolute clicks are ignored there.</div>
           <!-- Absolute-mode calibration. Only matters when the target does NOT
                fill the frame (e.g. an iPad mirrors its 4:3-ish screen into a 16:9
                signal, centred inside black bars). Default is the full frame, so a
                normal laptop target needs nothing here. -->
           <div id="sa-wrap" style="margin-top:10px;border-top:1px solid var(--border);padding-top:9px">
             <div class="srow"><span class="sk">Target screen area</span><span class="sv" id="sa-val">full frame</span></div>
-            <div class="snote" style="margin-top:4px">
-              Absolute mode only. Needed when the target doesn't fill the picture
-              (black bars down the sides), e.g. a 4:3 screen or a tablet mirroring
-              into a 16:9 signal. Point the target at its home screen, then Detect.
-              Resets itself automatically if you connect a different target.
-            </div>
+            <div class="snote" style="margin-top:4px">Only for targets with black bars (4:3 screens, tablets).</div>
             <button class="sbtn" id="sa-detect" onclick="screenAreaDetect()" style="margin-top:6px">◳ Detect screen area</button>
             <button class="sbtn" onclick="screenAreaReset()" style="margin-top:4px">↺ Use full frame</button>
           </div>
@@ -795,7 +782,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="sbtn pri" onclick="wolWake()" style="flex:1">⚡ Wake PC</button>
           </div>
           <div class="snote" id="wol-msg" style="margin-bottom:0;margin-top:6px;display:none"></div>
-          <div class="snote" style="margin-bottom:0">Powers on the target (magic packet). Needs WOL enabled in its BIOS + NIC, and power/ethernet kept connected.</div>
+          <div class="snote" style="margin-bottom:0">Powers on the target. Needs WOL enabled in its BIOS.</div>
           <div class="scard-title" style="margin-top:12px"><span class="dot-cyn"></span>Wake schedule <span style="font-size:10px;color:var(--muted);margin-left:auto;font-weight:400;text-transform:none">auto wake at set times</span></div>
           <div id="wol-sched-list"></div>
           <div style="display:flex;gap:5px;margin-top:5px">
@@ -908,9 +895,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <span class="dot-pur" style="background:var(--purple)"></span>AI Agent
             <span class="tag tag-pur" style="margin-left:auto;font-size:9px">Beta</span>
           </div>
-          <div class="snote" style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:6px;padding:6px 8px;margin-bottom:6px">
-            ⚠ Cloud AI sends your typed commands to a third-party API (OpenRouter/OpenAI/Gemini/Anthropic), tied to that account's billing. This is not anonymous - it's an off-box record outside your control. Turn it off below if you don't want that.
-          </div>
+          <div class="snote" style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:6px;padding:6px 8px;margin-bottom:6px">&#9888; Sends your commands to a third-party AI service.</div>
           <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);cursor:pointer;margin-bottom:8px">
             <input type="checkbox" id="ai-cloud-enabled" checked onchange="aiCloudToggle()" style="accent-color:var(--accent)">
             Cloud AI enabled
@@ -965,7 +950,7 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-cyn"></span>Keyboard Layout</div>
-          <div class="snote">The target's keyboard layout. Affects Paste only, not live typing. Wrong layout types the wrong characters.</div>
+          <div class="snote">Target keyboard layout. Affects Paste only.</div>
           <select class="ssel" id="kb-layout" onchange="kbLayoutChange()">
             <option value="us">US (QWERTY)</option>
           </select>
@@ -1058,7 +1043,7 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="sys-cat" data-cat="power">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--red)"></span>Pi Power</div>
-          <div class="snote" style="margin-bottom:8px">Reboot or shut down the Pi. Shutdown needs a manual power cycle to start again.</div>
+          <div class="snote" style="margin-bottom:8px">Reboot or shut down. Shutdown needs a manual power-on.</div>
           <button class="sbtn warn" onclick="piPower('reboot')">↺ Reboot Pi</button>
           <button class="sbtn dan" onclick="piPower('shutdown')" style="margin-top:4px">⏻ Shutdown Pi</button>
         </div>
@@ -1067,7 +1052,7 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="sys-cat" data-cat="update">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>Software Update</div>
-          <div class="snote" style="margin-bottom:8px">Updates MagicBridge from GitHub. Small changes apply in a few seconds; bigger ones reinstall and reconnect in about a minute.</div>
+          <div class="snote" style="margin-bottom:8px">Updates from GitHub. Big changes reinstall, about a minute.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="sys-avail">-</span></div>
           <div class="srow"><span class="sk">Version</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:11px">-</span></div>
           <div class="srow"><span class="sk">Branch</span><span class="sv" id="sys-branch">-</span></div>
@@ -1098,7 +1083,7 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--cyan,#39d0ff)"></span>Two-Factor (TOTP)</div>
-          <div class="snote" style="margin-bottom:8px">An authenticator code on top of the password. You must enter a working code before it turns on, so a bad scan can't lock you out.</div>
+          <div class="snote" style="margin-bottom:8px">Authenticator code on top of the password.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="tfa-status">-</span></div>
           <!-- Re-enrolling while 2FA is ALREADY on needs the current password, so
                a borrowed session can't silently swap the second factor to its own
@@ -1126,13 +1111,13 @@ body:not(.fs) .fs-hud{display:none!important}
             <label class="wifi-label" for="tfa-dis-code">2FA or recovery code</label>
             <input class="sinput wifi-field" type="text" id="tfa-dis-code" placeholder="Code" style="margin-bottom:8px">
             <button class="sbtn dan" onclick="tfaDisable()" style="width:100%">Turn 2FA off</button>
-            <div class="snote" style="margin-top:8px">Locked out? From an SSH shell on the Pi:<br><code style="font-size:9px">sudo python3 /opt/magicbridge/core/magicbridge.py --disable-2fa</code></div>
+            <div class="snote" style="margin-top:8px">Locked out? Run on the Pi:<br><code style="font-size:9px">sudo python3 /opt/magicbridge/core/magicbridge.py --disable-2fa</code></div>
           </div>
           <div id="tfa-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>Network Lockdown</div>
-          <div class="snote" style="margin-bottom:8px">Limit access to Tailscale only (no LAN or public). Needs Tailscale connected first.</div>
+          <div class="snote" style="margin-bottom:8px">Tailscale-only access. Connect Tailscale first.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="lockdown-status">-</span></div>
           <button class="sbtn" id="lockdown-btn" onclick="toggleLockdown()" style="margin-top:6px">Enable Tailscale-only Access</button>
           <div id="lockdown-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
@@ -1142,7 +1127,7 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="sys-cat" data-cat="peripherals">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>Mouse Jiggler</div>
-          <div class="snote" style="margin-bottom:8px">Keeps the target awake with occasional random mouse nudges. Pauses while you're using the KVM.</div>
+          <div class="snote" style="margin-bottom:8px">Keeps the target awake. Pauses while you're using it.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="jiggler-status">-</span></div>
           <label class="wifi-label" for="jiggler-style" style="margin-top:8px">Style</label>
           <select class="sinput wifi-field" id="jiggler-style" onchange="jigglerStyleChanged()" style="margin-bottom:8px">
@@ -1156,7 +1141,7 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>HID Connect Only While In Use</div>
-          <div class="snote" style="margin-bottom:8px">Unplugs the USB keyboard/mouse from the target when idle, reconnects on next use (~1s delay). Don't run alongside the jiggler.</div>
+          <div class="snote" style="margin-bottom:8px">Unplugs USB when idle, reconnects on use. Not with the jiggler.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="hidautodc-status">-</span></div>
           <label class="wifi-label" for="hidautodc-idle" style="margin-top:8px">Disconnect after (minutes idle)</label>
           <input class="sinput wifi-field" id="hidautodc-idle" type="number" min="1" max="180" value="15" onchange="hidAutoDcIdleChanged()" style="margin-bottom:8px">
@@ -1258,7 +1243,7 @@ body:not(.fs) .fs-hud{display:none!important}
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>How the target sees it</div>
-          <div class="snote" style="margin-bottom:8px">The identity the connected computer reads: the USB device and the monitor. Change these in the /stealth/ panel.</div>
+          <div class="snote" style="margin-bottom:8px">What the connected computer sees. Change in /stealth/.</div>
           <div class="srow"><span class="sk">Monitor</span><span class="sv ac" id="disp-name">-</span></div>
           <div class="srow"><span class="sk">Maker</span><span class="sv" id="disp-mfr">-</span></div>
           <div class="srow"><span class="sk">Serial</span><span class="sv" id="disp-ser" style="font-family:monospace;font-size:11px">-</span></div>
