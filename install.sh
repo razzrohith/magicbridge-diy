@@ -474,23 +474,44 @@ if need_adm:
     a["password_hash"] = h
     a.setdefault("secret_key", secrets.token_hex(32))
 json.dump(c, open(p, "w"), indent=2)
+# Line 1 = the password, line 2 = WHICH logins it actually opens. Only one slot
+# can need filling (an owner who set the web password but left the admin panel
+# on its default), and telling them "MagicBridge web login" for a password that
+# only opens /stealth/ would recreate the exact locked-out dead end this block
+# exists to prevent.
 print(pw)
+print("both" if (need_main and need_adm) else ("main" if need_main else "admin"))
 PYPW
 )" || MB_GEN_PW=""
-    chmod 600 "$CONFIG_DIR/config.json"
+    # Belt and braces after python rewrote the file. Never allowed to be the
+    # thing that aborts an install under `set -e`: the authoritative chmod is
+    # the one a few lines above, and if config.json were genuinely missing the
+    # script would already have died there.
+    chmod 600 "$CONFIG_DIR/config.json" 2>/dev/null || true
+    MB_GEN_SLOTS="$(printf '%s\n' "$MB_GEN_PW" | sed -n 2p)"
+    MB_GEN_PW="$(printf '%s\n' "$MB_GEN_PW" | sed -n 1p)"
 fi
+MB_GEN_SLOTS="${MB_GEN_SLOTS:-both}"
 
 if [[ -n "$MB_GEN_PW" ]]; then
     # Same escape hatch the image uses: the FAT boot partition is the only
     # thing a headless owner can read by pulling the card, and the login page
     # points at this exact filename.
+    case "$MB_GEN_SLOTS" in
+        main)  MB_PW_URL="https://magicbridge.local/  (or the IP on the OLED)"
+               MB_PW_NOTE="This opens the web UI only. Your admin panel password is unchanged." ;;
+        admin) MB_PW_URL="https://magicbridge.local/stealth/"
+               MB_PW_NOTE="This opens the ADMIN PANEL only. Your web UI password is unchanged." ;;
+        *)     MB_PW_URL="https://magicbridge.local/  (or the IP on the OLED)"
+               MB_PW_NOTE="The same password opens the admin panel at /stealth/." ;;
+    esac
     MB_BOOTP=/boot/firmware; [ -d "$MB_BOOTP" ] || MB_BOOTP=/boot
     if [ -d "$MB_BOOTP" ]; then
-        { echo "MagicBridge web login";
-          echo "URL : https://magicbridge.local/  (or the IP on the OLED)";
+        { echo "MagicBridge login";
+          echo "URL : ${MB_PW_URL}";
           echo "User: (none)";
           echo "Password: ${MB_GEN_PW}"; echo;
-          echo "Same password opens the admin panel at /stealth/.";
+          echo "${MB_PW_NOTE}";
           echo "Change it after first login. Delete this file once you have it."; } \
           > "$MB_BOOTP/magicbridge-password.txt" 2>/dev/null || true
         chmod 600 "$MB_BOOTP/magicbridge-password.txt" 2>/dev/null || true
@@ -868,7 +889,8 @@ echo ""
 echo -e "  ${BOLD}KVM interface${NC}     https://magicbridge.local/"
 echo -e "  ${BOLD}Admin panel${NC}       https://magicbridge.local/stealth/"
 if [[ -n "$MB_GEN_PW" ]]; then
-echo -e "  ${BOLD}${GREEN}Password${NC}          ${BOLD}${MB_GEN_PW}${NC}   (opens both, unique to this unit)"
+echo -e "  ${BOLD}${GREEN}Password${NC}          ${BOLD}${MB_GEN_PW}${NC}   (unique to this unit)"
+echo -e "                    ${MB_PW_NOTE}"
 echo -e "                    also saved to ${MB_BOOTP}/magicbridge-password.txt"
 else
 echo -e "  ${BOLD}Password${NC}          unchanged (this unit already had one set)"
