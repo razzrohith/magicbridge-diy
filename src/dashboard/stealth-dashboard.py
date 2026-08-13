@@ -1079,73 +1079,58 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 <title>MagicBridge Stealth</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{min-height:100%;background:#02040a;
-  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#d8f6ff}
+html,body{min-height:100%;background:#0d1117;
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e6edf3}
 body{display:flex;align-items:center;justify-content:center;padding:1.5rem;position:relative;overflow:hidden}
-body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:
-    radial-gradient(ellipse 900px 620px at 8% -10%, rgba(0,229,255,.15), transparent 60%),
-    radial-gradient(ellipse 760px 560px at 110% 15%, rgba(176,38,255,.12), transparent 60%),
-    radial-gradient(ellipse 820px 640px at 50% 120%, rgba(0,229,255,.07), transparent 62%),
-    linear-gradient(180deg,#02040a 0%,#05101a 55%,#02040a 100%);}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 1200px 700px at 50% -20%, rgba(56,139,253,.05), transparent 70%)}
 body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.4;
-  background:
-    repeating-linear-gradient(0deg, rgba(0,229,255,.05) 0px, rgba(0,229,255,.05) 1px, transparent 1px, transparent 3px),
-    repeating-linear-gradient(90deg, rgba(0,229,255,.03) 0px, rgba(0,229,255,.03) 1px, transparent 1px, transparent 46px),
-    repeating-linear-gradient(0deg, rgba(0,229,255,.03) 0px, rgba(0,229,255,.03) 1px, transparent 1px, transparent 46px);}
-.card{position:relative;z-index:1;background:rgba(6,13,22,.68);backdrop-filter:blur(20px) saturate(140%);
+  background:none}
+.card{position:relative;z-index:1;background:rgba(22,27,34,.68);backdrop-filter:blur(20px) saturate(140%);
       -webkit-backdrop-filter:blur(20px) saturate(140%);
-      border:1px solid rgba(0,229,255,.25);border-radius:6px;
+      border:1px solid rgba(56,139,253,.25);border-radius:6px;
       padding:2.1rem 2rem;width:100%;max-width:320px;
-      box-shadow:0 0 0 1px rgba(0,229,255,.04),0 0 44px rgba(0,229,255,.14),0 20px 60px rgba(0,0,0,.6)}
-@media (prefers-reduced-motion: no-preference){.card{animation:cardBreathe 4.5s ease-in-out infinite}}
-@keyframes cardBreathe{
-  0%,100%{box-shadow:0 0 0 1px rgba(0,229,255,.04),0 0 44px rgba(0,229,255,.14),0 20px 60px rgba(0,0,0,.6)}
-  50%{box-shadow:0 0 0 1px rgba(0,229,255,.09),0 0 60px rgba(0,229,255,.26),0 20px 60px rgba(0,0,0,.6)}
-}
-.card::before,.card::after{content:'';position:absolute;width:16px;height:16px;pointer-events:none;
-  border:2px solid #00e5ff;filter:drop-shadow(0 0 4px rgba(0,229,255,.7))}
-.card::before{top:-1px;left:-1px;border-right:none;border-bottom:none}
-.card::after{bottom:-1px;right:-1px;border-left:none;border-top:none}
+      box-shadow:0 8px 28px rgba(0,0,0,.45)}
+
+
+
 .brand{display:flex;align-items:center;gap:10px;margin-bottom:4px}
-.brand svg{width:28px;height:28px;flex-shrink:0;filter:drop-shadow(0 0 6px rgba(0,229,255,.55))}
+.brand svg{width:28px;height:28px;flex-shrink:0}
 .ping{position:relative;display:inline-block;width:8px;height:8px;border-radius:50%;
-      background:#39ff88;box-shadow:0 0 6px #39ff88;flex-shrink:0;margin-left:auto}
-.ping::before{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid #39ff88;opacity:0}
+      background:#3fb950;box-shadow:0 0 6px #3fb950;flex-shrink:0;margin-left:auto}
+.ping::before{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid #3fb950;opacity:0}
 @media (prefers-reduced-motion: no-preference){.ping::before{animation:ping 2.4s cubic-bezier(0,0,.2,1) infinite}}
 @keyframes ping{0%{transform:scale(.6);opacity:.8}75%,100%{transform:scale(2.4);opacity:0}}
 h1{font:700 16px/1 ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",monospace;
    letter-spacing:1.5px;text-transform:uppercase;
-   background:linear-gradient(135deg,#00e5ff 0%,#7cf2ff 45%,#b026ff 100%);
-   -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-   text-shadow:0 0 22px rgba(0,229,255,.3)}
-.sub{font:11.5px/1.4 ui-monospace,"SF Mono","Cascadia Code",monospace;color:#5f8ba3;
+   color:var(--t1);
+   }
+.sub{font:11.5px/1.4 ui-monospace,"SF Mono","Cascadia Code",monospace;color:#6e7681;
      margin:7px 0 1.6rem;letter-spacing:.5px}
 .sub::before{content:'// '}
 label{display:block;font:600 10.5px/1 ui-monospace,"SF Mono","Cascadia Code",monospace;
-      color:#5f8ba3;margin-bottom:7px;letter-spacing:1.2px;text-transform:uppercase}
+      color:#6e7681;margin-bottom:7px;letter-spacing:1.2px;text-transform:uppercase}
 label::before{content:'> '}
 input[type=password]{
-  width:100%;padding:10px 12px;background:rgba(2,4,10,.85);
-  border:1px solid rgba(0,229,255,.22);border-radius:3px;letter-spacing:3px;
-  color:#d8f6ff;font:13px ui-monospace,"SF Mono",monospace;outline:none;transition:border .15s,box-shadow .15s}
-input[type=password]:focus{border-color:#00e5ff;
-  box-shadow:0 0 0 2px rgba(0,229,255,.18),0 0 18px rgba(0,229,255,.25)}
+  width:100%;padding:10px 12px;background:rgba(13,17,23,.85);
+  border:1px solid rgba(56,139,253,.22);border-radius:3px;letter-spacing:3px;
+  color:#e6edf3;font:13px ui-monospace,"SF Mono",monospace;outline:none;transition:border .15s,box-shadow .15s}
+input[type=password]:focus{border-color:#388bfd;
+  box-shadow:0 0 0 3px rgba(56,139,253,.25)}
 button{
   margin-top:1rem;width:100%;padding:11px;
-  background:linear-gradient(135deg,#00e5ff 0%,#00b8d9 55%,#7c2fff 100%);
-  border:none;border-radius:3px;color:#02040a;font:700 12.5px ui-monospace,"SF Mono",monospace;
+  background:#1f6feb;
+  border:none;border-radius:3px;color:#0d1117;font:700 12.5px ui-monospace,"SF Mono",monospace;
   letter-spacing:2.5px;text-transform:uppercase;cursor:pointer;
-  transition:filter .15s,transform .1s,box-shadow .15s;box-shadow:0 0 22px rgba(0,229,255,.28)}
-button:hover{filter:brightness(1.15);box-shadow:0 0 30px rgba(0,229,255,.48)}
+  transition:filter .15s,transform .1s,box-shadow .15s;}
+button:hover{filter:brightness(1.15);}
 button:active{transform:scale(.98)}
-button:focus{outline:2px solid #00e5ff;outline-offset:3px}
+button:focus{outline:2px solid #388bfd;outline-offset:3px}
 .err{
   margin-top:.8rem;padding:9px 11px;font:11.5px ui-monospace,"SF Mono",monospace;letter-spacing:.3px;
-  background:rgba(255,46,99,.1);border:1px solid rgba(255,46,99,.35);
-  border-radius:3px;color:#ff5c82}
+  background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.35);
+  border-radius:3px;color:#ff7b72}
 .err::before{content:'! '}
-.hint{margin-top:1.1rem;font:10.5px ui-monospace,"SF Mono",monospace;color:#5f8ba3;
+.hint{margin-top:1.1rem;font:10.5px ui-monospace,"SF Mono",monospace;color:#6e7681;
       text-align:center;letter-spacing:.3px}
 </style>
 </head>
@@ -1155,7 +1140,7 @@ button:focus{outline:2px solid #00e5ff;outline-offset:3px}
   <div class="brand">
     <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MagicBridge">
       <defs><linearGradient id="sg1" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
-        <stop offset="0%" stop-color="#00e5ff"/><stop offset="100%" stop-color="#b026ff"/>
+        <stop offset="0%" stop-color="#388bfd"/><stop offset="100%" stop-color="#8957e6"/>
       </linearGradient></defs>
       <path d="M15 40 C15 25 30 20 50 20 C70 20 85 25 85 40 C85 55 72 58 50 58 C28 58 15 55 15 40 Z" fill="none" stroke="url(#sg1)" stroke-width="5"/>
       <path d="M50 20 L50 58" stroke="url(#sg1)" stroke-width="3.4" opacity=".4"/>
@@ -1195,55 +1180,44 @@ MAIN_HTML = r"""<!DOCTYPE html>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --bg:#02040a; --sf:#060c16; --sf2:#0a1220;
-  --br:#0f2836; --br2:#1c3f52;
-  --t1:#d8f6ff; --t2:#6f93a8; --t3:#5a7f99;
-  --ac:#00e5ff; --ac-bg:rgba(0,229,255,.12);
-  --ac2:#b026ff; --ac2-bg:rgba(176,38,255,.12);
-  --ok:#39ff88; --ok-bg:rgba(57,255,136,.1);
-  --wa:#ffb020; --wa-bg:rgba(255,176,32,.1);
-  --er:#ff2e63; --er-bg:rgba(255,46,99,.1);
+  --bg:#0d1117; --sf:#161b22; --sf2:#1c2128;
+  --br:#262c36; --br2:#30363d;
+  --t1:#e6edf3; --t2:#8b949e; --t3:#6e7681;
+  --ac:#388bfd; --ac-bg:rgba(56,139,253,.12);
+  --ac2:#8957e6; --ac2-bg:rgba(137,87,230,.12);
+  --ok:#3fb950; --ok-bg:rgba(63,185,80,.1);
+  --wa:#d29922; --wa-bg:rgba(210,153,34,.1);
+  --er:#f85149; --er-bg:rgba(248,81,73,.1);
   --mono:ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",monospace;
 }
 html{font:13px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
      background:var(--bg);color:var(--t1)}
 body{position:relative}
-body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;
-  background:
-    radial-gradient(ellipse 900px 600px at 6% -10%, rgba(0,229,255,.10), transparent 60%),
-    radial-gradient(ellipse 760px 560px at 108% 8%, rgba(176,38,255,.08), transparent 60%),
-    radial-gradient(ellipse 900px 640px at 50% 118%, rgba(0,229,255,.05), transparent 62%)}
-body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.3;
-  background:
-    repeating-linear-gradient(90deg, rgba(0,229,255,.025) 0px, rgba(0,229,255,.025) 1px, transparent 1px, transparent 46px),
-    repeating-linear-gradient(0deg, rgba(0,229,255,.025) 0px, rgba(0,229,255,.025) 1px, transparent 1px, transparent 46px)}
-::selection{background:rgba(0,229,255,.28);color:#fff}
+body::before{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(ellipse 1200px 700px at 50% -20%, rgba(56,139,253,.05), transparent 70%)}
+body::after{content:none}
+::selection{background:rgba(56,139,253,.28);color:#fff}
 ::-webkit-scrollbar{width:10px;height:10px}
 ::-webkit-scrollbar-track{background:var(--bg)}
 ::-webkit-scrollbar-thumb{background:var(--br2);border-radius:5px;border:2px solid var(--bg)}
 ::-webkit-scrollbar-thumb:hover{background:var(--ac)}
 .sk{position:absolute;top:-999px;left:0;padding:6px 12px;
-    background:var(--ac);color:#02040a;font-size:12px;z-index:9999;
+    background:var(--ac);color:#0d1117;font-size:12px;z-index:9999;
     border-radius:0 0 6px 0;text-decoration:none;font-weight:700}
 .sk:focus{top:0}
 header{
   position:relative;z-index:20;display:flex;align-items:center;gap:10px;padding:10px 16px;
   background:var(--sf);border-bottom:1px solid var(--br);
-  box-shadow:0 1px 16px rgba(0,229,255,.1);
+  
   position:sticky;top:0}
-.logo{font:700 14px/1 var(--mono);letter-spacing:1.6px;text-transform:uppercase;
-  background:linear-gradient(135deg,#00e5ff 0%,#7cf2ff 45%,#b026ff 100%);
-  -webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;
-  text-shadow:0 0 16px rgba(0,229,255,.25)}
+.logo{font:600 14px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:.3px;color:var(--t1)}
 .ping{position:relative;display:inline-block;width:8px;height:8px;border-radius:50%;
       background:var(--ok);box-shadow:0 0 6px var(--ok);flex-shrink:0}
 .ping::before{content:'';position:absolute;inset:-4px;border-radius:50%;border:1px solid var(--ok);opacity:0}
 @media (prefers-reduced-motion: no-preference){.ping::before{animation:ping 2.4s cubic-bezier(0,0,.2,1) infinite}}
 @keyframes ping{0%{transform:scale(.6);opacity:.8}75%,100%{transform:scale(2.4);opacity:0}}
-.bdg{font:600 10px/1 var(--mono);padding:3px 9px;border-radius:3px;
-     letter-spacing:1px;text-transform:uppercase;border:1px solid}
-.b-ok{background:var(--ok-bg);color:var(--ok);border-color:rgba(57,255,136,.4);box-shadow:0 0 10px rgba(57,255,136,.25)}
-.b-er{background:var(--er-bg);color:var(--er);border-color:rgba(255,46,99,.4);box-shadow:0 0 10px rgba(255,46,99,.25)}
+.bdg{font:600 10.5px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:3px 9px;border-radius:10px;letter-spacing:0;border:1px solid}
+.b-ok{background:var(--ok-bg);color:var(--ok);border-color:rgba(63,185,80,.4);}
+.b-er{background:var(--er-bg);color:var(--er);border-color:rgba(248,81,73,.4);}
 .sbar{
   position:relative;z-index:15;display:flex;gap:16px;flex-wrap:wrap;padding:6px 16px;
   background:var(--sf2);border-bottom:1px solid var(--br);
@@ -1254,31 +1228,24 @@ header{
   background:var(--sf);border-bottom:1px solid var(--br)}
 .tile{
   display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;
-  font:10.5px/1.4 var(--mono);letter-spacing:.5px;text-transform:uppercase;
-  border:1px solid var(--br2);background:rgba(6,13,22,.55);color:var(--t2)}
+  font:11px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:0;
+  border:1px solid var(--br2);background:rgba(22,27,34,.55);color:var(--t2)}
 main{position:relative;z-index:1;padding:14px 16px;display:grid;gap:14px}
 @media(min-width:680px){main{grid-template-columns:1fr 1fr}}
 .full{grid-column:1/-1}
-.card{position:relative;background:rgba(6,12,22,.82);border:1px solid var(--br);border-radius:6px;
-      overflow:hidden;box-shadow:0 0 0 1px rgba(0,229,255,.03),0 0 24px rgba(0,229,255,.05)}
-@media (prefers-reduced-motion: no-preference){.card{animation:cardBreathe 5s ease-in-out infinite}}
-@keyframes cardBreathe{
-  0%,100%{box-shadow:0 0 0 1px rgba(0,229,255,.03),0 0 24px rgba(0,229,255,.05)}
-  50%{box-shadow:0 0 0 1px rgba(0,229,255,.07),0 0 34px rgba(0,229,255,.12)}
-}
-.card::before,.card::after{content:'';position:absolute;width:12px;height:12px;z-index:2;pointer-events:none;
-  border:2px solid rgba(0,229,255,.65);filter:drop-shadow(0 0 3px rgba(0,229,255,.5))}
-.card::before{top:-1px;left:-1px;border-right:none;border-bottom:none}
-.card::after{bottom:-1px;right:-1px;border-left:none;border-top:none}
+.card{position:relative;background:var(--sf);border:1px solid var(--br);border-radius:8px;overflow:hidden}
+
+
+
 .ch{padding:10px 14px;border-bottom:1px solid var(--br);
     display:flex;align-items:center;gap:8px}
-.ch h2{font:600 12px/1 var(--mono);letter-spacing:1px;text-transform:uppercase;flex:1;color:var(--t1)}
-.ch h2::before{content:'▸ ';color:var(--ac)}
+.ch h2{font:600 13px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:0;flex:1;color:var(--t1)}
+.ch h2::before{content:none}
 .ch .cd{font-size:11px;color:var(--t3)}
 .cb{padding:12px 14px}
 .field{margin-bottom:10px}
 .field:last-child{margin-bottom:0}
-.fl{display:block;font:600 10.5px/1 var(--mono);color:var(--t3);margin-bottom:5px;letter-spacing:.6px;text-transform:uppercase}
+.fl{display:block;font:500 11.5px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:var(--t2);margin-bottom:6px;letter-spacing:0}
 .fd{display:block;font-size:11px;color:var(--t3);margin-top:3px;line-height:1.4;opacity:.8}
 .frow{display:flex;gap:7px;align-items:flex-start;flex-wrap:wrap}
 input[type=text],input[type=password],select,textarea{
@@ -1286,7 +1253,7 @@ input[type=text],input[type=password],select,textarea{
   color:var(--t1);font-size:12px;padding:6px 9px;
   outline:none;transition:border .15s,box-shadow .15s;font-family:inherit}
 input:focus,select:focus,textarea:focus{
-  border-color:var(--ac);box-shadow:0 0 0 2px rgba(0,229,255,.15),0 0 12px rgba(0,229,255,.2)}
+  border-color:var(--ac);box-shadow:0 0 0 3px rgba(56,139,253,.25)}
 select{cursor:pointer}
 textarea{resize:vertical;min-height:58px;font-family:var(--mono);
          font-size:10px;width:100%;line-height:1.5}
@@ -1298,18 +1265,18 @@ textarea{resize:vertical;min-height:58px;font-family:var(--mono);
 .btn:hover{background:var(--br2);color:var(--t1);border-color:var(--ac)}
 .btn:focus{outline:2px solid var(--ac);outline-offset:2px}
 .btn:disabled{opacity:.4;cursor:wait;pointer-events:none}
-.btn-p{background:linear-gradient(135deg,var(--ac) 0%,#00b8d9 60%,var(--ac2) 100%);
-       border-color:transparent;color:#02040a;box-shadow:0 0 14px rgba(0,229,255,.3)}
-.btn-p:hover{filter:brightness(1.12);box-shadow:0 0 22px rgba(0,229,255,.5)}
-.btn-d{background:var(--er-bg);border-color:rgba(255,46,99,.4);color:var(--er)}
-.btn-d:hover{background:rgba(255,46,99,.2);border-color:var(--er);box-shadow:0 0 12px rgba(255,46,99,.25)}
+.btn-p{background:linear-gradient(135deg,var(--ac) 0%,#1f6feb 60%,var(--ac2) 100%);
+       border-color:transparent;color:#0d1117;}
+.btn-p:hover{filter:brightness(1.12);}
+.btn-d{background:var(--er-bg);border-color:rgba(248,81,73,.4);color:var(--er)}
+.btn-d:hover{background:rgba(248,81,73,.2);border-color:var(--er);}
 .pills{display:flex;flex-wrap:wrap;gap:5px;margin:5px 0 8px}
 .pill{
   padding:3px 10px;border-radius:20px;font:11px var(--mono);letter-spacing:.3px;
   border:1px solid var(--br2);background:transparent;color:var(--t2);
   cursor:pointer;transition:all .15s}
 .pill:hover{border-color:var(--ac);color:var(--ac)}
-.pill.on{border-color:var(--ac);background:var(--ac-bg);color:var(--ac);box-shadow:0 0 8px rgba(0,229,255,.25)}
+.pill.on{border-color:var(--ac);background:var(--ac-bg);color:var(--ac);}
 .pill:focus{outline:2px solid var(--ac);outline-offset:2px}
 .dot{display:inline-block;width:7px;height:7px;border-radius:50%;
      vertical-align:middle;margin-right:4px}
@@ -1324,15 +1291,15 @@ textarea{resize:vertical;min-height:58px;font-family:var(--mono);
 hr{border:none;border-top:1px solid var(--br);margin:10px 0}
 .ibar{height:2px;background:var(--br);position:sticky;bottom:0}
 .ifill{height:100%;background:linear-gradient(90deg,var(--ac),var(--ac2));border-radius:1px;
-       transition:width 1s linear;box-shadow:0 0 8px rgba(0,229,255,.5)}
+       transition:width 1s linear;}
 #toast{
   position:fixed;bottom:14px;right:14px;z-index:999;
   background:var(--sf);border:1px solid var(--br2);border-radius:6px;
   padding:9px 15px;font:12px var(--mono);opacity:0;transition:opacity .25s;
   pointer-events:none;max-width:260px}
 #toast.show{opacity:1}
-#toast.ok{border-left:3px solid var(--ok);color:var(--ok);box-shadow:0 0 18px rgba(57,255,136,.2)}
-#toast.er{border-left:3px solid var(--er);color:var(--er);box-shadow:0 0 18px rgba(255,46,99,.2)}
+#toast.ok{border-left:3px solid var(--ok);color:var(--ok);}
+#toast.er{border-left:3px solid var(--er);color:var(--er);}
 </style>
 </head>
 <body>
