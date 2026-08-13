@@ -406,6 +406,99 @@ fi
 
 chmod 600 "$CONFIG_DIR/config.json"
 
+# ── Per-unit passwords ────────────────────────────────────────────────────────
+# Without this, a DIY install left auth.* unwritten and the two services
+# bootstrapped themselves to "magicbridge" / "stealthbridge" - passwords
+# published in this very repo. nginx proxies /stealth/ on :443, so the :7777
+# DROP does not help: anyone on the same WiFi could open the admin panel with a
+# password they could look up, then rotate the USB/MAC/EDID identity or read
+# back saved WiFi PSKs. That is a direct break of the stealth model, so the
+# DIY path now does what the flashed image already did.
+#
+# Only ever fills a slot that is EMPTY or still on a known public default, so
+# a self-update (MB_SELF_UPDATE=1) can never rotate a password out from under
+# a running unit. Both slots get the same value, matching mb-secret-reset.sh.
+#
+# One nuance: an EMPTY slot is always safe to fill (nobody has ever signed in
+# with it). A slot that still holds a published default is only rotated when a
+# human is watching the terminal - during a background self-update, silently
+# changing a working password would strand the owner exactly the way the
+# firewall-flush bug did. Those units get the banner in the panel instead.
+MB_GEN_PW=""
+if command -v python3 >/dev/null 2>&1; then
+    MB_GEN_PW="$(MB_SELF_UPDATE="${MB_SELF_UPDATE:-0}" python3 - "$CONFIG_DIR/config.json" <<'PYPW'
+import hashlib, json, os, secrets, string, sys
+p = sys.argv[1]
+try:
+    c = json.load(open(p))
+except Exception:
+    sys.exit(0)
+a = c.setdefault("auth", {})
+
+def _mk(s):
+    try:
+        import bcrypt
+        return bcrypt.hashpw(s.encode(), bcrypt.gensalt()).decode()
+    except Exception:
+        return "sha256:" + hashlib.sha256(s.encode()).hexdigest()
+
+SELF_UPDATE = os.environ.get("MB_SELF_UPDATE") == "1"
+
+def _needs_pw(h, word):
+    """Empty slot -> always fill. Published default -> only when a human is
+    watching, so an unattended update never changes a password in silence."""
+    if not h:
+        return True
+    if SELF_UPDATE:
+        return False
+    if h == "sha256:" + hashlib.sha256(word.encode()).hexdigest():
+        return True
+    try:
+        import bcrypt
+        return bcrypt.checkpw(word.encode(), h.encode())
+    except Exception:
+        return False
+
+need_main = _needs_pw(a.get("main_password_hash"), "magicbridge")
+need_adm  = _needs_pw(a.get("password_hash"),      "stealthbridge")
+if not (need_main or need_adm):
+    sys.exit(0)
+
+alpha = string.ascii_letters + string.digits
+pw = "".join(secrets.choice(alpha) for _ in range(12))
+h = _mk(pw)
+if need_main:
+    a["main_password_hash"] = h
+    a.setdefault("main_secret_key", secrets.token_hex(32))
+if need_adm:
+    a["password_hash"] = h
+    a.setdefault("secret_key", secrets.token_hex(32))
+json.dump(c, open(p, "w"), indent=2)
+print(pw)
+PYPW
+)" || MB_GEN_PW=""
+    chmod 600 "$CONFIG_DIR/config.json"
+fi
+
+if [[ -n "$MB_GEN_PW" ]]; then
+    # Same escape hatch the image uses: the FAT boot partition is the only
+    # thing a headless owner can read by pulling the card, and the login page
+    # points at this exact filename.
+    MB_BOOTP=/boot/firmware; [ -d "$MB_BOOTP" ] || MB_BOOTP=/boot
+    if [ -d "$MB_BOOTP" ]; then
+        { echo "MagicBridge web login";
+          echo "URL : https://magicbridge.local/  (or the IP on the OLED)";
+          echo "User: (none)";
+          echo "Password: ${MB_GEN_PW}"; echo;
+          echo "Same password opens the admin panel at /stealth/.";
+          echo "Change it after first login. Delete this file once you have it."; } \
+          > "$MB_BOOTP/magicbridge-password.txt" 2>/dev/null || true
+        chmod 600 "$MB_BOOTP/magicbridge-password.txt" 2>/dev/null || true
+        sync
+    fi
+    ok "Generated a per-unit password (shown at the end of this install)"
+fi
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 6. TLS CERTIFICATE
 # ══════════════════════════════════════════════════════════════════════════════
@@ -590,6 +683,20 @@ iptables -A INPUT -p tcp --dport 8081 -j DROP     # ustreamer: internal only
 iptables -A INPUT -p tcp --dport 8188 -j DROP     # Janus WebRTC WS: internal only
 iptables -A INPUT -p tcp --dport 8088 -j DROP     # Janus WebRTC HTTP: internal only
 
+# WebRTC media. install_janus_webrtc.sh pins Janus's RTP range to 20000-20100
+# and opens it here, because the INPUT policy is DROP and leaning on the
+# conntrack ESTABLISHED path is fragile (it only holds once Janus's own
+# outbound connectivity checks have created the entry). The "iptables -F INPUT"
+# above wipes that rule, and this file is saved to rules.v4 below, so WITHOUT
+# this block an in-UI "Full upgrade" silently and permanently deletes the
+# WebRTC media allow, recoverable only over SSH. Keep the range in sync with
+# rtp_port_range in /opt/janus/etc/janus/janus.jcfg.
+if [[ -x /opt/janus/bin/janus ]] \
+   || systemctl list-unit-files 2>/dev/null | grep -q '^janus-webrtc\.service'; then
+    iptables -A INPUT -p udp --dport 20000:20100 -j ACCEPT
+    info "WebRTC media allow preserved (UDP 20000-20100)"
+fi
+
 # IPv6 firewall (S8): nginx also listens on [::]:443, and Janus/RaspiOS bring up
 # IPv6. Without matching ip6tables the ip6tables INPUT policy defaults to ACCEPT,
 # so the web UI (and internal ports) would be reachable over IPv6 with NO
@@ -760,8 +867,12 @@ echo -e "${BOLD}${GREEN}╚═════════════════�
 echo ""
 echo -e "  ${BOLD}KVM interface${NC}     https://magicbridge.local/"
 echo -e "  ${BOLD}Admin panel${NC}       https://magicbridge.local/stealth/"
-echo -e "  ${BOLD}KVM password${NC}      magicbridge  (change in panel -> System -> Account)"
-echo -e "  ${BOLD}Admin password${NC}    stealthbridge  (change inside the stealth panel)"
+if [[ -n "$MB_GEN_PW" ]]; then
+echo -e "  ${BOLD}${GREEN}Password${NC}          ${BOLD}${MB_GEN_PW}${NC}   (opens both, unique to this unit)"
+echo -e "                    also saved to ${MB_BOOTP}/magicbridge-password.txt"
+else
+echo -e "  ${BOLD}Password${NC}          unchanged (this unit already had one set)"
+fi
 echo ""
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "?")
 echo -e "  ${BOLD}Local IP${NC}          $LOCAL_IP"
@@ -778,7 +889,7 @@ echo -e "  After reboot, connect BOTH cables to the target computer:"
 echo -e "    • HDMI  (target's output) → C790 capture board → Pi CSI ribbon"
 echo -e "    • USB-C (Pi OTG port)     → a DATA USB port on the target (keyboard/mouse)"
 echo -e "  Open ${BOLD}https://magicbridge.local/${NC} on any device on the same network."
-echo -e "  Change both default passwords on first login."
+echo -e "  Set your own password on first login (panel -> System -> Account)."
 echo ""
 echo -e "  ${BOLD}Verify anytime:${NC}  sudo bash install.sh --check   (read-only status)"
 

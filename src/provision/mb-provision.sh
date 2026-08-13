@@ -217,8 +217,25 @@ else
     iptables -t nat -A PREROUTING -i "$AP_IFACE" -p tcp --dport 443 \
              -j DNAT --to-destination "${AP_IP}:${PORTAL_PORT}" 2>/dev/null || true
 
+    # Let the AP's captive DNS actually answer. The shipped rules.v4 is
+    # default-deny INPUT and allows UDP 5353 + 67 but NOT 53, so on a flashed
+    # unit every DNS query from the phone was DROPped: dnsmasq's
+    # "address=/#/$AP_IP" never reached anyone, the OS captive-detection probe
+    # could not resolve, the sign-in sheet never appeared, and the phone just
+    # said "connected, no internet". Scoped to the AP interface and removed in
+    # teardown below, so nothing is left open once provisioning ends.
+    iptables -I INPUT -i "$AP_IFACE" -p udp --dport 53 -j ACCEPT 2>/dev/null || true
+    iptables -I INPUT -i "$AP_IFACE" -p tcp --dport 53 -j ACCEPT 2>/dev/null || true
+
     echo "[$(date)] AP up, SSID '$AP_SSID', IP $AP_IP, portal :$PORTAL_PORT"
-    oled "@WIFI" "Join WiFi hotspot:" "$AP_SSID"
+    # Second line is the manual escape hatch: if the captive sheet still does
+    # not pop (some Android builds, a phone with private DNS forced on), this
+    # is the only thing on the whole device that tells the user where to
+    # browse. oled.py's @WIFI screen renders 2 lines truncated to 17 chars, so
+    # both strings are sized to fit: "Join: Setup-1a2b" is 16, "Open
+    # 192.168.73.1" is exactly 17. Do not lengthen either without widening
+    # _draw_phase_anim's @WIFI branch.
+    oled "@WIFI" "Join: $AP_SSID" "Open $AP_IP"
 
     # Run captive portal (blocks until user submits). errexit is already off for
     # the whole AP phase (set +e above), so a portal crash still falls through
@@ -233,6 +250,11 @@ echo "[$(date)] Portal exited (code $PORTAL_EXIT)"
 pkill -F /tmp/mb-hostapd.pid 2>/dev/null || true
 pkill -F /tmp/mb-dnsmasq.pid 2>/dev/null || true
 iptables -t nat -F PREROUTING 2>/dev/null || true
+# Drop the captive-DNS allows we added for the AP window. Looped because a
+# retried provisioning run can insert them more than once, and they must not
+# survive into normal operation.
+while iptables -D INPUT -i "$AP_IFACE" -p udp --dport 53 -j ACCEPT 2>/dev/null; do :; done
+while iptables -D INPUT -i "$AP_IFACE" -p tcp --dport 53 -j ACCEPT 2>/dev/null; do :; done
 ip addr flush dev "$AP_IFACE" 2>/dev/null || true
 # Mirror a human-readable report onto the FAT boot partition. THIS IS THE
 # ESCAPE HATCH: a unit that has neither WiFi nor a working hotspot is otherwise

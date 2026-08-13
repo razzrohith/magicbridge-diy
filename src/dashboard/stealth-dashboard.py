@@ -203,6 +203,12 @@ def _record_ok(ip: str):
     _login_fails.pop(ip, None)
 
 # Password helpers
+# Last-resort bootstrap value only. install.sh (fresh DIY install) and
+# mb-firstboot.sh (flashed image) both write a random per-unit password before
+# this panel ever serves, so a unit should never land here. Kept named so
+# _using_default_pw() can warn loudly on the units that predate that.
+DEFAULT_PASSWORD = "stealthbridge"
+
 def _hash_pw(pw: str) -> str:
     if _HAS_BCRYPT:
         return _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt()).decode()
@@ -213,6 +219,35 @@ def _check_pw(pw: str, stored: str) -> bool:
         return _bcrypt.checkpw(pw.encode(), stored.encode())
     raw = stored.removeprefix("sha256:")
     return hashlib.sha256(pw.encode()).hexdigest() == raw
+
+_defpw_cache = (None, False)   # (hash we judged, verdict)
+
+def _using_default_pw() -> bool:
+    """True while this panel still accepts the password published in the repo.
+
+    install.sh and mb-firstboot.sh both generate a per-unit password now, so
+    this should only ever fire on a unit installed before that change. Nothing
+    used to tell those owners: nginx proxies /stealth/ on :443, so anyone on
+    the same WiFi could sign in with a looked-up password and rotate the
+    USB/MAC/EDID identity or read back saved WiFi PSKs.
+
+    Keyed on the stored hash rather than a TTL: bcrypt is ~100ms on a Pi 4 and
+    this runs on every panel render, but the answer can only change when the
+    hash does, so a changed password clears the cache immediately and an
+    unchanged one never pays twice."""
+    global _defpw_cache
+    try:
+        h = _load().get("auth", {}).get("password_hash", "")
+    except Exception:
+        return False
+    if _defpw_cache[0] == h:
+        return _defpw_cache[1]
+    try:
+        v = _check_pw(DEFAULT_PASSWORD, h)
+    except Exception:
+        v = False
+    _defpw_cache = (h, v)
+    return v
 
 # Config helpers
 def _load() -> dict:
@@ -228,7 +263,7 @@ def _save(cfg: dict):
 def _ensure_defaults(cfg: dict) -> dict:
     auth = cfg.setdefault("auth", {})
     if not auth.get("password_hash"):
-        auth["password_hash"] = _hash_pw("stealthbridge")
+        auth["password_hash"] = _hash_pw(DEFAULT_PASSWORD)
         _save(cfg)
     if not auth.get("secret_key"):
         auth["secret_key"] = secrets.token_hex(32)
@@ -1102,13 +1137,13 @@ body::after{content:'';position:fixed;inset:0;z-index:0;pointer-events:none;opac
 @keyframes ping{0%{transform:scale(.6);opacity:.8}75%,100%{transform:scale(2.4);opacity:0}}
 h1{font:700 16px/1 ui-monospace,"SF Mono","Cascadia Code","Roboto Mono",monospace;
    letter-spacing:1.5px;text-transform:uppercase;
-   color:var(--t1);
+   color:#e6edf3;
    }
-.sub{font:11.5px/1.4 ui-monospace,"SF Mono","Cascadia Code",monospace;color:#6e7681;
+.sub{font:11.5px/1.4 ui-monospace,"SF Mono","Cascadia Code",monospace;color:#8b949e;
      margin:7px 0 1.6rem;letter-spacing:.5px}
 .sub::before{content:'// '}
 label{display:block;font:600 10.5px/1 ui-monospace,"SF Mono","Cascadia Code",monospace;
-      color:#6e7681;margin-bottom:7px;letter-spacing:1.2px;text-transform:uppercase}
+      color:#8b949e;margin-bottom:7px;letter-spacing:1.2px;text-transform:uppercase}
 label::before{content:'> '}
 input[type=password]{
   width:100%;padding:10px 12px;background:rgba(13,17,23,.85);
@@ -1119,7 +1154,7 @@ input[type=password]:focus{border-color:#388bfd;
 button{
   margin-top:1rem;width:100%;padding:11px;
   background:#1f6feb;
-  border:none;border-radius:3px;color:#0d1117;font:700 12.5px ui-monospace,"SF Mono",monospace;
+  border:none;border-radius:3px;color:#ffffff;font:700 12.5px ui-monospace,"SF Mono",monospace;
   letter-spacing:2.5px;text-transform:uppercase;cursor:pointer;
   transition:filter .15s,transform .1s,box-shadow .15s;}
 button:hover{filter:brightness(1.15);}
@@ -1130,7 +1165,7 @@ button:focus{outline:2px solid #388bfd;outline-offset:3px}
   background:rgba(248,81,73,.1);border:1px solid rgba(248,81,73,.35);
   border-radius:3px;color:#ff7b72}
 .err::before{content:'! '}
-.hint{margin-top:1.1rem;font:10.5px ui-monospace,"SF Mono",monospace;color:#6e7681;
+.hint{margin-top:1.1rem;font:10.5px ui-monospace,"SF Mono",monospace;color:#8b949e;
       text-align:center;letter-spacing:.3px}
 </style>
 </head>
@@ -1163,7 +1198,7 @@ button:focus{outline:2px solid #388bfd;outline-offset:3px}
            autocomplete="current-password" aria-required="true" autofocus>
     <button type="submit">Unlock</button>
   </form>
-  <p class="hint">Forgot the password? Reset it from the Pi via SSH.</p>
+  <p class="hint">Forgot it? See <b>magicbridge-password.txt</b> on the SD card.</p>
 </div>
 </main>
 </body>
@@ -1218,6 +1253,10 @@ header{
 .bdg{font:600 10.5px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:3px 9px;border-radius:10px;letter-spacing:0;border:1px solid}
 .b-ok{background:var(--ok-bg);color:var(--ok);border-color:rgba(63,185,80,.4);}
 .b-er{background:var(--er-bg);color:var(--er);border-color:rgba(248,81,73,.4);}
+.pwwarn{margin:10px 16px 0;padding:10px 13px;border-radius:6px;
+  background:rgba(248,81,73,.11);border:1px solid rgba(248,81,73,.4);
+  color:#ffa198;font-size:12px;line-height:1.5}
+.pwwarn b{color:#ff7b72}
 .sbar{
   position:relative;z-index:15;display:flex;gap:16px;flex-wrap:wrap;padding:6px 16px;
   background:var(--sf2);border-bottom:1px solid var(--br);
@@ -1313,6 +1352,14 @@ hr{border:none;border-top:1px solid var(--br);margin:10px 0}
     <button class="btn" onclick="lock()" aria-label="Lock and log out">Lock</button>
   </nav>
 </header>
+
+{% if default_pw %}
+<div class="pwwarn" role="alert">
+  <b>Default admin password in use.</b>
+  It is published in the repo, and anyone on this network can open this panel
+  with it. Change it in Security below.
+</div>
+{% endif %}
 
 <div class="sbar" role="status" aria-live="polite">
   <span id="s-temp">— °C</span>
@@ -1874,7 +1921,7 @@ async function loadFunnel() {
   else if (r.active)
     el.innerHTML = '<span class="dot d-ok"></span>Active (fetching URL…)';
   else if (r.enable_url)
-    el.innerHTML = '<span class="dot d-er"></span>Off — not enabled for your tailnet yet. '
+    el.innerHTML = '<span class="dot d-er"></span>Off. Not enabled for your tailnet yet. '
       + '<a href="'+r.enable_url+'" target="_blank" style="color:var(--ac)">Enable it here</a>';
   else
     el.innerHTML = '<span class="dot d-er"></span>Off';
@@ -1885,7 +1932,7 @@ async function loadFunnel() {
 async function funnelOn() {
   const btns = document.querySelectorAll('[onclick="funnelOn()"],[onclick="funnelOff()"]');
   btns.forEach(b => b.disabled = true);
-  toast('Enabling funnel — talking to Tailscale…', 'ok');
+  toast('Enabling funnel, talking to Tailscale…', 'ok');
   // Backend now blocks on the real `tailscale funnel 443` call (up to 20s)
   // instead of firing it and forgetting, so r.ok here reflects what actually
   // happened, not just "the process launched".
@@ -1946,7 +1993,7 @@ async function loadStatus() {
   if (ddSt) {
     ddSt.textContent = dd.last_update
       ? 'Last updated ' + new Date(dd.last_update).toLocaleString() + ' → ' + dd.last_ip
-      : (dd.host ? 'Configured — not yet confirmed since restart' : '');
+      : (dd.host ? 'Configured, not yet confirmed since restart' : '');
     ddSt.style.color = 'var(--t3)';
   }
   const mp = r.mac_persist || {};
@@ -2216,7 +2263,8 @@ def index():
     mac_profiles = [{"name": p["name"]} for p in MAC_PROFILES]
     return render_template_string(MAIN_HTML, csrf=session.get("csrf",""),
                                    profiles=profiles, edid_profiles=edid_profiles,
-                                   mac_profiles=mac_profiles)
+                                   mac_profiles=mac_profiles,
+                                   default_pw=_using_default_pw())
 
 
 @app.route("/api/status")

@@ -168,6 +168,16 @@ async def _run_off_loop(cmd, **kw):
     return await loop.run_in_executor(None, lambda: _subp.run(cmd, **kw))
 
 
+async def _call_off_loop(fn, *args):
+    """Same idea as _run_off_loop, but for a whole blocking Python function
+    instead of a single command. Use this when a handler makes SEVERAL
+    subprocess calls in a row: wrapping each one individually still hands the
+    loop back and forth, and a chain like the update-status git sequence
+    (fetch + 6 rev-parse/log calls) is much cheaper as one hop."""
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, lambda: fn(*args))
+
+
 # Auth helpers
 def _auth_cfg() -> dict:
     try:
@@ -629,6 +639,10 @@ button:active{transform:scale(.98)}
 @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-4px)}
   40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(3px)}}
 .foot{margin-top:1.5rem;text-align:center;font-size:10px;color:#6f93a8;letter-spacing:.02em}
+.hint{margin-top:1.1rem;padding:9px 11px;background:rgba(34,211,238,.06);
+  border:1px solid rgba(140,220,255,.14);border-radius:9px;
+  font-size:11px;line-height:1.45;color:#a9cfe0;text-align:center}
+.hint code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;color:#8beefc}
 .rmb{display:flex;align-items:center;gap:9px;margin-top:1rem;font-size:12.5px;color:#9fb9c8;
   cursor:pointer;user-select:none}
 .rmb input{width:16px;height:16px;accent-color:#22d3ee;cursor:pointer;flex:none}
@@ -661,6 +675,7 @@ __TOTP__
 <label class="rmb"><input type="checkbox" name="remember" value="1">Remember this device for 30 days</label>
 <button type="submit">Unlock MagicBridge</button>
 </form>
+<div class="hint">First sign-in? Your password is in <code>magicbridge-password.txt</code> on the SD card.</div>
 <div class="foot">Self-hosted KVM-over-IP · this device only</div>
 </div></main></body></html>"""
 
@@ -2145,38 +2160,46 @@ async def api_tailscale_get(request):
             "status": "not_installed",
             "install_cmd": "curl -fsSL https://tailscale.com/install.sh | sh"
         })
-    connected = False; ip = ""; login_url = ""; backend = "unknown"
-    try:
-        r = subprocess.run(["tailscale", "status", "--json"],
-                           capture_output=True, text=True, timeout=5)
-        if r.returncode == 0:
-            st = _json.loads(r.stdout)
-            backend = st.get("BackendState", "unknown")
-            if backend == "Running":
-                connected = True
-                try:
-                    ri = subprocess.run(["tailscale", "ip", "-4"],
-                                        capture_output=True, text=True, timeout=3)
-                    if ri.returncode == 0:
-                        ip = ri.stdout.strip().split()[0]
-                except Exception:
-                    pass
-            elif backend in ("NeedsLogin", "NoState", "Stopped"):
-                try:
-                    rl = subprocess.run(
-                        ["tailscale", "up", "--timeout=2s"],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    out2 = rl.stdout + rl.stderr
-                    m2 = _re2.search(r"https://login\.tailscale\.com/\S+", out2)
-                    if m2:
-                        login_url = m2.group(0).rstrip(".")
-                except Exception:
-                    pass
-        else:
+    def _probe():
+        """Off-loop: `tailscale status --json` (5s) plus, on a not-logged-in
+        unit, `tailscale up` (another 5s). This is called by tsRefresh() on
+        every page load, so run inline it froze the operator who was already
+        controlling the target for up to 10 seconds with no visible cause."""
+        connected = False; ip = ""; login_url = ""; backend = "unknown"
+        try:
+            r = subprocess.run(["tailscale", "status", "--json"],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                st = _json.loads(r.stdout)
+                backend = st.get("BackendState", "unknown")
+                if backend == "Running":
+                    connected = True
+                    try:
+                        ri = subprocess.run(["tailscale", "ip", "-4"],
+                                            capture_output=True, text=True, timeout=3)
+                        if ri.returncode == 0:
+                            ip = ri.stdout.strip().split()[0]
+                    except Exception:
+                        pass
+                elif backend in ("NeedsLogin", "NoState", "Stopped"):
+                    try:
+                        rl = subprocess.run(
+                            ["tailscale", "up", "--timeout=2s"],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        out2 = rl.stdout + rl.stderr
+                        m2 = _re2.search(r"https://login\.tailscale\.com/\S+", out2)
+                        if m2:
+                            login_url = m2.group(0).rstrip(".")
+                    except Exception:
+                        pass
+            else:
+                backend = "error"
+        except Exception:
             backend = "error"
-    except Exception:
-        backend = "error"
+        return connected, ip, login_url, backend
+
+    connected, ip, login_url, backend = await _call_off_loop(_probe)
     return web.json_response({
         "installed": True, "connected": connected,
         "ip": ip, "login_url": login_url,
@@ -2259,8 +2282,11 @@ async def api_network_lockdown(request):
     """
     import subprocess
     if request.method == "GET":
+        # Off-loop: refreshLockdownStatus() runs on every page load, and a
+        # 5s script call on the event loop stalls every client's input.
         try:
-            r = subprocess.run([LOCKDOWN_SH, "status"], capture_output=True, text=True, timeout=5)
+            r = await _run_off_loop([LOCKDOWN_SH, "status"],
+                                    capture_output=True, text=True, timeout=5)
             state = r.stdout.strip()
         except Exception:
             state = "off"
@@ -2529,7 +2555,7 @@ async def api_mouse_mode(request):
 
     return web.json_response({
         "ok": rebuilt, "mode": mode, "rebuilt": rebuilt,
-        "error": None if rebuilt else "Gadget rebuild failed — mode saved, will apply on next boot",
+        "error": None if rebuilt else "Gadget rebuild failed, mode saved, will apply on next boot",
     })
 
 
@@ -2759,22 +2785,26 @@ async def api_screen_area(request):
 async def api_wifi(request):
     import subprocess as _sp, json as _j
     if request.method == "GET":
-        r = _sp.run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
-                    capture_output=True, text=True, timeout=8)
-        networks = []
-        for line in r.stdout.splitlines():
-            parts = line.split(":")
-            if len(parts) >= 2 and ("wireless" in parts[1].lower() or "wifi" in parts[1].lower()):
-                networks.append(parts[0])
-        # also get current connection
-        r2 = _sp.run(["nmcli", "-t", "-f", "ACTIVE,SSID", "device", "wifi"],
-                     capture_output=True, text=True, timeout=8)
-        active = ""
-        for line in r2.stdout.splitlines():
-            if line.startswith("yes:"):
-                active = line[4:].strip()
-                break
-        return web.json_response({"networks": networks, "active": active})
+        # Off-loop: two nmcli calls at 8s each, fired by wifiRefresh() on every
+        # page load. Inline they froze the /ws input loop for up to 16s.
+        def _list():
+            r = _sp.run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
+                        capture_output=True, text=True, timeout=8)
+            networks = []
+            for line in r.stdout.splitlines():
+                parts = line.split(":")
+                if len(parts) >= 2 and ("wireless" in parts[1].lower() or "wifi" in parts[1].lower()):
+                    networks.append(parts[0])
+            # also get current connection
+            r2 = _sp.run(["nmcli", "-t", "-f", "ACTIVE,SSID", "device", "wifi"],
+                         capture_output=True, text=True, timeout=8)
+            active = ""
+            for line in r2.stdout.splitlines():
+                if line.startswith("yes:"):
+                    active = line[4:].strip()
+                    break
+            return {"networks": networks, "active": active}
+        return web.json_response(await _call_off_loop(_list))
     try: d = await request.json()
     except: return web.json_response({"ok": False, "error": "bad json"}, status=400)
     action = d.get("action", "")
@@ -2791,16 +2821,19 @@ async def api_wifi(request):
                "connection.autoconnect-priority", "10"]
         if psk:
             cmd += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk]
-        r = _sp.run(cmd, capture_output=True, text=True, timeout=15)
+        # Off-loop, same reason as the GET branch: adding a network can take
+        # 15s + 10s, and blocking the loop there means the operator's mouse
+        # and keyboard die mid-session just because someone saved a WiFi.
+        r = await _run_off_loop(cmd, capture_output=True, text=True, timeout=15)
         ok = r.returncode == 0
         out = (r.stdout + r.stderr)[:300]
         if not ok and "already" in out.lower():
             if psk:
-                r2 = _sp.run(["nmcli", "connection", "modify", ssid,
+                r2 = await _run_off_loop(["nmcli", "connection", "modify", ssid,
                                "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk],
                               capture_output=True, text=True, timeout=10)
             else:
-                r2 = _sp.run(["nmcli", "connection", "modify", ssid,
+                r2 = await _run_off_loop(["nmcli", "connection", "modify", ssid,
                                "wifi-sec.key-mgmt", "none"],
                               capture_output=True, text=True, timeout=10)
             ok = r2.returncode == 0
@@ -2808,13 +2841,13 @@ async def api_wifi(request):
         return web.json_response({"ok": ok, "out": out})
     if action == "remove":
         name = d.get("name", "").strip()
-        r = _sp.run(["nmcli", "connection", "delete", name],
-                    capture_output=True, text=True, timeout=10)
+        r = await _run_off_loop(["nmcli", "connection", "delete", name],
+                                capture_output=True, text=True, timeout=10)
         return web.json_response({"ok": r.returncode == 0})
     if action == "connect":
         name = d.get("name", "").strip()
-        r = _sp.run(["nmcli", "connection", "up", name],
-                    capture_output=True, text=True, timeout=20)
+        r = await _run_off_loop(["nmcli", "connection", "up", name],
+                                capture_output=True, text=True, timeout=20)
         return web.json_response({"ok": r.returncode == 0, "out": (r.stdout + r.stderr)[:200]})
     return web.json_response({"ok": False, "error": "unknown action"}, status=400)
 
@@ -2990,11 +3023,23 @@ async def api_update(request):
                 capture_output=True, text=True, timeout=10)
         return True, ""
 
-    cloned_ok, clone_out = _ensure_clone()
+    # Off-loop: on a unit where install.sh never created the clone this is a
+    # full 60s `git clone`, and aiohttp is single-threaded - it would freeze
+    # every connected operator's keyboard and mouse for the whole duration
+    # while the video (served by nginx on its own routes) kept playing, so the
+    # page looks perfectly connected while input is dead.
+    cloned_ok, clone_out = await _call_off_loop(_ensure_clone)
     if not cloned_ok:
         return web.json_response({"ok": False, "error": "clone failed: " + clone_out})
 
-    if action == "status":
+    def _status_snapshot():
+        """All of the status branch's git work, in one thread hop.
+
+        This used to run inline in the coroutine: a network `git fetch`
+        (timeout 20) plus six more git calls, on the event loop, triggered by
+        sysCheckVer() on EVERY page load. One person opening the UI froze the
+        person currently controlling the target. The update branch below
+        already did this correctly; the status branch was missed."""
         ver = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "--short", "HEAD"],
                      capture_output=True, text=True, timeout=10)
         branch = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "--abbrev-ref", "HEAD"],
@@ -3047,7 +3092,7 @@ async def api_update(request):
                    (f"Quick update: {commits_behind} commit(s), {len(changed)} file(s)"
                     if mode == "incremental" else
                     f"Full upgrade: {commits_behind} commit(s) (structural changes)"))
-        return web.json_response({
+        return {
             "ok": True,
             "version": ver.stdout.strip(),
             "branch": branch.stdout.strip(),
@@ -3058,7 +3103,10 @@ async def api_update(request):
             "pending": pending,           # subjects of all incoming commits (newest first)
             "deploy_unknown": deploy_unknown,
             "out": out,
-        })
+        }
+
+    if action == "status":
+        return web.json_response(await _call_off_loop(_status_snapshot))
 
     # action == "update"
     # Fetch so origin reflects GitHub, see what changed, and size the update.

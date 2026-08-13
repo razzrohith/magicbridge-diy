@@ -540,6 +540,24 @@ body:not(.fs) .fs-hud{display:none!important}
   /* Fullscreen HUD bars: let them wrap instead of running off both edges. */
   .fs-hud{max-width:94vw;flex-wrap:wrap;row-gap:8px;justify-content:center}
   #fh-input{width:auto;flex:1 1 140px;min-width:120px}
+
+  /* Virtual keyboard: the rows are nowrap with flex-shrink:0 keys, so the
+     QWERTY row needs ~479px and the number row ~455px. On a 375px phone the
+     panel gets ~353px and the rows are centered, so ~63px hung off EACH side
+     of a position:fixed element with no scroll - Tab, Esc, Del, Backspace and
+     Enter were simply unreachable. This is the only way to send function keys
+     and raw keystrokes from a phone. Letting rows wrap keeps every key on
+     screen and grows the panel downward instead. Desktop is untouched. */
+  #vkbd{width:min(720px,96vw);padding:0 4px 8px}
+  .vk-row{flex-wrap:wrap;row-gap:3px}
+  .vk{height:32px;min-width:25px;padding:0 4px;font-size:10.5px}
+  .vk.w2{min-width:44px}.vk.w3{min-width:62px}.vk.w4{min-width:80px}
+  .vk.spc{flex:1 1 120px;max-width:none}
+  .vk.fn{height:25px;font-size:8.5px}
+
+  /* Idle capture hint: 86 chars at nowrap renders ~450-490px wide inside an
+     overflow:hidden #view, so it was sliced off at both edges under ~400px. */
+  #hint{max-width:92vw;white-space:normal;text-align:center;line-height:1.45}
 }
 </style>
 </head>
@@ -846,11 +864,11 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="scard-title"><span class="dot-pur"></span>Tailscale
             <span class="tag tag-pur" id="ts-tag" style="margin-left:auto">-</span>
           </div>
-          <div id="ts-install">
+          <div id="ts-install" style="display:none">
             <div class="snote">Not installed. Install for remote access from anywhere.</div>
             <button class="sbtn pur" onclick="tsInstall()">⬇ Install Tailscale</button>
           </div>
-          <div id="ts-login">
+          <div id="ts-login" style="display:none">
             <button class="sbtn pur" onclick="tsGetLoginUrl()">🔗 Get Login Link</button>
             <div id="ts-url-area" style="display:none;margin-top:6px">
               <div class="ts-url" id="ts-url-disp" onclick="copyTsUrl()"></div>
@@ -866,7 +884,7 @@ body:not(.fs) .fs-hud{display:none!important}
               <button onclick="tsAuthKey()">Connect</button>
             </div>
           </div>
-          <div id="ts-connected">
+          <div id="ts-connected" style="display:none">
             <div class="srow"><span class="sk">Status</span><span class="sv ok">Connected ✓</span></div>
             <div class="srow"><span class="sk">IP</span><span class="sv ts" id="ts-ip">-</span></div>
             <button class="sbtn suc" onclick="copyTsUrl2()">📋 Copy Access URL</button>
@@ -1099,7 +1117,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <div id="tfa-setup" style="display:none;margin-top:8px">
             <div class="snote" style="margin-bottom:6px">1. Add this to your authenticator app:</div>
             <div id="tfa-uri" style="font-size:9px;word-break:break-all;background:#0b1622;padding:6px;border-radius:4px;margin-bottom:6px"></div>
-            <div class="snote" style="margin-bottom:6px"><b>2. Save these recovery codes now</b> — shown once, each usable once:</div>
+            <div class="snote" style="margin-bottom:6px"><b>2. Save these recovery codes now</b>. Shown once, each usable once:</div>
             <div id="tfa-codes" style="font:11px/1.7 monospace;background:#0b1622;padding:6px;border-radius:4px;margin-bottom:8px"></div>
             <label class="wifi-label" for="tfa-code">3. Enter a code from the app to confirm</label>
             <input class="sinput wifi-field" type="text" id="tfa-code" placeholder="6-digit code" inputmode="numeric" style="margin-bottom:8px">
@@ -1453,7 +1471,7 @@ async function tfaSetup(){
   document.getElementById('tfa-codes').innerHTML=(d.recovery||[]).join('<br>');
   document.getElementById('tfa-setup').style.display='block';
   document.getElementById('tfa-off').style.display='none';
-  tfaMsg('Not on yet — enter a code from your app to confirm.',true);
+  tfaMsg('Not on yet. Enter a code from your app to confirm.',true);
 }
 async function tfaEnable(){
   const code=document.getElementById('tfa-code').value.trim();
@@ -1612,7 +1630,16 @@ function ping(){
   clearTimeout(_pingTimer);
   _pingTimer=setTimeout(ping,3000);
 }
-function send(o){ if(ws&&ws.readyState===1) ws.send(JSON.stringify(o)); }
+// Returns false when the socket is not open, so callers can tell the truth.
+// This used to be a silent no-op: during a WiFi blip (reconnect backoff runs
+// up to 15s) sendPaste/fhSend/combos toasted "Sent" AND cleared the input, so
+// the user's typed text was destroyed while the connection pill next to it
+// said "Reconnecting". Every caller that reports success or clears a field
+// now gates on this return value.
+function send(o){
+  if(ws&&ws.readyState===1){ ws.send(JSON.stringify(o)); return true; }
+  return false;
+}
 function onMsg(d){
   if(d.type==='pong'){
     const ms=Date.now()-_pt;
@@ -2036,7 +2063,13 @@ document.addEventListener('keydown',e=>{
 
 document.addEventListener('keyup',e=>{
   if(!captured) return;
-  if(_overEditable(e.target)) return;   // S3: matches the keydown guard above
+  if(_overEditable(e.target)){
+    // Focus moved into a local input while a key was still down. The keydown
+    // already went to the target, so returning here left it held there. Let
+    // the release through for anything we know is down, then bail as before.
+    if(_heldKeys.has(e.code)) _sendUp(e.code);
+    return;   // S3: otherwise matches the keydown guard above
+  }
   if(e.code==='Escape'){
     clearTimeout(_escHoldTimer);          // released before the hold fired = a tap
     _escDown=0;
@@ -2452,14 +2485,14 @@ async function screenAreaDetect(){
     if(!d.ok){ toast(d.error||'Detect failed'); return; }
     const t=d.detected, b=t.bars_px||{}, br=t.bars_raw||b;
     if(d.fills_frame){
-      toast('Target already fills the picture — no calibration needed');
+      toast('Target already fills the picture, no calibration needed');
       return;
     }
     if(!(t && typeof t.x1==='number')){ toast('Detect returned no usable area'); return; }
     if(!confirm('Detected the target screen as '+Math.round((t.x1-t.x0)*100)+'% × '
         +Math.round((t.y1-t.y0)*100)+'% of the picture\n'
-        +'Black bars used — left '+b.left+'px, right '+b.right+'px, top '+b.top+'px, bottom '+b.bottom+'px\n'
-        +'(measured raw: '+br.left+'/'+br.right+'/'+br.top+'/'+br.bottom+' — bars are assumed centred)\n\n'
+        +'Black bars used: left '+b.left+'px, right '+b.right+'px, top '+b.top+'px, bottom '+b.bottom+'px\n'
+        +'(measured raw: '+br.left+'/'+br.right+'/'+br.top+'/'+br.bottom+', bars are assumed centred)\n\n'
         +'Use this for absolute-mouse mapping?')) return;
     const s=await fetch('/api/screen-area',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({action:'set',x0:t.x0,y0:t.y0,x1:t.x1,y1:t.y1})});
@@ -2467,7 +2500,7 @@ async function screenAreaDetect(){
     if(!sd.ok){ toast(sd.error||'Could not save'); return; }
     if(sd.screen_area && typeof sd.screen_area.x1==='number'){ _screenArea=sd.screen_area; }
     _renderScreenArea();
-    toast('Screen area calibrated ✓ — absolute cursor should line up now');
+    toast('Screen area calibrated ✓, absolute cursor should line up now');
   }catch(e){ toast('Detect failed'); }
   finally{ if(btn){ btn.disabled=false; btn.textContent='◳ Detect screen area'; } }
 }
@@ -2541,7 +2574,15 @@ $view.addEventListener('touchend',e=>{
   if(!_moved){
     if(!captured){capture();return;}
     const now=Date.now();
-    if(now-_lastTap<350){send({type:'mousedown',button:0});send({type:'mouseup',button:0});}
+    if(now-_lastTap<350){
+      // The first tap already sent one click, so ONE more completes a
+      // double-click. Sending an extra here and then falling through to the
+      // unconditional click below made three in a row, so the target did a
+      // triple-click (select line) instead of a double-click (select word).
+      send({type:'mousedown',button:0});send({type:'mouseup',button:0});
+      _lastTap=0;            // a third tap opens a fresh double-tap window
+      return;
+    }
     send({type:'mousedown',button:0});send({type:'mouseup',button:0});
     _lastTap=now;
   }
@@ -2636,8 +2677,12 @@ async function fhSend(){
   const txt=inp.value; if(!txt) return;
   const sv=document.getElementById('fh-speed').value;
   toast('Sending…',4000);
-  if(sv==='human'){ await humanTypePaste(txt); }
-  else { const spd=parseFloat(sv); send({type:'paste',text:txt,delay:spd}); await sleep(txt.length*spd*1000+500); }
+  let ok;
+  if(sv==='human'){ ok=await humanTypePaste(txt); }
+  else { const spd=parseFloat(sv); ok=send({type:'paste',text:txt,delay:spd}); if(ok) await sleep(txt.length*spd*1000+500); }
+  // Never clear the box on a failed send: that text is the user's, and during
+  // a WiFi blip this used to destroy it while toasting "Sent".
+  if(!ok){ toast('Not connected, text kept'); return; }
   inp.value=''; toast('Sent ✓');
 }
 document.getElementById('fh-input').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();fhSend();}});
@@ -2685,31 +2730,36 @@ function railTab(name){
 let _cmOpen=false;
 function toggleCombos(){_cmOpen=!_cmOpen;document.getElementById('cmenu').classList.toggle('on',_cmOpen);}
 document.addEventListener('click',e=>{if(!document.getElementById('cwrap').contains(e.target)){_cmOpen=false;document.getElementById('cmenu').classList.remove('on');}});
-function combo(codes){send({type:'combo',codes});_cmOpen=false;document.getElementById('cmenu').classList.remove('on');toast(codes.join('+'));}
+function combo(codes){const ok=send({type:'combo',codes});_cmOpen=false;document.getElementById('cmenu').classList.remove('on');toast(ok?codes.join('+'):'Not connected');}
 
 // Paste (human-jitter mode)
 async function humanTypePaste(txt){
   // Break into chunks to avoid WS flooding; each char gets random delay
   for(const ch of txt){
-    send({type:'paste',text:ch,delay:0});
+    // Bail the moment the socket drops instead of silently discarding the
+    // rest of the text and still reporting success.
+    if(!send({type:'paste',text:ch,delay:0})) return false;
     // Base delay 90-220ms, longer after spaces/punctuation
     const base=90+Math.random()*130;
     const extra=(ch===' '||ch==='\n'||ch===','||ch==='.')?Math.random()*280:
                  (ch==='\t')?Math.random()*100:0;
     await sleep(base+extra);
   }
+  return true;
 }
 async function sendPaste(){
   const txt=document.getElementById('pinput').value; if(!txt) return;
   const sv=document.getElementById('speedsel').value;
   toast('Sending…',5000);
+  let ok;
   if(sv==='human'){
-    await humanTypePaste(txt);
+    ok=await humanTypePaste(txt);
   } else {
     const spd=parseFloat(sv);
-    send({type:'paste',text:txt,delay:spd});
-    await sleep(txt.length*spd*1000+500);
+    ok=send({type:'paste',text:txt,delay:spd});
+    if(ok) await sleep(txt.length*spd*1000+500);
   }
+  if(!ok){ toast('Not connected, text kept'); return; }
   document.getElementById('pinput').value=''; toast('Sent ✓');
 }
 document.getElementById('pinput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendPaste();}});
@@ -2906,9 +2956,9 @@ function _webrtcFallbackToMjpeg(reason){
       _webrtcRetries++;
       _webrtcGaveUp = false;   // next /api/status poll re-attempts WebRTC
     }, _WEBRTC_REARM_MS);
-    if(_webrtcRetries === 0) toast('Video dropped to MJPEG — retrying WebRTC…');
+    if(_webrtcRetries === 0) toast('Video dropped to MJPEG, retrying WebRTC…');
   } else {
-    toast('WebRTC unstable on this link — staying on MJPEG');
+    toast('WebRTC unstable on this link, staying on MJPEG');
     // Budget spent: instead of stranding on MJPEG for the rest of the session,
     // decay the latch. After a longer cooldown, refill the budget and clear the
     // give-up flag so a link that has since recovered re-attempts h264 on the
@@ -3145,7 +3195,8 @@ function startWebRTC(){
             // gesture first (toggleAudioMute() below is that gesture).
             if(track.kind === 'audio'){
               document.getElementById('audio-btn').style.display = 'flex';
-              document.getElementById('fh-audio-btn').style.display = '';
+              const _fab = document.getElementById('fh-audio-btn');
+              if(_fab) _fab.style.display = '';   // element is optional
             }
           },
           // Mid-session drop handling. A weak link can kill the ICE/WebRTC
@@ -3552,7 +3603,19 @@ async function piPower(a){
 
 // Tailscale
 let _tsUrl='';
-async function tsRefresh(){try{const r=await fetch('/api/tailscale');const d=await r.json();renderTs(d);}catch(e){}}
+async function tsRefresh(){
+  try{
+    const r=await fetch('/api/tailscale');
+    renderTs(await r.json());
+  }catch(e){
+    // Show the failure instead of leaving a stale (or, on first load, empty)
+    // card that looks authoritative.
+    const t=document.getElementById('ts-tag');
+    if(t){t.textContent='Unavailable';t.className='tag tag-err';}
+    ['ts-install','ts-login','ts-connected','ts-stopped']
+      .forEach(id=>{const e=document.getElementById(id);if(e)e.style.display='none';});
+  }
+}
 function renderTs(d){
   const inst=document.getElementById('ts-install');
   const login=document.getElementById('ts-login');
@@ -3645,6 +3708,11 @@ function wifiEdit(btn){
   document.getElementById('wifi-ssid').value=name;
   document.getElementById('wifi-psk').value='';
   document.getElementById('wifi-psk').type='password';
+  // These inputs live inside <details id="wifi-add-acc">, which ships closed.
+  // Content in a closed <details> is not rendered, so the focus below was a
+  // no-op and the user was told to type into a form that was not on screen.
+  const acc=document.getElementById('wifi-add-acc');
+  if(acc){ acc.open=true; acc.scrollIntoView({block:'nearest',behavior:'smooth'}); }
   document.getElementById('wifi-psk').focus();
   toast('Editing "'+name+'", enter new password and click Save');
 }
@@ -4187,7 +4255,7 @@ function renderClips(){
 }
 function clipAdd(){const name=document.getElementById('clip-name').value.trim(),text=document.getElementById('clip-text').value;if(!name||!text){toast('Enter label + text');return;}_clips.push({name,text});localStorage.setItem('mb_clips',JSON.stringify(_clips));document.getElementById('clip-name').value='';document.getElementById('clip-text').value='';renderClips();toast('Clip saved ✓');}
 function clipDel(i){_clips.splice(i,1);localStorage.setItem('mb_clips',JSON.stringify(_clips));renderClips();}
-async function clipSend(i){const sv=document.getElementById('speedsel').value;if(sv==='human'){await humanTypePaste(_clips[i].text);}else{send({type:'paste',text:_clips[i].text,delay:parseFloat(sv)||0.02});}toast('Sent: '+_clips[i].name);}
+async function clipSend(i){const sv=document.getElementById('speedsel').value;let ok;if(sv==='human'){ok=await humanTypePaste(_clips[i].text);}else{ok=send({type:'paste',text:_clips[i].text,delay:parseFloat(sv)||0.02});}toast(ok?('Sent: '+_clips[i].name):'Not connected');}
 
 let _macros=JSON.parse(localStorage.getItem('mb_macros')||'[]');
 function renderMacros(){
