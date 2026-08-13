@@ -473,7 +473,19 @@ if need_main:
 if need_adm:
     a["password_hash"] = h
     a.setdefault("secret_key", secrets.token_hex(32))
-json.dump(c, open(p, "w"), indent=2)
+# Temp file + replace, matching the PYBACKFILL block above. A plain
+# open(p,"w") truncates config.json the instant it opens, so an interrupted
+# write (power loss, ENOSPC, Ctrl-C) leaves it unparseable. That is not a
+# recoverable inconvenience here: stealth-dashboard.py's _load() swallows the
+# parse error and returns {}, then _ensure_defaults writes back a config
+# holding ONLY auth.*, silently discarding the USB HID identity, the MAC
+# spoof, the EDID profile and the mDNS alias. The device would come back up
+# detectable, with the installer still reporting success.
+_tmp = p + ".new"
+with open(_tmp, "w") as _fh:
+    json.dump(c, _fh, indent=2)
+os.replace(_tmp, p)
+os.chmod(p, 0o600)   # os.replace takes the temp file's mode, not the old one
 # Line 1 = the password, line 2 = WHICH logins it actually opens. Only one slot
 # can need filling (an owner who set the web password but left the admin panel
 # on its default), and telling them "MagicBridge web login" for a password that
@@ -893,7 +905,33 @@ echo -e "  ${BOLD}${GREEN}Password${NC}          ${BOLD}${MB_GEN_PW}${NC}   (uni
 echo -e "                    ${MB_PW_NOTE}"
 echo -e "                    also saved to ${MB_BOOTP}/magicbridge-password.txt"
 else
-echo -e "  ${BOLD}Password${NC}          unchanged (this unit already had one set)"
+# Do NOT imply this unit is safe. A background self-update deliberately
+# leaves an existing password alone, including a published default, so
+# "already had one set" read like reassurance on exactly the units that
+# were still wide open. Say which case it actually is.
+if [[ -f "$CONFIG_DIR/config.json" ]] && python3 - "$CONFIG_DIR/config.json" <<'PYCHK'
+import hashlib, json, sys
+try:
+    a = json.load(open(sys.argv[1])).get("auth", {})
+except Exception:
+    sys.exit(1)
+h = a.get("main_password_hash", "")
+if not h:
+    sys.exit(1)
+if h == "sha256:" + hashlib.sha256(b"magicbridge").hexdigest():
+    sys.exit(0)
+try:
+    import bcrypt
+    sys.exit(0 if bcrypt.checkpw(b"magicbridge", h.encode()) else 1)
+except Exception:
+    sys.exit(1)
+PYCHK
+then
+echo -e "  ${BOLD}${RED}Password${NC}          ${BOLD}still the public default 'magicbridge'${NC}"
+echo -e "                    Change it now: open the UI, Settings, System, Account."
+else
+echo -e "  ${BOLD}Password${NC}          unchanged (this unit already has its own)"
+fi
 fi
 echo ""
 LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "?")
@@ -904,7 +942,8 @@ warn "C790/tc358743 capture, i2c) — video and the OLED won't work until then."
 echo -e "  ${BOLD}sudo reboot${NC}"
 echo ""
 echo -e "  If this Pi has no saved WiFi network yet, it will boot into a"
-echo -e "  setup hotspot named ${BOLD}MagicBridge-Setup${NC}. Connect to it and follow"
+echo -e "  setup hotspot named ${BOLD}Setup-XXXX${NC} (exact name is on the OLED).
+  Connect to it and follow"
 echo -e "  the on-screen steps to join your WiFi."
 echo ""
 echo -e "  After reboot, connect BOTH cables to the target computer:"

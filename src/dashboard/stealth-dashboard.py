@@ -140,10 +140,12 @@ EDID_DEFAULTS = {
 LOG_SOURCES = {
     "auth":      AUTH_LOG,
     "sessions":  SESS_LOG,
-    "nginx":     "/var/log/nginx/access.log",
-    "nginx-err": "/var/log/nginx/error.log",
+    "nginx":     f"{RAM_LOG_DIR}/nginx-access.log",
+    "nginx-err": f"{RAM_LOG_DIR}/nginx-error.log",
     "system":    "/var/log/syslog",
-    "magicbridge": "/var/log/magicbridge.log",
+    # journalctl, not a file: the backend logs to the journal and the old
+    # /var/log/magicbridge.log has been empty since the tmpfs move.
+    "magicbridge": "@journal:magicbridge",
 }
 
 # Auth logging
@@ -971,7 +973,7 @@ def _apply_leds(enabled: bool) -> dict:
 
 def _kvm_last() -> dict:
     try:
-        r = subprocess.run(["grep","-v","/stealth","/var/log/nginx/access.log"],
+        r = subprocess.run(["grep","-v","/stealth",f"{RAM_LOG_DIR}/nginx-access.log"],
                            capture_output=True, text=True)
         lines = [l for l in r.stdout.splitlines() if l.strip()]
         if not lines: return None
@@ -986,6 +988,11 @@ def _kvm_last() -> dict:
 def _tail_log(source: str, n: int = 50) -> str:
     path = LOG_SOURCES.get(source, AUTH_LOG)
     try:
+        if path.startswith("@journal:"):
+            r = subprocess.run(["journalctl", "-u", path.split(":", 1)[1],
+                                "-n", str(n), "--no-pager"],
+                               capture_output=True, text=True, timeout=10)
+            return r.stdout or "(no journal entries)"
         return subprocess.run(["tail", f"-{n}", path],
                               capture_output=True, text=True).stdout
     except Exception:

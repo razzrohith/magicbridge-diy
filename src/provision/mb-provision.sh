@@ -3,7 +3,7 @@
 #  MagicBridge WiFi Provisioning AP
 #
 #  Runs as a systemd service (mb-provision.service) on every boot.
-#  Starts a hostapd access point "MagicBridge-Setup" whenever the Pi
+#  Starts a hostapd access point "Setup-XXXX" (per-unit, see AP_SSID) whenever the Pi
 #  has no working network connection (first-time setup, or later if
 #  it's moved somewhere its saved WiFi isn't in range), serves a
 #  captive-portal setup page, then hands off to NetworkManager and
@@ -12,7 +12,7 @@
 #  so moving this to a new location just means going through the same
 #  setup-hotspot flow again instead of losing wireless access to it.
 #
-#  Credentials: SSID "MagicBridge-Setup"  (no password)
+#  Credentials: SSID "Setup-XXXX"  (no password; exact name shown on the OLED)
 #  Portal: http://192.168.73.1/ (opened by captive detection)
 # ============================================================
 set -e
@@ -246,16 +246,29 @@ fi
 
 echo "[$(date)] Portal exited (code $PORTAL_EXIT)"
 
-# Tear down AP
-pkill -F /tmp/mb-hostapd.pid 2>/dev/null || true
-pkill -F /tmp/mb-dnsmasq.pid 2>/dev/null || true
-iptables -t nat -F PREROUTING 2>/dev/null || true
-# Drop the captive-DNS allows we added for the AP window. Looped because a
-# retried provisioning run can insert them more than once, and they must not
-# survive into normal operation.
-while iptables -D INPUT -i "$AP_IFACE" -p udp --dport 53 -j ACCEPT 2>/dev/null; do :; done
-while iptables -D INPUT -i "$AP_IFACE" -p tcp --dport 53 -j ACCEPT 2>/dev/null; do :; done
-ip addr flush dev "$AP_IFACE" 2>/dev/null || true
+# Tear down AP. Runs from the EXIT/INT/TERM trap armed below as well as inline,
+# so a systemd timeout or a signal mid-portal can never leave the unit stranded
+# on a half-configured hotspot. Once-only via AP_TORNDOWN.
+AP_TORNDOWN=0
+ap_teardown() {
+    [ "$AP_TORNDOWN" = "1" ] && return 0
+    AP_TORNDOWN=1
+    pkill -F /tmp/mb-hostapd.pid 2>/dev/null || true
+    pkill -F /tmp/mb-dnsmasq.pid 2>/dev/null || true
+    iptables -t nat -F PREROUTING 2>/dev/null || true
+    # Drop the captive-DNS allows we added for the AP window. Looped because a
+    # retried provisioning run can insert them more than once, and they must not
+    # survive into normal operation.
+    while iptables -D INPUT -i "$AP_IFACE" -p udp --dport 53 -j ACCEPT 2>/dev/null; do :; done
+    while iptables -D INPUT -i "$AP_IFACE" -p tcp --dport 53 -j ACCEPT 2>/dev/null; do :; done
+    ip addr flush dev "$AP_IFACE" 2>/dev/null || true
+    # Put back what we stopped to free :80 and :53, or the unit comes up with no
+    # web UI and no name resolution and looks bricked.
+    [ "${NGINX_WAS_ACTIVE:-0}" = "1" ] && systemctl start nginx 2>/dev/null || true
+    systemctl start dnsmasq 2>/dev/null || true
+}
+trap ap_teardown EXIT INT TERM
+ap_teardown
 # Mirror a human-readable report onto the FAT boot partition. THIS IS THE
 # ESCAPE HATCH: a unit that has neither WiFi nor a working hotspot is otherwise
 # unreachable, and its ext4 logs can't be read on Windows/macOS (wsl --mount

@@ -5,12 +5,13 @@
 
  WHY THIS EXISTS
  A unit that fails first-boot only exists on its OWN access point
- ("MagicBridge-Setup", 192.168.73.1). To reach it you must join that hotspot -
+ ("Setup-XXXX", the exact name is shown on the OLED; 192.168.73.1).
+ To reach it you must join that hotspot -
  which cuts your laptop's internet, so you cannot ask for help while connected.
  This script is fully OFFLINE and self-contained: join the hotspot, run it, it
  writes a report to a FILE, then you rejoin your normal WiFi and share the file.
 
- USAGE (PowerShell, from your laptop, while joined to MagicBridge-Setup):
+ USAGE (PowerShell, from your laptop, while joined to the Setup-XXXX hotspot):
      powershell -ExecutionPolicy Bypass -File mb-rescue.ps1
      powershell -ExecutionPolicy Bypass -File mb-rescue.ps1 -Fix
 
@@ -34,7 +35,7 @@ Say "MagicBridge rescue - target $PiIp  (report -> $Report)"
 # --- reachability ----------------------------------------------------------
 if (-not (Test-Connection -ComputerName $PiIp -Count 2 -Quiet -ErrorAction SilentlyContinue)) {
   Say "ERROR: $PiIp is not reachable."
-  Say "  Are you joined to the 'MagicBridge-Setup' WiFi? (it has no password)"
+  Say "  Are you joined to the 'Setup-XXXX' WiFi shown on the OLED? (no password)"
   Say "  Windows may warn 'no internet' - that is expected, stay connected."
   exit 1
 }

@@ -215,6 +215,36 @@ def _check_pw(pw: str, stored: str) -> bool:
     raw = stored[len("sha256:"):] if stored.startswith("sha256:") else stored
     return hmac.compare_digest(hashlib.sha256(pw.encode()).hexdigest(), raw)
 
+_defpw_cache = (None, False)   # (hash we judged, verdict)
+
+def _using_default_pw() -> bool:
+    """True while this device still accepts the password published in the repo.
+
+    Units installed before per-unit passwords existed are still on
+    "magicbridge", and a background self-update deliberately does NOT rotate it
+    (silently changing a working password would strand the owner). So the only
+    thing that can save those owners is being told, and nothing was: the login
+    page pointed at a magicbridge-password.txt that path never writes, and the
+    installer summary said "unchanged (this unit already had one set)", which
+    reads like reassurance. Anyone on the same network can type one published
+    word and get full keyboard and mouse control of the target.
+
+    Keyed on the stored hash, not a TTL: bcrypt costs ~100ms on a Pi 4 and this
+    runs per login render, but the answer only changes when the hash does."""
+    global _defpw_cache
+    try:
+        h = _auth_cfg().get("main_password_hash", "")
+    except Exception:
+        return False
+    if _defpw_cache[0] == h:
+        return _defpw_cache[1]
+    try:
+        v = _check_pw(DEFAULT_PASSWORD, h)
+    except Exception:
+        v = False
+    _defpw_cache = (h, v)
+    return v
+
 def _make_token(secret: str, ttl: int = SESSION_TIMEOUT, epoch: int = 0) -> str:
     """Signed session token that carries its OWN lifetime, so "Remember this
     device" can mint a long-lived session with no extra server-side store.
@@ -639,6 +669,8 @@ button:active{transform:scale(.98)}
 @keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-4px)}
   40%{transform:translateX(4px)}60%{transform:translateX(-3px)}80%{transform:translateX(3px)}}
 .foot{margin-top:1.5rem;text-align:center;font-size:10px;color:#6f93a8;letter-spacing:.02em}
+.hint.warn{background:rgba(244,63,94,.1);border-color:rgba(244,63,94,.4);color:#fca5b4}
+.hint.warn b{color:#fda4af}
 .hint{margin-top:1.1rem;padding:9px 11px;background:rgba(34,211,238,.06);
   border:1px solid rgba(140,220,255,.14);border-radius:9px;
   font-size:11px;line-height:1.45;color:#a9cfe0;text-align:center}
@@ -675,7 +707,7 @@ __TOTP__
 <label class="rmb"><input type="checkbox" name="remember" value="1">Remember this device for 30 days</label>
 <button type="submit">Unlock MagicBridge</button>
 </form>
-<div class="hint">First sign-in? Your password is in <code>magicbridge-password.txt</code> on the SD card.</div>
+__HINT__
 <div class="foot">Self-hosted KVM-over-IP · this device only</div>
 </div></main></body></html>"""
 
@@ -684,6 +716,19 @@ def _login_page(error: str = "", status: int = 200) -> web.Response:
     """Render the login page, showing the 2FA field only when 2FA is on."""
     html = LOGIN_HTML.replace(
         "__ERROR__", f'<div class="err">{error}</div>' if error else "")
+    # A unit still on the published password gets told so, every single sign-in,
+    # instead of the first-run hint. Naming the password is not a leak: it is in
+    # the public repo, and the person reading this screen is the one who needs to
+    # act on it.
+    if _using_default_pw():
+        html = html.replace("__HINT__",
+            '<div class="hint warn"><b>This device still uses the default password '
+            f'&ldquo;{DEFAULT_PASSWORD}&rdquo;.</b> It is public. Anyone on this network '
+            'can take over the target. Change it in Settings, System, Account.</div>')
+    else:
+        html = html.replace("__HINT__",
+            '<div class="hint">First sign-in? Your password is in '
+            '<code>magicbridge-password.txt</code> on the SD card.</div>')
     if _totp_enabled():
         html = html.replace("__TOTP__",
             '<label for="code">2FA code</label>'
@@ -1752,6 +1797,10 @@ async def api_status(request: web.Request) -> web.Response:
         "mem_used_gb":  health["mem_used_gb"],
         "mem_total_gb": health["mem_total_gb"],
         "services":     health["services"],
+        # Owner-facing warning, not a secret: an owner who ticked "remember this
+        # device for 30 days" will not see the login page again for a month, so
+        # the login-page warning alone would never reach them.
+        "default_pw":   _using_default_pw(),
     })
 
 
@@ -2181,7 +2230,14 @@ async def api_tailscale_get(request):
                             ip = ri.stdout.strip().split()[0]
                     except Exception:
                         pass
-                elif backend in ("NeedsLogin", "NoState", "Stopped"):
+                elif backend in ("NeedsLogin", "NoState"):
+                    # "Stopped" deliberately excluded. It means the node IS
+                    # logged in and was taken down on purpose, and `tailscale
+                    # up` below would bring it straight back: pressing
+                    # Disconnect reconnected the node ~2s later when the UI
+                    # refreshed, and the same thing fired on every page load.
+                    # A GET must not change device state; the login URL is
+                    # fetched by the explicit POST action:"login" instead.
                     try:
                         rl = subprocess.run(
                             ["tailscale", "up", "--timeout=2s"],
@@ -2203,6 +2259,11 @@ async def api_tailscale_get(request):
     return web.json_response({
         "installed": True, "connected": connected,
         "ip": ip, "login_url": login_url,
+        # renderTs() has always branched on this to show the "Stopped, Connect"
+        # card, but nothing ever sent it, so that card was dead markup and a
+        # stopped node fell through to the "Get Login Link" panel instead of
+        # offering the one button that actually helps.
+        "logged_in": backend in ("Running", "Stopped"),
         "status": backend
     })
 

@@ -200,6 +200,17 @@ body:not(.fs) .fs-hud{display:none!important}
   box-shadow:0 0 6px rgba(0,0,0,.5)}
 #cur-dot.cross{border-radius:0;width:16px;height:16px;
   background:transparent;border:none;box-shadow:none;outline:none}
+#pwwarn{position:fixed;top:calc(var(--topH) + 6px);left:50%;transform:translateX(-50%);
+  z-index:900;max-width:min(680px,94vw);padding:8px 13px;border-radius:8px;
+  background:rgba(244,63,94,.14);border:1px solid rgba(244,63,94,.45);
+  color:#fca5b4;font-size:12px;line-height:1.45;
+  display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:center;
+  box-shadow:0 8px 28px rgba(0,0,0,.5)}
+#pwwarn b{color:#fda4af}
+#pwwarn button{flex:none;padding:4px 10px;border-radius:6px;cursor:pointer;
+  background:rgba(244,63,94,.22);border:1px solid rgba(244,63,94,.5);
+  color:#ffe4e6;font-size:11px;font-weight:600}
+#pwwarn button:hover{background:rgba(244,63,94,.32)}
 #hint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
   background:rgba(0,0,0,.55);backdrop-filter:blur(8px);
   border:1px solid rgba(255,255,255,.1);border-radius:20px;
@@ -555,9 +566,19 @@ body:not(.fs) .fs-hud{display:none!important}
   .vk.spc{flex:1 1 120px;max-width:none}
   .vk.fn{height:25px;font-size:8.5px}
 
+  /* Fullscreen HUD: #fshud is position:fixed with no max-width and no wrap,
+     so on a ~375px phone the status dot sits off-screen and the Exit button is
+     a sliver at the edge. Mirrors the .fs-hud rule above. */
+  #fshud{max-width:96vw;flex-wrap:wrap;row-gap:6px;justify-content:center}
+
+  /* The bottom bar splits width 50/50 with an empty spacer, leaving the
+     "Paste to remote PC" field about 72px wide on a 375px phone. Nothing is in
+     the spacer at this size, so drop it and give the field the row. */
+  #bsp{display:none}
+
   /* Idle capture hint: 86 chars at nowrap renders ~450-490px wide inside an
      overflow:hidden #view, so it was sliced off at both edges under ~400px. */
-  #hint{max-width:92vw;white-space:normal;text-align:center;line-height:1.45}
+  #hint{width:max-content;max-width:92vw;white-space:normal;text-align:center;line-height:1.45}
 }
 </style>
 </head>
@@ -1397,6 +1418,13 @@ body:not(.fs) .fs-hud{display:none!important}
   </div>
 </div>
 
+<!-- Shown only while the device still accepts the password published in the
+     repo. An owner who ticked "remember this device for 30 days" never sees the
+     login page, so the login-page warning alone would not reach them. -->
+<div id="pwwarn" style="display:none">
+  <b>Default password in use.</b> It is public. Anyone on this network can take over the target.
+  <button onclick="showTab('system')">Change it</button>
+</div>
 <div id="toast"></div>
 
 <!-- WebRTC (C790/H.264) client libs - additive, only used when Transport is
@@ -3307,7 +3335,7 @@ function stopWebRTC(){
   if(abtn){ abtn.style.display = 'none'; abtn.textContent = '🔇'; }
   if(fabtn){ fabtn.style.display = 'none'; fabtn.textContent = '🔇 Audio'; }
 }
-function dispWinP(){send({type:'combo',codes:['MetaLeft','KeyP']});toast('Win+P →');}
+function dispWinP(){const ok=send({type:'combo',codes:['MetaLeft','KeyP']});toast(ok?'Win+P →':'Not connected');}
 
 // Status
 function durShort(s){ return s>=3600?Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m':s>=60?Math.floor(s/60)+'m':(s|0)+'s'; }
@@ -3496,7 +3524,14 @@ function applyPowerHealth(d){
   _phSvcPill('ph-svc-us', d.stream?!!d.stream.running:null);
 }
 async function refreshStatus(){
-  try{const r=await fetch('/api/status');const d=await r.json();applyStatus(d);}catch(e){}
+  try{
+    const r=await fetch('/api/status');const d=await r.json();
+    applyStatus(d);
+    // Hidden while capturing: it would sit on top of the video the operator is
+    // working in. It comes straight back the moment they release.
+    const w=document.getElementById('pwwarn');
+    if(w) w.style.display=(d.default_pw && !captured)?'flex':'none';
+  }catch(e){}
 }
 
 // Screenshot - pure client-side canvas grab of whichever element is
