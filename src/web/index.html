@@ -211,6 +211,9 @@ body:not(.fs) .fs-hud{display:none!important}
   background:rgba(244,63,94,.22);border:1px solid rgba(244,63,94,.5);
   color:#ffe4e6;font-size:11px;font-weight:600}
 #pwwarn button:hover{background:rgba(244,63,94,.32)}
+#pwwarn button.pw-x{padding:4px 8px;background:transparent;border-color:transparent;
+  color:#fca5b4;font-size:13px;line-height:1}
+#pwwarn button.pw-x:hover{background:rgba(244,63,94,.22)}
 #hint{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);
   background:rgba(0,0,0,.55);backdrop-filter:blur(8px);
   border:1px solid rgba(255,255,255,.1);border-radius:20px;
@@ -1423,7 +1426,8 @@ body:not(.fs) .fs-hud{display:none!important}
      login page, so the login-page warning alone would not reach them. -->
 <div id="pwwarn" style="display:none">
   <b>Default password in use.</b> It is public. Anyone on this network can take over the target.
-  <button onclick="showTab('system')">Change it</button>
+  <button onclick="pwChangeNow()">Change it</button>
+  <button class="pw-x" onclick="dismissPwWarn()" aria-label="Dismiss">✕</button>
 </div>
 <div id="toast"></div>
 
@@ -1957,6 +1961,7 @@ function _setCaptured(on){
   if(captured){
     const r=$view.getBoundingClientRect(); _cx=r.width/2; _cy=r.height/2;
     hideRecapture();
+    if(typeof dismissPwWarn==='function') dismissPwWarn();   // never let the notice cover the video mid-session
     setSidebarForControl(true);   // keep the sidebar/layout - control in-window, no zoom; use ⛶ to go big
     // Clean slate on (re)capture: clears any button left stuck from before -
     // so re-clicking the stream recovers from an autoscroll-stuck middle button.
@@ -2436,7 +2441,10 @@ document.addEventListener('wheel',e=>{
   if(!captured) return;
   if(_overUI(e)) return;                   // let our own panels scroll normally
   e.preventDefault();
-  _scrollDX+=e.deltaX; _scrollDY+=e.deltaY; _scrollPending=true; _queueMouse();   // coalesced in _flushMouse (one send/frame)
+  // Inverted ("natural") scrolling: the wheel/trackpad direction is flipped on
+  // both axes before it reaches the target, so pushing the wheel up scrolls the
+  // remote page up. Requested by the operator; flip the signs here to revert.
+  _scrollDX-=e.deltaX; _scrollDY-=e.deltaY; _scrollPending=true; _queueMouse();   // coalesced in _flushMouse (one send/frame)
 },{passive:false});
 document.addEventListener('contextmenu',e=>{
   if(!captured) return;
@@ -2466,15 +2474,14 @@ function setCursor(c){
 // style other than Arrow is treated as a deliberate override and is honoured
 // even while captured.
 function _applyViewCursor(){
-  // Show OUR cursor unless the operator explicitly picked "Hidden".
-  // This used to auto-hide in absolute mode on the theory that the target draws
-  // its own 1:1 pointer, so two arrows only look mismatched. That reasoning
-  // holds ONLY when the target's pointer is actually visible in the capture. It
-  // often is not: on an extended desktop the target's cursor lives on the other
-  // monitor, and some targets hide the pointer when idle. Auto-hiding then left
-  // NO cursor at all and control felt dead. Being able to see where you are
-  // pointing beats avoiding a second arrow, so hiding is now opt-in via the
-  // Mouse Cursor buttons rather than automatic.
+  // While actually controlling, never draw our local arrow over the video. The
+  // target renders its own pointer (absolute mode maps 1:1 onto it), so a
+  // second local arrow just reads as a mismatched duplicate cursor. Requested
+  // directly by the operator: they want to see ONLY the target's own cursor.
+  // It returns the instant control is released, so you can still see where you
+  // are aiming to click back in. In relative mode the predictive dot (#cur-dot)
+  // remains the pointing indicator under pointer lock.
+  if(captured){ $view.style.cursor='none'; return; }
   $view.style.cursor = (_cursorStyle==='dot' || _cursorStyle==='none') ? 'none' : _cursorStyle;
 }
 function toggleOverlay(on){
@@ -3122,28 +3129,38 @@ function startWebRTC(){
               if(vid._mbConfirmPlaying){
                 vid.removeEventListener('playing', vid._mbConfirmPlaying);
                 vid.removeEventListener('loadeddata', vid._mbConfirmPlaying);
+                vid._mbConfirmPlaying = null;
               }
               if(vid._mbConfirmTimer){ clearInterval(vid._mbConfirmTimer); }
-              let _confirmTries = 0;
+              // GREEN-STARTUP FIX. Reveal the <video> only when the picture is
+              // CLEAN, not on the first frame. For the first 1-2s of a WebRTC
+              // connection ICE is still pruning dead candidate pairs, and Janus's
+              // failed sends on those pairs ("only sent -1 bytes" in its log)
+              // drop RTP, so the raw h264 decodes as green bands that crawl top
+              // to bottom until a keyframe refreshes them. The opaque #nosig
+              // "Connecting" overlay (z-index above the video) stays up covering
+              // that, and we lift it only once ICE is connected/completed AND
+              // pixels have been arriving steadily for ~1 keyframe interval
+              // (GOP is ~1s), so the first frame the operator actually sees is a
+              // clean one. The old trigger (first videoWidth>0) fired on the
+              // first, usually-green, frame - which is exactly what was on screen.
+              let _confirmTries = 0, _stable = 0;
+              const _STABLE_NEEDED = 4;   // ~1s at 250ms: covers one GOP + margin
               const _confirmTimer = setInterval(function(){
                 if(gen !== _webrtcGen){ clearInterval(_confirmTimer); return; }
-                if(vid.videoWidth > 0){
+                const _pc = _janusHandle && _janusHandle.webrtcStuff && _janusHandle.webrtcStuff.pc;
+                const _iceOk = _pc && (_pc.iceConnectionState==='connected'
+                                    || _pc.iceConnectionState==='completed'
+                                    || _pc.connectionState==='connected');
+                if(vid.videoWidth > 0 && _iceOk){ _stable++; } else { _stable = 0; }
+                if(_stable >= _STABLE_NEEDED){
                   _confirmed();
                   clearInterval(_confirmTimer);
-                } else if(++_confirmTries > 60){   // ~15s, outlives the 8s timer
+                } else if(++_confirmTries > 80){   // ~20s hard cap; the fallback timer then acts
                   clearInterval(_confirmTimer);
                 }
               }, 250);
               vid._mbConfirmTimer = _confirmTimer;
-              const confirmPlaying = function(){
-                if(vid.videoWidth > 0){
-                  _confirmed();
-                  clearInterval(_confirmTimer);
-                }
-              };
-              vid._mbConfirmPlaying = confirmPlaying;
-              vid.addEventListener('playing', confirmPlaying);
-              vid.addEventListener('loadeddata', confirmPlaying);
               // Video-FPS readout for the WebRTC path. The "s-vfps" pill is fed
               // from MJPEG <img> onload times, which never fire on WebRTC, so it
               // was stuck at "-". Poll the receiver's inbound-rtp stats instead.
@@ -3527,11 +3544,42 @@ async function refreshStatus(){
   try{
     const r=await fetch('/api/status');const d=await r.json();
     applyStatus(d);
-    // Hidden while capturing: it would sit on top of the video the operator is
-    // working in. It comes straight back the moment they release.
-    const w=document.getElementById('pwwarn');
-    if(w) w.style.display=(d.default_pw && !captured)?'flex':'none';
+    maybeShowPwWarn(!!d.default_pw);
   }catch(e){}
+}
+
+// Default-password notice. It used to be re-shown on EVERY status poll for as
+// long as the unit was on the default password, so it never went away and the
+// "Change it" button only ran showTab() without opening the collapsed sidebar,
+// so nothing visibly happened. Now it is a one-shot for the session: it appears
+// once (never while capturing, so it can't cover the video), auto-hides after
+// 12s, has a dismiss X, and "Change it" actually opens the password field.
+let _pwwarnDone=false, _pwwarnTimer=null;
+try{ if(sessionStorage.getItem('mb_pwwarn_done')==='1') _pwwarnDone=true; }catch(e){}
+function _pwwarnSeal(){
+  _pwwarnDone=true;
+  try{ sessionStorage.setItem('mb_pwwarn_done','1'); }catch(e){}
+}
+function dismissPwWarn(){
+  clearTimeout(_pwwarnTimer);
+  _pwwarnSeal();
+  const w=document.getElementById('pwwarn'); if(w) w.style.display='none';
+}
+function maybeShowPwWarn(on){
+  const w=document.getElementById('pwwarn'); if(!w) return;
+  if(!on){ w.style.display='none'; return; }          // password changed -> gone for good
+  if(_pwwarnDone || captured) return;                 // already shown this session, or busy controlling
+  w.style.display='flex';
+  _pwwarnSeal();                                       // only ever once per session
+  clearTimeout(_pwwarnTimer);
+  _pwwarnTimer=setTimeout(dismissPwWarn, 12000);
+}
+function pwChangeNow(){
+  dismissPwWarn();
+  if(typeof _sideOpen!=='undefined' && !_sideOpen && typeof toggleSidebar==='function') toggleSidebar();
+  showTab('system');
+  const el=document.getElementById('pw-new1');
+  if(el){ el.scrollIntoView({block:'center',behavior:'smooth'}); setTimeout(()=>{ try{ el.focus(); }catch(e){} }, 250); }
 }
 
 // Screenshot - pure client-side canvas grab of whichever element is

@@ -19,7 +19,17 @@ set -e
 
 FLAG_FILE="/etc/magicbridge/.provisioned"   # informational timestamp only, doesn't gate anything
 WIFI_FILE="/etc/magicbridge/.provision-wifi"
-LOG="/var/log/magicbridge-provision.log"
+# RAM-only, like mb-hdmi-init.log. This log records the WiFi SSIDs the unit set
+# up on, which is location-identifying, and the anonymity model says nothing
+# usage/location-identifying may persist on the SD card. The tmpfs is mounted
+# via fstab at local-fs.target, long before this service (After=NetworkManager)
+# runs, so it is always available here. Falls back to the card path only if the
+# tmpfs somehow is not mounted, so a diagnostic still exists in that rare case.
+if findmnt -rno TARGET /var/log/magicbridge-ram >/dev/null 2>&1; then
+    LOG="/var/log/magicbridge-ram/mb-provision.log"
+else
+    LOG="/var/log/magicbridge-provision.log"
+fi
 # Generic, per-unit setup SSID (B3): the old "MagicBridge-Setup" beaconed the
 # product name over the air (on the real Pi MAC), a branded leak bypassing every
 # USB/HDMI/LAN precaution. A stable "Setup-XXXX" suffix from this unit's
