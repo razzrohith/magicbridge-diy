@@ -347,6 +347,22 @@ if re.search(r'^\s*rtp_port_range\s*=', s, re.M):
                r'\1rtp_port_range = "20000-20100"', s, count=1, flags=re.M)
 else:
     s = re.sub(r'(media:\s*\{)', r'\1\n\trtp_port_range = "20000-20100"', s, count=1)
+# NACK / retransmit tuning for lossy links. The ustreamer plugin already offers
+# nack + nack pli + ccm fir in its SDP (verified in the .so), so the browser can
+# ask for retransmits and keyframes on loss; these tune Janus's side of it.
+#  min_nack_queue = 1000: keep ~1s of sent packets so a retransmit is possible
+#    even for a packet lost a while ago (default is much smaller).
+#  nack_optimizations = true: after a keyframe is sent (which a PLI triggers on
+#    loss), drop pending NACKs for older packets the keyframe already made
+#    irrelevant - avoids piling redundant retransmits onto an already-congested
+#    uplink. Recommended for exactly our weak-link case.
+def _media_set(s, key, val):
+    pat = re.compile(r'^([ \t]*)#?\s*' + re.escape(key) + r'\s*=.*$', re.M)
+    if pat.search(s):
+        return pat.sub(lambda m: m.group(1) + key + ' = ' + val, s, count=1)
+    return re.sub(r'(media:\s*\{)', r'\1\n\t' + key + ' = ' + val, s, count=1)
+s = _media_set(s, 'nack_optimizations', 'true')
+s = _media_set(s, 'min_nack_queue', '1000')
 open(p, "w").write(s)
 print("patched")
 PYEOF

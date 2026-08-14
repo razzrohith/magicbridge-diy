@@ -3228,18 +3228,22 @@ function startWebRTC(){
               // playoutDelayHint is the older Chrome-only name and
               // jitterBufferTarget is the standardised one; browsers without
               // either are unaffected.
-              // A small reorder/late-arrival cushion, NOT zero. We used to pin
-              // this to 0 for minimum latency, which is right on a clean LAN but
-              // wrong on a lossy WiFi/remote link: with no buffer, every packet
-              // that arrives late or out of order is handed straight to the
-              // decoder as corruption, which is a big part of the crawling green
-              // bands. This only delays the VIDEO by _JB_MS; the cursor rides a
-              // separate WebSocket and is unaffected, so the felt control latency
-              // does not change. ~45ms hides typical WiFi jitter while staying
-              // imperceptible as video lag. (A future build can make this adapt
-              // to the measured link instead of a fixed value.)
+              // Reorder + retransmit cushion, NOT zero. We used to pin this to 0
+              // for minimum latency, which is right on a clean LAN but wrong on a
+              // lossy WiFi/remote link. Two reasons it must be non-zero here:
+              //  1. With no buffer, any packet that arrives late or out of order
+              //     is handed straight to the decoder as corruption (green bands).
+              //  2. The Janus plugin DOES support NACK retransmission, but a
+              //     retransmitted packet only arrives ~1 round-trip later. If the
+              //     player is not still holding that frame, the retransmit is
+              //     useless and the loss shows as green anyway. This link's RTT is
+              //     ~40-80ms, so the buffer must be at least that for NACK to
+              //     actually repair losses. 80ms lets most single retransmits land.
+              // This delays only the VIDEO; the cursor rides a separate WebSocket
+              // and is unaffected, so felt CONTROL latency does not change. (A
+              // future build can make this adapt to the measured link/RTT.)
               try{
-                const _JB_MS = 45;
+                const _JB_MS = 80;
                 const pc = _janusHandle && _janusHandle.webrtcStuff && _janusHandle.webrtcStuff.pc;
                 if(pc && pc.getReceivers){
                   pc.getReceivers().forEach(function(r){
