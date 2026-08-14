@@ -818,7 +818,13 @@ class VideoManager:
             "--h264-sink-mode",   "660",
             "--h264-sink-rm",
             "--h264-bitrate",     str(self.bitrate),
-            "--h264-gop",         str(max(1, _eff_fps)),  # ~1s keyframe interval; never 0 (invalid GOP)
+            # ~0.5s keyframe interval (was ~1s). On a lossy link a dropped packet
+            # corrupts the H.264 stream (the green bands) until the next keyframe
+            # refreshes it, so a shorter interval halves how long that corruption
+            # is visible. It also makes each keyframe smaller and the bitrate
+            # smoother (fewer big bursts), which a marginal WiFi uplink tolerates
+            # better. Never 0 (an invalid GOP breaks SPS/IDR pairing).
+            "--h264-gop",         str(max(1, _eff_fps // 2)),
         ]
         try:
             self.process = subprocess.Popen(
