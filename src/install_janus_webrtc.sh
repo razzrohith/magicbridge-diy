@@ -327,6 +327,18 @@ if re.search(r'^\s*ice_ignore_list\s*=', s, re.M):
                r'\1ice_ignore_list = "vmnet,tailscale0"', s, count=1, flags=re.M)
 else:
     s = re.sub(r'(nat:\s*\{)', r'\1\n\tice_ignore_list = "vmnet,tailscale0"', s, count=1)
+# full_trickle: nominate the first working candidate pair immediately instead of
+# waiting for the whole exchange. Chrome hides its host candidates behind mDNS
+# ".local" names; this box cannot resolve them over an L3 link (Tailscale), and
+# each one costs a ~5s resolver timeout. Without full trickle ICE waited on
+# those dead candidates, so WebRTC took ~10s to connect, MJPEG kept streaming
+# at full res the whole time, and that saturated the link/CPU and made the
+# cursor crawl for the first 10s. With it, ICE locks onto the reachable
+# peer-reflexive pair right away and MJPEG hands off fast.
+if re.search(r'^\s*full_trickle\s*=', s, re.M):
+    s = re.sub(r'^(\s*)full_trickle\s*=.*$', r'\1full_trickle = true', s, count=1, flags=re.M)
+else:
+    s = re.sub(r'(nat:\s*\{)', r'\1\n\tfull_trickle = true', s, count=1)
 # media: pin RTP to a known range so the firewall can allow exactly that,
 # instead of relying on a conntrack entry existing for every ephemeral port
 # (INPUT policy is DROP on this unit).

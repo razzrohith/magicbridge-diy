@@ -2231,10 +2231,11 @@ function _videoRect(){
 // motion, and the queue grew the longer you moved = rising latency. rAF batches:
 // absolute keeps only the LATEST position (no stale backlog); relative sums the
 // deltas so nothing is lost, just merged into one report per frame.
-let _absPending=null, _relDX=0, _relDY=0, _relPending=false, _mvRAF=false;
+let _absPending=null, _relDX=0, _relDY=0, _relPending=false, _mvRAF=false, _mvTO=null;
 let _scrollDX=0, _scrollDY=0, _scrollPending=false;
 function _flushMouse(){
   _mvRAF=false;
+  if(_mvTO){ clearTimeout(_mvTO); _mvTO=null; }
   if(_absPending){ send({type:'mousemove_abs',x:_absPending.x,y:_absPending.y}); _absPending=null; }
   if(_relPending){ send({type:'mousemove',dx:_relDX,dy:_relDY}); _relDX=0; _relDY=0; _relPending=false; }
   // Coalesce a burst of wheel events into ONE scroll per frame. A touchpad
@@ -2250,7 +2251,17 @@ function _flushMouse(){
     _scrollPending=false;
   }
 }
-function _queueMouse(){ if(!_mvRAF){ _mvRAF=true; requestAnimationFrame(_flushMouse); } }
+// rAF alone stalled input during the first ~10s after a load: while the page
+// is decoding MJPEG and WebRTC at the same time (until WebRTC connects and
+// MJPEG closes), the compositor is busy and rAF callbacks are delayed well past
+// a frame, so mouse moves piled up unsent and the cursor crawled. A timer flush
+// runs independently of rendering, so input latency stays bounded no matter how
+// janked the paint pipeline is. Whichever fires first sends and cancels the
+// other (see the clears at the top of _flushMouse).
+function _queueMouse(){
+  if(!_mvRAF){ _mvRAF=true; requestAnimationFrame(_flushMouse); }
+  if(!_mvTO){ _mvTO=setTimeout(_flushMouse, 20); }
+}
 // Map a screen position to absolute HID coords (0..32767) over the actual
 // (letterboxed) video area. Returns null if off the video.
 // The TARGET's screen inside the captured frame, as fractions (see
