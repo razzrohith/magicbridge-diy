@@ -779,6 +779,34 @@ if [[ ! -f "$NM_PS" ]] || ! grep -q "wifi.powersave = 2" "$NM_PS" 2>/dev/null; t
     ok "Wi-Fi power-save disabled (latency jitter fix)"
 fi
 
+# ── Wi-Fi latency dispatcher: enforce power-save OFF live + fq_codel on wlan0 ──
+# The NM drop-in above sets the policy, but a `reload` does not re-apply it to an
+# already-active connection, so the radio can keep parking until the next
+# reconnect. This dispatcher forces it OFF for real on every wlan0 up/change, and
+# adds fq_codel so a burst of H.264 cannot balloon the Tx queue (bufferbloat),
+# which shows up on a weak link as green bands that crawl and a cursor that
+# sticks then catches up. Mirrors the PiKVM sibling's mb-wifi-latency approach.
+NM_DISP="/etc/NetworkManager/dispatcher.d/90-mb-wifi-latency"
+mkdir -p /etc/NetworkManager/dispatcher.d
+cat > "$NM_DISP" <<'DISP'
+#!/bin/bash
+# MagicBridge: keep wlan0 low-latency for the KVM path (power-save off + fq_codel).
+IFACE="$1"; ACTION="$2"
+[ "$IFACE" = "wlan0" ] || exit 0
+case "$ACTION" in
+  up|dhcp4-change|dhcp6-change|connectivity-change)
+    iw dev wlan0 set power_save off 2>/dev/null || true
+    tc qdisc replace dev wlan0 root fq_codel 2>/dev/null || true
+  ;;
+esac
+exit 0
+DISP
+chmod 755 "$NM_DISP"
+# Apply once now so the running system benefits without waiting for a reconnect.
+iw dev wlan0 set power_save off 2>/dev/null || true
+tc qdisc replace dev wlan0 root fq_codel 2>/dev/null || true
+ok "Wi-Fi latency dispatcher installed (power-save off + fq_codel on wlan0)"
+
 # ══════════════════════════════════════════════════════════════════════════════
 # 10. SSH
 # ══════════════════════════════════════════════════════════════════════════════

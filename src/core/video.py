@@ -51,7 +51,14 @@ def _clean_divisor_fps(req: int, src: int) -> int:
     if req >= src:
         return src                      # can't exceed the source; 1:1 is ideal
     best = max((d for d in range(1, req + 1) if src % d == 0), default=req)
-    return best if best >= 20 else min(req, src)
+    # Floor was 20, which broke the low-fps presets: for a 50Hz source the
+    # divisors jump 25 -> 10, so any request of 11-24 (the "Low" preset asks 15)
+    # produced best=10, tripped the >=20 floor, and fell back to a RAGGED
+    # min(req,src)=15 (50/15 = 3.33 uneven decimation) - the exact jitter this
+    # function exists to avoid, on the one preset a weak-link operator reaches
+    # for. 10 and 5 are perfectly good clean divisors for a KVM, so only fall
+    # back when there is genuinely no sane divisor near the request.
+    return best if best >= 5 else min(req, src)
 
 
 class VideoManager:
