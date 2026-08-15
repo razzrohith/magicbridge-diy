@@ -926,17 +926,39 @@ class VideoManager:
             "--h264-sink-mode",   "660",
             "--h264-sink-rm",
             "--h264-bitrate",     str(self.bitrate),
-            # 1 second keyframe interval (PiKVM uses the same: gop == fps).
-            # A shorter GOP was tried to shorten visible corruption, but that
-            # only pays off on a LOSSY link, and this path measures 0% packet
-            # loss - the constraint here is BANDWIDTH, not loss. Keyframes are
-            # by far the most expensive frames, so at the low bitrates a real
-            # remote link allows (this one measured ~3 Mbit/s end to end),
-            # emitting them twice as often spends a large share of the budget
-            # re-sending a full picture instead of on actual detail. 1s keeps
-            # quality up and still recovers quickly. Never 0 (an invalid GOP
-            # breaks SPS/IDR pairing).
-            "--h264-gop",         str(max(1, _eff_fps)),
+            # Keyframe interval. This is the ONLY effective bandwidth control on
+            # this hardware, so it is set to ustreamer's maximum.
+            #
+            # --h264-bitrate does nothing here, and that is not a guess. ustreamer
+            # (m2m.c) hardcodes the encoder's quantizer window to MIN_QP=16 /
+            # MAX_QP=32, and the Pi's bcm2835-codec runs Variable Bitrate. MAX_QP
+            # is a floor on bitrate: the encoder is forbidden to compress harder
+            # than QP 32, which at 1080p costs several Mbit/s, so it hits the
+            # quantizer wall and never approaches the requested target. Measured
+            # on this unit, same screen, back to back:
+            #     asked   350 kbps @ 25fps -> 4.18 Mbit/s actually emitted
+            #     asked 10000 kbps @ 25fps -> 4.49 Mbit/s actually emitted
+            # A 28x change in the request moved the output 7%. Dropping fps 25->10
+            # only saved 12%, because GOP was tied to fps: one keyframe per second
+            # either way.
+            #
+            # Keyframes dominate the bitrate, and THAT lever does work:
+            #     gop 25 (1.0s) -> 4.21 Mbit/s
+            #     gop 50 (2.0s) -> 2.16 Mbit/s
+            # Halving the keyframe rate halved the stream. So: 2 seconds of
+            # keyframe interval, hard-capped at 60 because ustreamer rejects
+            # anything above that ("Invalid value for '--h264-gop': min=0,
+            # max=60"). At 25fps that is gop 50, measured 2.29 Mbit/s against
+            # 4.18 before - a 45% cut, which is what brings the stream under the
+            # ~3 Mbit/s this link actually carries.
+            #
+            # The usual objection to a long GOP is slow recovery from loss, but
+            # that only applied while the keyframe timer was the only source of
+            # keyframes. The web UI now asks the Janus plugin for one on demand
+            # (its "key_required" request) whenever the picture stalls or is
+            # corrupt, so recovery no longer depends on this interval at all.
+            # Never 0 (an invalid GOP breaks SPS/IDR pairing).
+            "--h264-gop",         str(max(1, min(60, _eff_fps * 2))),
         ]
         try:
             self.process = subprocess.Popen(

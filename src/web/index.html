@@ -3187,9 +3187,52 @@ function startWebRTC(){
   // that legitimate negotiation and threw away a connection that was about to
   // succeed, which is what made it look like "WebRTC always fails, drops to
   // MJPEG". MJPEG stays on screen throughout, so a longer wait costs nothing.
-  _webrtcTimeout = setTimeout(()=>{
-    if(_activeTransport === 'h264' && gen === _webrtcGen) _webrtcFallbackToMjpeg('connect timeout (20s)');
-  }, 20000);
+  // This used to be a blind guillotine: after 20s, if the <video> element had
+  // no pixels, tear the session down. It cannot tell "nothing is connected"
+  // apart from "connected fine, but the first keyframe is still in flight on a
+  // saturated link" - and on this product the second case is the common one.
+  //
+  // Tearing down in that case is actively harmful. It throws away a working
+  // ICE/DTLS session and forces the encoder to emit ANOTHER full keyframe, so
+  // it adds load to the exact link that was already too slow, which makes the
+  // next attempt slower still. That is the loop in the Janus log: session
+  // created, "Memsink closed" 20s later, repeat, forever. It is self
+  // sustaining, which is why it looked like "worked for a moment, then
+  // suddenly went weird and never recovered".
+  //
+  // So only give up when NOTHING is arriving. If RTP bytes are still growing,
+  // the session is healthy and merely slow: ask for a keyframe (one small
+  // message) and keep waiting instead of rebuilding everything.
+  let _dlBytes = -1, _dlStuck = 0;
+  const _deadline = function(){
+    if(_activeTransport !== 'h264' || gen !== _webrtcGen || _webrtcConfirmed) return;
+    const pc = _janusHandle && _janusHandle.webrtcStuff && _janusHandle.webrtcStuff.pc;
+    if(!pc || !pc.getStats){ _webrtcFallbackToMjpeg('connect timeout (no peer connection)'); return; }
+    pc.getStats(null).then(function(stats){
+      if(_activeTransport !== 'h264' || gen !== _webrtcGen || _webrtcConfirmed) return;
+      let bytes = 0;
+      stats.forEach(function(r){
+        if(r.type === 'inbound-rtp' && r.kind === 'video' && r.bytesReceived != null) bytes = r.bytesReceived;
+      });
+      const moving = (bytes > 0 && bytes !== _dlBytes);
+      _dlBytes = bytes;
+      if(moving){
+        // Media IS flowing, the decoder just has not produced a frame yet -
+        // almost always a keyframe that has not fully arrived. Nudge it.
+        _dlStuck = 0;
+        requestKeyframe('slow first frame');
+        _webrtcTimeout = setTimeout(_deadline, 10000);
+        return;
+      }
+      // Two consecutive checks with zero new bytes = genuinely dead.
+      if(++_dlStuck >= 2){ _webrtcFallbackToMjpeg('no media arriving'); return; }
+      _webrtcTimeout = setTimeout(_deadline, 10000);
+    }).catch(function(){
+      if(_activeTransport === 'h264' && gen === _webrtcGen && !_webrtcConfirmed)
+        _webrtcFallbackToMjpeg('connect timeout (stats unavailable)');
+    });
+  };
+  _webrtcTimeout = setTimeout(_deadline, 20000);
   // Callback names/shape below (onremotetrack + manual MediaStream assembly,
   // watch/start/jsep flow) match janus.js v1.0.0 specifically - that's the
   // tag install_janus_webrtc.sh pins the server + this client library to,
@@ -3332,6 +3375,13 @@ function startWebRTC(){
                   clearInterval(_confirmTimer);
                 } else if(++_confirmTries > 80){   // ~20s hard cap; the fallback timer then acts
                   clearInterval(_confirmTimer);
+                } else if(_confirmTries % 12 === 0 && vid.videoWidth === 0){
+                  // Still no pixels after another ~3s. A viewer that joined
+                  // mid-GOP cannot decode anything until a keyframe lands, and
+                  // with the longer GOP in video.py the scheduled one may be up
+                  // to ~2.4s away - longer if the link is busy. Ask for it
+                  // rather than sitting black and eventually being torn down.
+                  requestKeyframe('no pixels yet');
                 }
               }, 250);
               vid._mbConfirmTimer = _confirmTimer;
@@ -3374,7 +3424,21 @@ function startWebRTC(){
                               // a settled stream on an idle desktop still gets
                               // the full 30s before anyone calls it dead.
                               const _young = (_wrtcConfirmedAt > 0) && (Date.now() - _wrtcConfirmedAt < 30000);
-                              if(++_wrtcStallPolls >= (_young ? 3 : 15)){
+                              const _limit = (_young ? 3 : 15);
+                              _wrtcStallPolls++;
+                              // Try the cheap repair BEFORE the expensive one.
+                              // A stalled decoder is usually waiting on a
+                              // keyframe it never got, and asking for one costs
+                              // a single message. Demoting the session costs a
+                              // full teardown, a new ICE handshake AND a
+                              // keyframe - on a link that is stalling precisely
+                              // because it is short of bandwidth. Ask at the
+                              // halfway mark, so a recoverable stall never
+                              // reaches the demotion path at all.
+                              if(_wrtcStallPolls === Math.max(1, Math.floor(_limit / 2))){
+                                requestKeyframe('stalled decoder');
+                              }
+                              if(_wrtcStallPolls >= _limit){
                                 _wrtcStallPolls = 0; _wrtcLastFrames = -1;
                                 _webrtcFallbackToMjpeg('video stalled (no new frames)');
                               }
@@ -3482,6 +3546,37 @@ function _sendWatch(attemptsLeft, gen){
       else _webrtcFallbackToMjpeg('watch request failed after retries');
     },
   });
+}
+
+// Ask the encoder for a fresh keyframe RIGHT NOW.
+//
+// ustreamer's Janus plugin exposes a "key_required" request (plugin.c) that
+// forces the next frame out of the memsink to be an IDR. Nothing in this page
+// ever used it, and that single omission is what made the video fragile:
+// the ONLY other ways to get a keyframe were the encoder's GOP timer or
+// starting a brand new session. So when a picture arrived corrupt or froze,
+// the page's only recovery was to tear the whole WebRTC session down and
+// build another one - which costs an ICE handshake AND a keyframe anyway, on
+// a link that was already the reason the frame was late. That is the
+// reconnect storm seen in the Janus log (session created, torn down 20s
+// later, repeat), and it is self-sustaining: each rebuild adds load to the
+// congested link that caused the previous rebuild.
+//
+// Asking for a keyframe costs one small message instead. It is also what
+// makes the long GOP in video.py safe: recovery no longer waits for the timer.
+let _lastKeyReq = 0;
+function requestKeyframe(why){
+  if(!_janusHandle || _activeTransport !== 'h264') return false;
+  // Rate limit. A keyframe is the single most expensive thing this link can be
+  // asked for, so a stall loop must not be able to machine-gun them - that
+  // would recreate the bandwidth storm this is meant to end.
+  const now = Date.now();
+  if(now - _lastKeyReq < 2000) return false;
+  _lastKeyReq = now;
+  try{
+    _janusHandle.send({message: {request: 'key_required'}});
+    return true;
+  }catch(e){ return false; }
 }
 
 function toggleAudioMute(){
