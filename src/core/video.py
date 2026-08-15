@@ -952,6 +952,22 @@ class VideoManager:
             # 4.18 before - a 45% cut, which is what brings the stream under the
             # ~3 Mbit/s this link actually carries.
             #
+            # Two attempts to make --h264-bitrate work were built, measured and
+            # rejected. Do not retry them without new evidence:
+            #   1. MIN_QP/MAX_QP are hardcoded 16/32 in m2m.c, and MAX_QP is a
+            #      floor on bitrate, so raising it should let the encoder
+            #      compress harder. Patched to 45 and rebuilt: 350 kbps and 3000
+            #      kbps still both emitted ~2.2 Mbit/s. No effect.
+            #   2. Every control is set BEFORE VIDIOC_S_FMT on the CAPTURE queue,
+            #      and on bcm2835-codec that ioctl re-initialises the encoder
+            #      component, which would explain the setting being discarded.
+            #      Patched to re-apply the bitrate after the CAPTURE format and
+            #      rebuilt: identical numbers. The ioctl succeeded (a failure
+            #      would have aborted the encoder), the output just did not move.
+            # Conclusion: on the Pi 4B bcm2835-codec H.264 path, the bitrate and
+            # QP controls have no practical effect and GOP is the only working
+            # lever. Both patches were rolled back; ustreamer is stock upstream.
+            #
             # The usual objection to a long GOP is slow recovery from loss, but
             # that only applied while the keyframe timer was the only source of
             # keyframes. The web UI now asks the Janus plugin for one on demand

@@ -12,6 +12,24 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.3.0
+
+- Fixes the fault behind "it worked for a moment and then went strange". The
+  video connection was being torn down and rebuilt every 20 seconds whenever the
+  first picture was slow to arrive, and each rebuild sent another full frame down
+  the same busy connection that made it slow, so it could never settle. The page
+  now waits when video is arriving slowly instead of starting over, and asks the
+  device for a fresh picture when it needs one.
+- Roughly half the bandwidth for the same picture. Video now sends a full frame
+  every two seconds instead of every second, measured 4.18 down to 2.29 Mbit/s,
+  which is what brings it inside what a typical remote connection carries.
+- Known limitation, now documented: the video bitrate setting has no effect on
+  this hardware. The Pi's built in encoder ignores it. Asking for 350 kbps and
+  asking for 10000 kbps produce the same picture and the same bandwidth. Two
+  fixes for it were built and measured and neither worked, so the setting is
+  left in place but does nothing; quality is controlled by the frame interval
+  instead.
+
 ## 1.2.0
 
 - Fixes two ways a brand new unit could come up with working keyboard and mouse
