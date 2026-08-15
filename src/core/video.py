@@ -927,24 +927,17 @@ class VideoManager:
             "--h264-sink-mode",   "660",
             "--h264-sink-rm",
             "--h264-bitrate",     str(self.bitrate),
-            # Keyframe interval, scaled to the bitrate budget.
-            #
-            # A keyframe is a whole picture and is by far the most expensive
-            # frame. At 1080p it costs on the order of 50-100 kbit. On a LAN
-            # budget (5000+ kbps) sending one every second is nothing. On a
-            # remote budget (this unit measured a 3 Mbit/s uplink, so it runs at
-            # ~1200 kbps) one keyframe per second can eat a large share of the
-            # entire budget, leaving little for the detail between them - which
-            # shows up as soft, blocky text.
-            #
-            # So: 2 seconds when the budget is tight, 1 second otherwise (which
-            # is what PiKVM ships). The usual reason NOT to lengthen a GOP is
-            # slow recovery from packet loss, but that does not apply here: this
-            # path measures 0% loss, Janus logs zero send failures, and NACK
-            # retransmission is enabled, so losses are repaired by resend rather
-            # than by waiting for the next keyframe.
-            # Never 0 (an invalid GOP breaks SPS/IDR pairing).
-            "--h264-gop",         str(max(1, _eff_fps * 2 if self.bitrate < 2000 else _eff_fps)),
+            # 1 second keyframe interval (PiKVM uses the same: gop == fps).
+            # A shorter GOP was tried to shorten visible corruption, but that
+            # only pays off on a LOSSY link, and this path measures 0% packet
+            # loss - the constraint here is BANDWIDTH, not loss. Keyframes are
+            # by far the most expensive frames, so at the low bitrates a real
+            # remote link allows (this one measured ~3 Mbit/s end to end),
+            # emitting them twice as often spends a large share of the budget
+            # re-sending a full picture instead of on actual detail. 1s keeps
+            # quality up and still recovers quickly. Never 0 (an invalid GOP
+            # breaks SPS/IDR pairing).
+            "--h264-gop",         str(max(1, _eff_fps)),
         ]
         try:
             self.process = subprocess.Popen(
