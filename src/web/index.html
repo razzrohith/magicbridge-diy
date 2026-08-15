@@ -1119,12 +1119,14 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>Software Update</div>
           <div class="snote" style="margin-bottom:8px">Updates from GitHub. Big changes reinstall, about a minute.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="sys-avail">-</span></div>
-          <div class="srow"><span class="sk">Version</span><span class="sv" id="sys-ver" style="font-family:monospace;font-size:11px">-</span></div>
-          <div class="srow"><span class="sk">Branch</span><span class="sv" id="sys-branch">-</span></div>
+          <div class="srow"><span class="sk">Version</span><span class="sv" id="sys-ver">-</span></div>
+          <!-- Build id is the git hash. Kept for support questions, deliberately
+               small and secondary: the operator's version is v1.2, not a hash. -->
+          <div class="srow"><span class="sk">Build</span><span class="sv" id="sys-build" style="font-family:monospace;font-size:10px;color:var(--muted)">-</span></div>
           <!-- What's new: short one-line summary of EVERY pending commit, not just
                the latest. Full-width block so long text never collides with a label. -->
           <div id="sys-whatsnew" style="display:none;margin:10px 0 4px">
-            <div class="sk" style="margin-bottom:5px">What's new</div>
+            <div class="sk" id="sys-whatsnew-hdr" style="margin-bottom:5px">What's new</div>
             <ul id="sys-whatsnew-list" style="margin:0;padding-left:18px;font-size:11px;color:var(--text);line-height:1.65"></ul>
           </div>
           <div id="sys-update-out" style="display:none;font-size:10px;background:var(--surf2);border:1px solid var(--border);border-radius:4px;padding:6px;margin:6px 0;white-space:pre-wrap;max-height:120px;overflow:auto;font-family:monospace;color:var(--muted)"></div>
@@ -4073,7 +4075,14 @@ async function sysCheckVer(){
   try{
     const r=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'status'})});
     const d=await r.json();
-    if(d.version)document.getElementById('sys-ver').textContent=d.version;
+    const _vEl=document.getElementById('sys-ver');
+    if(_vEl && d.version){
+      _vEl.textContent = (d.update_available && d.new_version && d.new_version!==d.version)
+        ? ('v'+d.version+'  →  v'+d.new_version)
+        : ('v'+d.version);
+    }
+    const _bEl=document.getElementById('sys-build');
+    if(_bEl) _bEl.textContent = d.build_id || '-';
     if(d.branch)document.getElementById('sys-branch').textContent=d.branch;
     const avail=document.getElementById('sys-avail');
     const btn=document.getElementById('sys-update-btn');
@@ -4094,15 +4103,16 @@ async function sysCheckVer(){
       btn.disabled=true;
       const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='sys-dot ok';
     }
-    // "What's new": a short one-line summary of EVERY pending commit (newest
-    // first), not just the latest. Strip the conventional-commit "type(scope):"
-    // prefix so each line reads as plain English.
+    // Release notes for the incoming version, written for the operator. These
+    // come from CHANGELOG.md now, not from commit subjects: raw subjects name
+    // files and functions and read as developer noise on a shipped product.
     const wn=document.getElementById('sys-whatsnew'), wnl=document.getElementById('sys-whatsnew-list');
     if(wn&&wnl){
       const pend=Array.isArray(d.pending)?d.pending:[];
       if(d.update_available&&pend.length){
-        const clean=s=>String(s).replace(/^[a-z]+(\([^)]*\))?!?:\s*/i,'').replace(/^./,c=>c.toUpperCase()).trim();
-        const items=pend.slice(0,8).map(clean).filter(Boolean);
+        const hdr=document.getElementById('sys-whatsnew-hdr');
+        if(hdr) hdr.textContent = d.new_version ? ("What's new in v"+d.new_version) : "What's new";
+        const items=pend.slice(0,8).map(x=>String(x).trim()).filter(Boolean);
         wnl.innerHTML=items.map(s=>'<li>'+_escHtml(s)+'</li>').join('')
           +(pend.length>8?'<li>…and '+(pend.length-8)+' more</li>':'');
         wn.style.display='';

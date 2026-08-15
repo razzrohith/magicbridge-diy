@@ -168,6 +168,44 @@ async def _run_off_loop(cmd, **kw):
     return await loop.run_in_executor(None, lambda: _subp.run(cmd, **kw))
 
 
+def _read_at_commit(repo_dir, commit, path, _sp):
+    """Contents of `path` as it exists at `commit`, or "" if absent."""
+    try:
+        r = _sp.run(["git", "-C", repo_dir, "show", f"{commit}:{path}"],
+                    capture_output=True, text=True, timeout=10)
+        return r.stdout if r.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
+def _changelog_between(text, from_ver, to_ver):
+    """Bullets from CHANGELOG.md for every release newer than from_ver, up to to_ver.
+
+    The operator wants release notes, not git history: raw commit subjects name
+    files and functions and read as developer noise on a product they bought.
+    Sections are '## <version>' and bullets are '- ' lines under them.
+    """
+    out, cur, taking = [], None, False
+    def _tup(v):
+        try:
+            return tuple(int(x) for x in str(v).strip().split("."))
+        except Exception:
+            return (0,)
+    lo, hi = _tup(from_ver), _tup(to_ver)
+    for line in (text or "").splitlines():
+        st = line.strip()
+        if st.startswith("## "):
+            cur = st[3:].strip()
+            c = _tup(cur)
+            taking = (c > lo) and (c <= hi)
+            continue
+        if taking and st.startswith("- "):
+            out.append(st[2:].strip())
+        elif taking and out and st and not st.startswith("-") and not st.startswith("#"):
+            out[-1] += " " + st          # continuation of a wrapped bullet
+    return out[:40]
+
+
 async def _call_off_loop(fn, *args):
     """Same idea as _run_off_loop, but for a whole blocking Python function
     instead of a single command. Use this when a handler makes SEVERAL
@@ -3163,19 +3201,39 @@ async def api_update(request):
             update_available, mode = True, "full"
             out = "Deployment unverified - reinstall to be sure the code is live"
         else:
+            _nv = (_read_at_commit(REPO_DIR, f"origin/{BRANCH}", "VERSION", _sp).strip()
+                   or VERSION)
             out = ("Up to date" if not update_available else
-                   (f"Quick update: {commits_behind} commit(s), {len(changed)} file(s)"
+                   (f"Update available: v{_nv}"
                     if mode == "incremental" else
-                    f"Full upgrade: {commits_behind} commit(s) (structural changes)"))
+                    f"Full upgrade available: v{_nv} (reinstall, about a minute)"))
+        # Release versions, not commit hashes. The panel is operator-facing, so
+        # it shows "v1.1.0 -> v1.2.0" and human release notes; the hash is still
+        # returned as build_id for support, just not as the headline.
+        cur_ver = (_read_at_commit(REPO_DIR, local_hash, "VERSION", _sp).strip()
+                   or VERSION)
+        new_ver = (_read_at_commit(REPO_DIR, f"origin/{BRANCH}", "VERSION", _sp).strip()
+                   or cur_ver)
+        notes = []
+        if update_available:
+            notes = _changelog_between(
+                _read_at_commit(REPO_DIR, f"origin/{BRANCH}", "CHANGELOG.md", _sp),
+                cur_ver, new_ver)
+            if not notes:
+                # No changelog entry for this release: say so plainly rather than
+                # falling back to commit subjects, which is what we are replacing.
+                notes = ["Maintenance and reliability improvements."]
         return {
             "ok": True,
-            "version": ver.stdout.strip(),
+            "version": cur_ver,                  # e.g. "1.1.0"
+            "new_version": new_ver,              # e.g. "1.2.0"
+            "build_id": ver.stdout.strip(),      # short hash, for support only
             "branch": branch.stdout.strip(),
             "update_available": update_available,
             "commits_behind": commits_behind,
             "mode": mode,                 # "incremental" | "full" | "none"
             "changed": len(changed),
-            "pending": pending,           # subjects of all incoming commits (newest first)
+            "pending": notes,             # human release notes (was: commit subjects)
             "deploy_unknown": deploy_unknown,
             "out": out,
         }
