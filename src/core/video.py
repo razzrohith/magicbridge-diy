@@ -640,10 +640,34 @@ class VideoManager:
         # after a deliberate h264 -> mjpeg switch status() kept reporting the
         # (long gone) sink, and the UI kept ticking WebRTC audio green with it.
         self.h264_sink = None
+        # "--format MJPEG" is correct ONLY for a USB dongle that emits MJPEG in
+        # hardware. The C790/TC358743 on the CSI port emits RAW UYVY, so asking
+        # it for MJPEG made ustreamer fall back to a slow software path:
+        # measured on the unit, 8.2 fps against a requested 25, at 151 KB per
+        # frame, with the CPU doing the JPEG work. On CSI we must take UYVY and
+        # hand it to the SoC's hardware JPEG encoder (M2M-IMAGE) - the same
+        # encoder block the h264 path already used successfully - and follow the
+        # live HDMI timings. This is a different hardware block from the H.264
+        # M2M encoder, which is the one with the known Pi 4 corruption bug on
+        # high-contrast text (raspberrypi/linux#5180), so MJPEG stays clean.
+        _is_csi = False
+        try:
+            _is_csi = self.device_type(self.device) == "csi"
+        except Exception:
+            pass
         cmd = [
             "ustreamer",
             "--device",         self.device,
-            "--format",         "MJPEG",         # use native HW MJPEG from capture card (not YUYV software-convert)
+        ]
+        if _is_csi:
+            cmd += [
+                "--format",       "UYVY",          # what the TC358743 actually delivers
+                "--encoder",      "M2M-IMAGE",     # SoC hardware JPEG encoder
+                "--dv-timings",                     # follow the live HDMI signal
+            ]
+        else:
+            cmd += ["--format", "MJPEG"]           # USB dongle: native HW MJPEG
+        cmd += [
             "--resolution",     self.resolution,
             "--desired-fps",    str(self.fps),
             "--quality",        str(self.quality),
@@ -654,7 +678,14 @@ class VideoManager:
             # more buffers than workers so a frame is never recycled mid-encode.
             "--buffers",        "6",
             "--persistent",
-            # drop-same-frames removed
+            # Do not re-send identical frames. MJPEG has no inter-frame
+            # compression, so a completely static desktop otherwise costs the
+            # same full bandwidth as full-motion video, forever. A KVM screen is
+            # static most of the time, so this is the single biggest bandwidth
+            # saving available on this path, and it costs nothing when the screen
+            # IS changing. 10 (not 30) keeps a few frames per second flowing on a
+            # still screen so the stream never looks frozen to a liveness check.
+            "--drop-same-frames", "10",
         ]
         try:
             self.process = subprocess.Popen(
