@@ -81,6 +81,15 @@ class VideoManager:
         # bandwidth presets nearly meaningless over WebRTC: they only moved
         # resolution (ignored on CSI - we follow the source signal) and fps.
         self.bitrate    = 5000
+        # H.264 quantizer floor. THIS is the working bandwidth control on the Pi
+        # 4B, because self.bitrate above is inert on this encoder (see the long
+        # note in _start_ustreamer_h264 for the measurements that establish it).
+        # Higher = coarser picture, lower peak bandwidth. It bounds bits PER
+        # FRAME, which is what stops screen motion from bursting far over the
+        # link and taking control latency with it.
+        # 30 measured 0.64 Mbit/s static vs 1.26 at upstream's 16, and past ~30
+        # the curve flattens so there is nothing to gain by going higher.
+        self.min_qp     = 30
         self.mode       = "auto"  # "auto" (detect hardware) -> "h264" (C790/CSI + Janus WebRTC, preferred) | "mjpeg" (MS2109/USB)
         # True once a caller explicitly asked for a concrete mode (operator
         # setting, or the persisted config at boot). A deliberate choice must
@@ -448,7 +457,7 @@ class VideoManager:
 
     def start(self, device: str = None, resolution: str = None,
               fps: int = None, quality: int = None, mode: str = None,
-              bitrate: int = None) -> bool:
+              bitrate: int = None, min_qp: int = None) -> bool:
         """Start streaming. Returns True on success. Safe to call repeatedly.
 
         Resolution selection priority:
@@ -478,6 +487,10 @@ class VideoManager:
             if bitrate is not None: self.bitrate    = _clampi(bitrate, 100, 20000, self.bitrate)
             if fps is not None:     self.fps        = _clampi(fps, 1, 60, self.fps)
             if quality is not None: self.quality    = _clampi(quality, 1, 100, self.quality)
+            # 16 is upstream's value (sharpest, highest peak); 51 is the H.264
+            # maximum. Below 16 there is nothing to gain and the peak gets worse,
+            # so the floor of the clamp is 16 rather than 0.
+            if min_qp is not None:  self.min_qp     = _clampi(min_qp, 16, 51, self.min_qp)
             if mode:
                 self.mode = mode
                 # Remember that this was ASKED FOR, not inferred. "auto" is not
@@ -954,19 +967,22 @@ class VideoManager:
             #
             # Two attempts to make --h264-bitrate work were built, measured and
             # rejected. Do not retry them without new evidence:
-            #   1. MIN_QP/MAX_QP are hardcoded 16/32 in m2m.c, and MAX_QP is a
-            #      floor on bitrate, so raising it should let the encoder
-            #      compress harder. Patched to 45 and rebuilt: 350 kbps and 3000
-            #      kbps still both emitted ~2.2 Mbit/s. No effect.
+            #   1. Patched MAX_QP 32 -> 45 and rebuilt: 350 kbps and 3000 kbps
+            #      still both emitted ~2.2 Mbit/s. No effect.
             #   2. Every control is set BEFORE VIDIOC_S_FMT on the CAPTURE queue,
             #      and on bcm2835-codec that ioctl re-initialises the encoder
             #      component, which would explain the setting being discarded.
             #      Patched to re-apply the bitrate after the CAPTURE format and
             #      rebuilt: identical numbers. The ioctl succeeded (a failure
             #      would have aborted the encoder), the output just did not move.
-            # Conclusion: on the Pi 4B bcm2835-codec H.264 path, the bitrate and
-            # QP controls have no practical effect and GOP is the only working
-            # lever. Both patches were rolled back; ustreamer is stock upstream.
+            # So the BITRATE target is genuinely inert on this hardware.
+            #
+            # MIN_QP, however, works - see self.min_qp. The two QP controls are
+            # not symmetric and the MAX_QP result does not predict the MIN_QP one:
+            # MAX_QP bounds how COARSE the encoder may go, which only binds when
+            # it is chasing a bitrate target, and the target is ignored, so it
+            # never binds. MIN_QP bounds how FINE it may go, which binds exactly
+            # when the screen is moving and the encoder wants to spend bits.
             #
             # The usual objection to a long GOP is slow recovery from loss, but
             # that only applied while the keyframe timer was the only source of
@@ -976,9 +992,36 @@ class VideoManager:
             # Never 0 (an invalid GOP breaks SPS/IDR pairing).
             "--h264-gop",         str(max(1, min(60, _eff_fps * 2))),
         ]
+        # MIN_QP is the ONLY working ceiling on peak bitrate on this hardware, and
+        # the peak is what breaks remote control. Measured on the live unit while
+        # the operator drove it, correlating video rate against control RTT:
+        #     video < 1.0 Mbit/s  -> median RTT   8.8 ms, 0/28 samples over 100ms
+        #     video 2.0-3.0       -> median RTT    90 ms, 9/18 over 100ms
+        #     video 3.0-5.0       -> median RTT   257 ms, 32/59 over 100ms
+        #     video > 5.0         -> median RTT   552 ms, plus packet loss
+        # Peak observed 13.33 Mbit/s on screen motion against a path that carries
+        # ~3 Mbit/s. Crucially wlan0's qdisc backlog stayed at 0 bytes with 0 drops
+        # across all 155 samples: nothing queues on the Pi, so the congestion is in
+        # the travel router downstream and NO local prioritisation can reach it.
+        # The only fix available to us is to stop generating the burst.
+        #
+        # Static-screen A/B, same content back to back, gop 50 fps 25:
+        #     MIN_QP 16 (upstream) -> 1.26 Mbit/s
+        #     MIN_QP 24            -> 0.84 Mbit/s
+        #     MIN_QP 30            -> 0.64 Mbit/s
+        #     MIN_QP 36            -> 0.74 Mbit/s  (flattens; no gain past ~30)
+        # This bounds bits PER FRAME, so unlike GOP it caps the peak and not just
+        # the average.
+        #
+        # Requires the MagicBridge ustreamer build, which reads this variable;
+        # stock upstream ignores it and falls back to its hardcoded 16, so an
+        # unpatched binary still runs, just without the ceiling.
+        _env = dict(os.environ)
+        _env["MB_H264_MIN_QP"] = str(self.min_qp)
         try:
             self.process = subprocess.Popen(
                 cmd,
+                env=_env,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 close_fds=True,
@@ -1286,6 +1329,7 @@ class VideoManager:
             "device_type": self.device_type(self.device) if self.device else None,
             "resolution": self.resolution,
             "bitrate": self.bitrate,
+            "min_qp":     self.min_qp,
             "fps":        self.fps,
             "quality":    self.quality,
             "mode":       self.mode,

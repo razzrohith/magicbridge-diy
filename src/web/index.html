@@ -1666,11 +1666,16 @@ function connect(){
   ws.onerror=()=>{};
   ws.onmessage=e=>{ try{ onMsg(JSON.parse(e.data)); }catch(_){} };
 }
-// Exponential backoff (1s→2s→4s… capped 15s) with a visible countdown, instead
+// Exponential backoff (1s→2s→4s… capped 5s) with a visible countdown, instead
 // of hammering a flat 3s. When the socket comes back it also re-kicks the MJPEG
 // stream (retryStream in onopen) so a dropped video feed recovers on its own.
+// Capped at 5s, not 15s. While this wait runs, send() returns false and the
+// operator has NO keyboard or mouse at all, so the cap is a direct worst-case
+// dead-input window. 15s of dead control on a KVM is unusable, and the cost of
+// retrying sooner is one extra connect attempt against a device on the same LAN
+// or tailnet.
 function _scheduleReconnect(){
-  const wait=_wsBackoff; _wsBackoff=Math.min(_wsBackoff*2,15000);
+  const wait=_wsBackoff; _wsBackoff=Math.min(_wsBackoff*2,5000);
   let left=Math.round(wait/1000);
   dot('warn','Reconnecting… '+left+'s');
   const iv=setInterval(()=>{ left--; if(left>0) dot('warn','Reconnecting… '+left+'s'); else clearInterval(iv); },1000);
@@ -2291,9 +2296,36 @@ function _videoRect(){
 // deltas so nothing is lost, just merged into one report per frame.
 let _absPending=null, _relDX=0, _relDY=0, _relPending=false, _mvRAF=false, _mvTO=null;
 let _scrollDX=0, _scrollDY=0, _scrollPending=false;
+// Stop feeding a socket that is already backed up.
+//
+// Coalescing below caps us at ~50 sends/second, which is fine on a healthy
+// link. But send() called ws.send() unconditionally, and nothing in this page
+// ever looked at bufferedAmount, so when the link congested the browser's send
+// buffer just grew. Two consequences, both of which the operator feels as
+// "latency climbs while I move and recovers when I stop":
+//   1. The latency ping travels on THIS SAME socket, so it queues behind every
+//      pending mouse move. The number on screen then includes the time to drain
+//      that backlog, which is not network latency at all.
+//   2. The backend dispatches strictly in order, so a click waits behind
+//      hundreds of obsolete positions and lands where the pointer USED to be.
+// Skipping a flush costs nothing, because the pending state is already
+// coalesced: absolute keeps only the latest position (so the cursor jumps
+// straight to the truth once the socket drains) and relative sums its deltas
+// (so no motion is lost, just merged). ~1024 bytes is roughly 20 queued
+// messages, about two frames' worth.
+const _WS_BACKPRESSURE_BYTES = 1024;
+function _wsCongested(){
+  return !!(ws && ws.readyState === 1 && ws.bufferedAmount > _WS_BACKPRESSURE_BYTES);
+}
 function _flushMouse(){
   _mvRAF=false;
   if(_mvTO){ clearTimeout(_mvTO); _mvTO=null; }
+  if(_wsCongested()){
+    // Keep accumulating, retry shortly. Buttons and keys do NOT come through
+    // here (they call send() directly), so they are never held back by this.
+    if(_absPending || _relPending || _scrollPending) _mvTO=setTimeout(_flushMouse, 20);
+    return;
+  }
   if(_absPending){ send({type:'mousemove_abs',x:_absPending.x,y:_absPending.y}); _absPending=null; }
   if(_relPending){ send({type:'mousemove',dx:_relDX,dy:_relDY}); _relDX=0; _relDY=0; _relPending=false; }
   // Coalesce a burst of wheel events into ONE scroll per frame. A touchpad

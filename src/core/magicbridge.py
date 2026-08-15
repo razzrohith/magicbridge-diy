@@ -1429,7 +1429,15 @@ def _sess_log(sid, ip, ua, event, duration=None):
         pass
 
 async def ws_handler(request: web.Request) -> web.WebSocketResponse:
-    ws = web.WebSocketResponse(heartbeat=20)
+    # aiohttp sets the pong deadline to heartbeat/2 (verified in
+    # web_ws.WebSocketResponse.__init__: self._pong_heartbeat = heartbeat / 2.0),
+    # so heartbeat=20 tore down a LIVE session whenever a pong was 10s late.
+    # That is reachable here: during a video burst this link was measured losing
+    # several consecutive pings outright. Killing the session is far worse than a
+    # slow one, because the client then sits in reconnect backoff with input
+    # completely dead. 45 gives a 22.5s deadline, still prompt enough to notice a
+    # genuinely dead socket.
+    ws = web.WebSocketResponse(heartbeat=45)
     await ws.prepare(request)
 
     ip = request.headers.get("X-Real-IP") or request.remote or "?"
@@ -1871,11 +1879,16 @@ async def api_stream_settings(request: web.Request) -> web.Response:
     device     = d.get("device")
     mode       = d.get("mode")
     bitrate    = d.get("bitrate")
+    # The real bandwidth control on this hardware. "bitrate" above is kept for
+    # compatibility but the Pi's H.264 encoder ignores it; min_qp is what
+    # actually bounds the peak. See video.py's _start_ustreamer_h264.
+    min_qp     = d.get("min_qp")
 
     loop = asyncio.get_running_loop()
     ok = await loop.run_in_executor(None, lambda: video.start(
         device=device, resolution=resolution,
         fps=fps, quality=quality, mode=mode, bitrate=bitrate,
+        min_qp=min_qp,
     ))
 
     # Persist settings to config.json
@@ -1886,7 +1899,7 @@ async def api_stream_settings(request: web.Request) -> web.Response:
                 k: v for k, v in {
                     "device": device, "resolution": resolution,
                     "fps": fps, "quality": quality, "mode": mode,
-                    "bitrate": bitrate,
+                    "bitrate": bitrate, "min_qp": min_qp,
                 }.items() if v is not None
             })
             _write_config(cfg)
@@ -3732,6 +3745,10 @@ async def main():
         # silently ignored on the next restart, snapping back to the default -
         # the setting "sticks" in the file and not in reality.
         bitrate    = _vint("bitrate", 5000),
+        # Same reasoning as bitrate: must be passed on the boot path too or the
+        # operator's choice lives in config.json and nowhere else. Unlike
+        # bitrate, this one actually reaches the encoder.
+        min_qp     = _vint("min_qp", 30),
         # "auto": video.start() detects the capture hardware and picks the
         # pipeline — C790/CSI -> H.264+WebRTC (preferred), USB dongle -> MJPEG.
         # Falls back to mjpeg on its own if the CSI/Janus path can't start, so
