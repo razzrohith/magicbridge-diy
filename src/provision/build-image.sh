@@ -93,6 +93,30 @@ if [[ "$MODE" == "verify" ]]; then
   attach; mount_root
   R="$MNT"; FAIL=0
   chk(){ if eval "$2" >/dev/null 2>&1; then ok "$1"; else echo -e "${RED}✗${NC} $1"; FAIL=$((FAIL+1)); fi; }
+  # Mount the VFAT boot partition too. Without it every boot-partition check
+  # below tested "$R/boot/firmware", which is just the empty mountpoint stub
+  # inside the ext4 rootfs - so the secret checks passed no matter what was
+  # actually on the card, and the config.txt settings the video pipeline needs
+  # were never asserted at all. A distributable image must never be declared
+  # safe on the strength of a check that cannot fail.
+  BV=""
+  if [[ -n "${BOOTPART:-}" ]]; then
+    BV=$(mktemp -d)
+    mount "$BOOTPART" "$BV" 2>/dev/null || { echo -e "${RED}✗${NC} could not mount boot partition"; FAIL=$((FAIL+1)); BV=""; }
+  else
+    echo -e "${RED}✗${NC} no vfat boot partition found"; FAIL=$((FAIL+1))
+  fi
+  if [[ -n "$BV" ]]; then
+    chk "boot: no leftover web password"             '[ ! -f "$BV/magicbridge-password.txt" ]'
+    chk "boot: no builder setup report"              '[ ! -f "$BV/magicbridge-setup-report.txt" ]'
+    chk "boot: no config.txt backup left behind"     '[ ! -f "$BV/config.txt.mb-backup" ]'
+    chk "boot: config.txt present"                   '[ -f "$BV/config.txt" ]'
+    chk "boot: gpu_mem=128 (hardware encoders)"      'grep -qE "^\s*gpu_mem=128" "$BV/config.txt"'
+    chk "boot: dtoverlay=cma,cma-256 (frame buffers)" 'grep -qE "^\s*dtoverlay=cma,cma-256" "$BV/config.txt"'
+    chk "boot: vc4-kms-v3d disabled (headless KVM)"  '! grep -qE "^\s*dtoverlay=vc4-kms-v3d" "$BV/config.txt"'
+    chk "boot: dwc2 peripheral (USB HID to target)"  'grep -qE "^\s*dtoverlay=dwc2,dr_mode=peripheral" "$BV/config.txt"'
+    chk "boot: tc358743 (capture)"                   'grep -qE "^\s*dtoverlay=tc358743" "$BV/config.txt"'
+  fi
   chk "no SSH host keys (regenerated per unit)"      '! ls "$R"/etc/ssh/ssh_host_* 2>/dev/null | grep -q .'
   chk "machine-id blank/absent"                      '[ ! -s "$R/etc/machine-id" ]'
   chk "no saved WiFi profiles"                       '! ls "$R"/etc/NetworkManager/system-connections/*.nmconnection 2>/dev/null | grep -q .'
@@ -145,6 +169,7 @@ if [[ "$MODE" == "verify" ]]; then
   chk "config: mac_persist empty"                    'python3 -c "import json,sys;sys.exit(0 if not json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"mac_persist\") else 1)"'
   chk "config: video.mode=mjpeg (H.264 is opt-in)" 'python3 -c "import json,sys;sys.exit(0 if json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"video\",{}).get(\"mode\")==\"mjpeg\" else 1)"'
   echo ""
+  [[ -n "$BV" ]] && { umount "$BV" 2>/dev/null || true; rmdir "$BV" 2>/dev/null || true; }
   if [[ $FAIL -eq 0 ]]; then ok "ALL CHECKS PASSED — safe to distribute"; exit 0
   else die "$FAIL check(s) FAILED — do NOT distribute this image"; fi
 fi
@@ -396,11 +421,31 @@ fi
 : > "$MNT/var/log/wtmp"    2>/dev/null || true
 : > "$MNT/var/log/btmp"    2>/dev/null || true
 : > "$MNT/var/log/lastlog" 2>/dev/null || true
+# CRITICAL: these two files live on the VFAT BOOT PARTITION, which is a
+# SEPARATE partition from the ext4 root mounted at $MNT. "$MNT/boot/firmware" is
+# only the empty mountpoint stub inside the rootfs, so deleting there removed
+# nothing and every distributed image shipped:
+#   magicbridge-password.txt  - the golden unit's CLEARTEXT web password, i.e. a
+#                               working credential for every clone
+#   magicbridge-setup-report.txt - builder hostname, LAN IP, saved-WiFi count and
+#                               log tails, i.e. the builder's own environment
+# Strip the stub too (harmless), but do the real work on the mounted BOOTPART.
 rm -f "$MNT"/boot/firmware/magicbridge-setup-report.txt "$MNT"/boot/magicbridge-setup-report.txt 2>/dev/null || true
-# The per-unit web password mb-secret-reset writes to the FAT boot partition:
-# if a golden unit was ever booted, its cleartext credential would ship in the
-# image. Strip it (the clone regenerates its own on first boot).
-rm -f "$MNT"/boot/firmware/magicbridge-password.txt "$MNT"/boot/magicbridge-password.txt 2>/dev/null || true
+rm -f "$MNT"/boot/firmware/magicbridge-password.txt    "$MNT"/boot/magicbridge-password.txt    2>/dev/null || true
+if [[ -n "${BOOTPART:-}" ]]; then
+  _SB=$(mktemp -d)
+  if mount "$BOOTPART" "$_SB" 2>/dev/null; then
+    rm -f "$_SB"/magicbridge-password.txt "$_SB"/magicbridge-setup-report.txt           "$_SB"/RESTORE-IF-NO-BOOT.txt "$_SB"/config.txt.mb-backup 2>/dev/null || true
+    sync
+    ok "  boot partition scrubbed (password + setup report + backups)"
+    umount "$_SB" 2>/dev/null || true
+  else
+    die "could not mount boot partition to strip secrets - refusing to build a distributable image"
+  fi
+  rmdir "$_SB" 2>/dev/null || true
+else
+  die "no vfat boot partition found - cannot guarantee secrets are stripped"
+fi
 # systemd RNG seed: a shared seed across clones weakens early-boot entropy and
 # is a documented golden-image no-no. Regenerated on first boot.
 rm -f "$MNT"/var/lib/systemd/random-seed 2>/dev/null || true

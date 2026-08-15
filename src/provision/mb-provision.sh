@@ -301,9 +301,19 @@ mb_boot_report() {
       pgrep -a hostapd 2>/dev/null || echo "(hostapd NOT running)"
       pgrep -a dnsmasq 2>/dev/null || echo "(dnsmasq NOT running)"
       echo
-      echo "===== last 60 lines: provisioning ====="; tail -60 "$LOG" 2>/dev/null
+      # REDACTED. This file lands on the FAT boot partition, which is readable
+      # by anyone who pulls the card, and it is never deleted on a live unit.
+      # The provisioning log records the network being joined ("Connecting to
+      # 'HOME-5G'"), and one mistyped password is enough to get a failure logged
+      # and the script re-run, so the SSID ends up here. A network name is
+      # location-identifying, and persisting it on the card is exactly what the
+      # anonymity model forbids. This report only needs to prove which services
+      # were alive, so strip anything quoted before it is written.
+      echo "===== last 60 lines: provisioning (network names redacted) ====="
+      tail -60 "$LOG" 2>/dev/null | sed "s/'[^']*'/'<redacted>'/g"
       echo
-      echo "===== last 40 lines: first boot ====="; tail -40 /var/log/magicbridge-firstboot.log 2>/dev/null
+      echo "===== last 40 lines: first boot (network names redacted) ====="
+      tail -40 /var/log/magicbridge-firstboot.log 2>/dev/null | sed "s/'[^']*'/'<redacted>'/g"
     } > "$B/magicbridge-setup-report.txt" 2>/dev/null || true
     sync
 }
