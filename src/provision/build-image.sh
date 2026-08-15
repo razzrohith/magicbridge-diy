@@ -218,6 +218,44 @@ attach; mount_root
 
 [[ -d "$MNT/opt/magicbridge" ]] || warn "No /opt/magicbridge — net-install image? (it will install on first boot)"
 
+# ---- Boot config: the video pipeline's memory settings --------------------
+# The golden snapshot may predate these, and NOTHING else in the image path sets
+# them, so without this every flashed unit ships with a starved video encoder:
+#   gpu_mem defaults to ~76 MB (the hardware JPEG/H.264 encoders want PiKVM's 128)
+#   removing vc4-kms-v3d drops the CMA pool to a 64 MB default, and a single 1080p
+#   capture buffer is ~4 MB, so an allocation can fail mid-frame and produce
+#   partial/garbage (green) frames
+#   vc4-kms-v3d is the DESKTOP display driver for the Pi's own HDMI OUTPUT: unused
+#   on a headless KVM and it takes over the pipeline the encoders need
+# These are exactly the values a stock PiKVM image ships, and all three are
+# Pi-internal: the TARGET sees no change (no EDID, USB or HDMI difference).
+if [[ -n "${BOOTPART:-}" ]]; then
+  BOOTMNT=$(mktemp -d)
+  if mount "$BOOTPART" "$BOOTMNT" 2>/dev/null; then
+    CFGTXT="$BOOTMNT/config.txt"
+    if [[ -f "$CFGTXT" ]]; then
+      _cfgset() {   # <key-regex-to-drop> <exact line to add under [all]>
+        sed -i "\|^$1|d" "$CFGTXT"
+        grep -q '^\[all\]' "$CFGTXT" || echo '[all]' >> "$CFGTXT"
+        sed -i "/^\[all\]/a $2" "$CFGTXT"
+      }
+      _cfgset "dtoverlay=cma," "dtoverlay=cma,cma-256"
+      _cfgset "gpu_mem=" "gpu_mem=128"
+      sed -i 's|^\s*dtoverlay=vc4-kms-v3d|#dtoverlay=vc4-kms-v3d   # MagicBridge: headless KVM|' "$CFGTXT" 2>/dev/null || true
+      sed -i 's|^\s*max_framebuffers=|#max_framebuffers=|' "$CFGTXT" 2>/dev/null || true
+      sync
+      ok "  boot config armed: gpu_mem=128, cma-256, vc4-kms-v3d off"
+    else
+      warn "  no config.txt on the boot partition - video memory settings NOT applied"
+    fi
+    umount "$BOOTMNT" 2>/dev/null || true
+  else
+    warn "  could not mount boot partition - video memory settings NOT applied"
+  fi
+  rmdir "$BOOTMNT" 2>/dev/null || true
+  BOOTMNT=""
+fi
+
 # SELF-HEAL: refresh the first-boot logic from THIS repo into the image. The
 # golden unit may predate the current scripts (or, as the sibling discovered,
 # never have had the service installed at all) — a distributable image must not

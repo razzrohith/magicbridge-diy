@@ -352,8 +352,10 @@ if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
   "video": {
     "device":     "",
     "resolution": "1920x1080",
-    "fps":        50,
-    "quality":    80,
+    "_comment":   "fps/quality are the MJPEG levers and MUST stay conservative: MJPEG has no inter-frame compression, so 1080p at fps 50 / quality 80 is about 58 Mbit/s, which no real remote link can carry and which saturates even a good LAN. Measured at 1080p: q12 = 96 KB per frame, so 20 fps is about 16 Mbit/s. fps must also divide the source refresh evenly (50Hz -> 25/20/10/5) or frames arrive unevenly. bitrate is the H.264/WebRTC lever, unused by MJPEG.",
+    "fps":        20,
+    "quality":    12,
+    "bitrate":    4000,
     "mode":       "mjpeg"
   },
   "mac_persist":   {},
