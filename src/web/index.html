@@ -2993,6 +2993,14 @@ const _WEBRTC_DECAY_MS = 300000;   // 5 min
 // while video actually renders; if it stops advancing we recover here. This is
 // the h264 twin of the MJPEG onErr() self-heal.
 let _wrtcLastFrames = -1, _wrtcStallPolls = 0;
+// When the CURRENT attempt first showed pixels. The stall watchdog is
+// deliberately slow (30s) so a legitimately static desktop is never mistaken
+// for a dead feed, but that same patience made a BROKEN start take 30s to
+// recover: _confirmed() fires on videoWidth>0, which is true of the green
+// pre-keyframe garbage, and that cancels the 20s connect-timeout safety net.
+// So a feed that showed garbage and then froze had nothing watching it for
+// half a minute. Fresh connections get a short leash, settled ones the long one.
+let _wrtcConfirmedAt = 0;
 // MJPEG-first model: h264 keeps the working MJPEG picture on screen and only
 // swaps to the <video> once WebRTC has REAL pixels. _webrtcConfirmed marks that
 // swap so the MJPEG onLoad/onErr paths know when to stop owning the overlay.
@@ -3235,6 +3243,7 @@ function startWebRTC(){
                 clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
                 _webrtcRetries = 0;   // good connection -> refill the recovery budget
                 _wrtcLastFrames = -1; _wrtcStallPolls = 0;   // restart stall baseline
+                _wrtcConfirmedAt = Date.now();
                 _webrtcConfirmed = true;
                 // The MJPEG handover already happened at track-up (above); by
                 // here we just have real pixels, so drop the overlay. Belt and
@@ -3278,9 +3287,37 @@ function startWebRTC(){
               // jitter buffer + NACK repair below, not by hiding the video.
               let _confirmTries = 0, _stable = 0;
               const _STABLE_NEEDED = 2;   // ~0.5s at 250ms: one GOP, no ICE dependency
+              // Wait for the first KEYFRAME before revealing, not merely for
+              // pixels. A viewer joining an already-running stream lands
+              // mid-GOP, so the decoder emits garbage (the green bands) until a
+              // keyframe arrives. videoWidth>0 is true of that garbage, which is
+              // why the green was visible for a second or two on every load.
+              // keyFramesDecoded is the precise signal for "the picture is now
+              // built from a real reference frame", and unlike iceConnectionState
+              // it does not depend on candidate types, so it cannot repeat the
+              // gate that previously killed every session over Tailscale.
+              // Feature-detected, and bounded: if the browser never reports it we
+              // reveal anyway after ~3s rather than hang on "Connecting".
+              let _kfSeen = false, _kfSupported = null;
+              const _kfPoll = function(){
+                try{
+                  const _pcs = _janusHandle && _janusHandle.webrtcStuff && _janusHandle.webrtcStuff.pc;
+                  if(!_pcs || !_pcs.getStats) { _kfSupported = false; return; }
+                  _pcs.getStats(null).then(function(st){
+                    st.forEach(function(r){
+                      if(r.type==='inbound-rtp' && r.kind==='video'){
+                        if(r.keyFramesDecoded == null){ _kfSupported = false; }
+                        else { _kfSupported = true; if(r.keyFramesDecoded > 0) _kfSeen = true; }
+                      }
+                    });
+                  }).catch(function(){ _kfSupported = false; });
+                }catch(e){ _kfSupported = false; }
+              };
               const _confirmTimer = setInterval(function(){
                 if(gen !== _webrtcGen){ clearInterval(_confirmTimer); return; }
-                if(vid.videoWidth > 0){ _stable++; } else { _stable = 0; }
+                _kfPoll();
+                const _pictureClean = (_kfSupported === false) || _kfSeen || _confirmTries >= 12;
+                if(vid.videoWidth > 0 && _pictureClean){ _stable++; } else { _stable = 0; }
                 if(_stable >= _STABLE_NEEDED){
                   _confirmed();
                   clearInterval(_confirmTimer);
@@ -3321,7 +3358,14 @@ function startWebRTC(){
                           // is not lost in the meantime.
                           if(r.framesDecoded!=null){
                             if(_wrtcLastFrames >= 0 && r.framesDecoded === _wrtcLastFrames && r.framesDecoded > 0){
-                              if(++_wrtcStallPolls >= 15){
+                              // Short leash for the first 30s of a new attempt
+                              // (3 polls = 6s), long leash afterwards (15 polls
+                              // = 30s). A stream that never really got going is
+                              // recovered in seconds instead of half a minute;
+                              // a settled stream on an idle desktop still gets
+                              // the full 30s before anyone calls it dead.
+                              const _young = (_wrtcConfirmedAt > 0) && (Date.now() - _wrtcConfirmedAt < 30000);
+                              if(++_wrtcStallPolls >= (_young ? 3 : 15)){
                                 _wrtcStallPolls = 0; _wrtcLastFrames = -1;
                                 _webrtcFallbackToMjpeg('video stalled (no new frames)');
                               }
@@ -3467,6 +3511,7 @@ function syncVideoTransport(mode){
 function stopWebRTC(){
   _webrtcGen++;                 // invalidate any in-flight attempt's async callbacks (P4)
   _webrtcConfirmed = false;
+  _wrtcConfirmedAt = 0;
   _webrtcTrackUp   = false;     // hand the screen back to MJPEG
   clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
   clearInterval(_webrtcFpsTimer); _webrtcFpsTimer = null;
