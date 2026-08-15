@@ -1818,7 +1818,16 @@ function retryStream(){
   // "the video keeps failing and drops to MJPEG". Clearing src first forces the
   // browser to close the old request before we ask for a new one.
   try{ $s.removeAttribute('src'); }catch(e){}
-  $s.src='/stream?_='+Date.now(); _frameLoadTimes=[];
+  // Browser-specific ustreamer hints (same as the PiKVM sibling). Without
+  // advance_headers Chrome can paint a PARTIAL first frame when a multipart
+  // stream opens, which renders as a burst of green/garbage lines for about a
+  // second on every connect and every 15s anti-stall reconnect. That is a
+  // rendering artifact of the fresh connection, NOT encoder corruption, and it
+  // survived the move to MJPEG because this parameter was never sent.
+  let _p='/stream?_='+Date.now();
+  if(/chrome|chromium|edg|crios/i.test(navigator.userAgent)) _p+='&advance_headers=1';
+  else if(/safari|iphone|ipad/i.test(navigator.userAgent))   _p+='&dual_final_frames=1';
+  $s.src=_p; _frameLoadTimes=[];
 }
 // Retry BUTTON handler: re-establish whatever transport is active. The old
 // button wired straight to retryStream(), which only pokes the MJPEG <img> -
