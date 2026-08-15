@@ -476,8 +476,17 @@ def _edid_numeric_serial(serial_str: str) -> int:
     human-readable serial string like the USB profiles use (e.g. 'DL3F9A2B').
     Derive a stable 32-bit value from the string via crc32 - NOT Python's
     hash(), which is per-process randomized (PYTHONHASHSEED) and would give
-    a different EDID serial every service restart."""
+    a different EDID serial every service restart.
+
+    Guard against an EMPTY serial. crc32('') is 0, which would write a header
+    serial of 0x00000000 - a "Dell with no serial", a mild forensic mismatch,
+    and if it ever reached more than one unit it would fleet-link them through a
+    shared zero. No live route passes an empty serial today (both callers fill
+    one in), but this makes that impossible to regress into: an empty/whitespace
+    serial becomes a per-unit random value instead of a shared zero."""
     import zlib
+    if not (serial_str or "").strip():
+        serial_str = _rand_serial("DL")
     return zlib.crc32(serial_str.encode()) & 0xFFFFFFFF
 
 
