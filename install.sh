@@ -181,7 +181,33 @@ set_cfgtxt "dtparam=i2c_arm=" "dtparam=i2c_arm=on"
 # needs no speed. (Key "dtparam=i2c_arm_baudrate=" does not collide with the
 # "dtparam=i2c_arm=" set above.)
 set_cfgtxt "dtparam=i2c_arm_baudrate=" "dtparam=i2c_arm_baudrate=50000"
-ok "config.txt set: dwc2 + tc358743(+audio) + camera_auto_detect=0 + i2c_arm + i2c_baud (idempotent)"
+
+# ── Video pipeline memory: match the settings real PiKVM ships ────────────────
+# Taken from a stock PiKVM image's config.txt (dtoverlay=cma,cma-128 + gpu_mem=128,
+# and notably NO vc4-kms-v3d). All three are Pi-internal: the target sees nothing,
+# no EDID/USB/HDMI behaviour changes.
+#
+# 1. vc4-kms-v3d is the DESKTOP display driver for the Pi's own HDMI OUTPUT. A
+#    headless KVM never uses it, and it takes over the video pipeline the
+#    hardware JPEG/H.264 encoders need. PiKVM deliberately does not load it.
+# 2. Removing it drops the CMA pool to a 64 MB default (that overlay was what
+#    sized it). CMA is where capture/encode buffers are allocated and a 1080p
+#    buffer is ~4 MB, so 64 MB is tight enough that an allocation can fail
+#    mid-frame - which is exactly how partial/garbage (green) frames are
+#    produced. Measured on the unit: 512 MB before, 64 MB after removal with
+#    only 18 MB free. PiKVM sizes it explicitly for this reason; 256 MB here
+#    since this board has 8 GB RAM (PiKVM sized 128 for a 1-2 GB CM4).
+# 3. gpu_mem was auto-assigned 76 MB; the hardware codecs want PiKVM's 128 MB.
+set_cfgtxt "dtoverlay=cma," "dtoverlay=cma,cma-256"
+set_cfgtxt "gpu_mem=" "gpu_mem=128"
+# Comment out rather than delete, so the original is still visible on the card.
+if grep -qE '^\s*dtoverlay=vc4-kms-v3d' "$CONFIG_TXT" 2>/dev/null; then
+    sed -i 's|^\s*dtoverlay=vc4-kms-v3d|#dtoverlay=vc4-kms-v3d   # MagicBridge: headless KVM, frees the video pipeline|' "$CONFIG_TXT"
+fi
+if grep -qE '^\s*max_framebuffers=' "$CONFIG_TXT" 2>/dev/null; then
+    sed -i 's|^\s*max_framebuffers=|#max_framebuffers=|' "$CONFIG_TXT"
+fi
+ok "config.txt set: dwc2 + tc358743(+audio) + camera_auto_detect=0 + i2c_arm + i2c_baud + cma-256/gpu_mem=128 (idempotent)"
 
 # Load modules now where possible (full effect needs a reboot).
 modprobe libcomposite 2>/dev/null || warn "libcomposite not loadable now, needs reboot"
