@@ -761,16 +761,21 @@ body:not(.fs) .fs-hud{display:none!important}
                    land on, which blanked the row and dropped fps entirely. -->
               <option value="50">50 fps</option>
               <option value="30">30 fps</option>
-              <option value="25" selected>25 fps ★</option>
-              <option value="20">20 fps</option>
+              <option value="25">25 fps</option>
+              <option value="20" selected>20 fps ★</option>
               <option value="15">15 fps</option>
+              <!-- MJPEG has no inter-frame compression, so on a weak uplink the
+                   only way to fit 1080p is fewer frames. Without these the low
+                   end was unreachable from the UI. -->
+              <option value="10">10 fps</option>
+              <option value="5">5 fps</option>
             </select>
           </div>
           <div class="srow" style="margin-top:6px"><span class="sk">Bandwidth</span>
             <span style="display:flex;gap:4px">
-              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('640x360',15,'low')" title="Low bitrate (1.5 Mbps) - for slow / remote links">Low</button>
-              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('1280x720',30,'bal')" title="Balanced (4 Mbps) - default">Bal</button>
-              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidth('1920x1080',50,'sharp')" title="Sharp (8 Mbps) - LAN / fast link">Sharp</button>
+              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidthAuto('640x360',15,'low')" title="Slow or remote links">Low</button>
+              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidthAuto('1280x720',30,'bal')" title="Balanced, default">Bal</button>
+              <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidthAuto('1920x1080',50,'sharp')" title="Sharp, LAN or fast link">Sharp</button>
             </span>
           </div>
           <button class="sbtn pri" style="margin-top:6px" onclick="applyVideo()">▶ Apply</button>
@@ -2831,6 +2836,17 @@ document.getElementById('pinput').addEventListener('keydown',e=>{if(e.key==='Ent
 // did almost nothing for someone on a congested link. Now each preset carries a
 // real bitrate target too.
 const _BW_BITRATE = {low: 1500, bal: 4000, sharp: 8000};
+// MJPEG needs a different lever than WebRTC. On a CSI capture the resolution is
+// discarded (we must follow the source signal) and `bitrate` only ever reaches
+// --h264-bitrate, so on the MJPEG path the ONLY things that move the wire are
+// fps and JPEG quality. Measured on a 1080p unit: q10 87 KB/frame, q15 108 KB,
+// q20 129 KB, q25 147 KB. Before this, "Low" actually RAISED bandwidth on MJPEG
+// (it pushed fps from 10 up to 15) while its tooltip promised 1.5 Mbps.
+const _BW_MJPEG = {
+  low:   {fps: 10, quality: 10},   // ~7 Mbit/s at 1080p
+  bal:   {fps: 20, quality: 12},   // ~16 Mbit/s
+  sharp: {fps: 25, quality: 25},   // ~30 Mbit/s, LAN only
+};
 function setBandwidth(res,fps,tier){
   const r=document.getElementById('sel-res'), f=document.getElementById('sel-fps');
   if(r) r.value=res;
@@ -2841,6 +2857,26 @@ function setBandwidth(res,fps,tier){
   if(f && Array.prototype.some.call(f.options,o=>o.value===String(fps))) f.value=String(fps);
   applyVideo(_BW_BITRATE[tier]);
 }
+// Bandwidth preset for the MJPEG path: drives fps + quality instead of a
+// resolution the CSI pipeline throws away and a bitrate only H.264 reads.
+async function setBandwidthMjpeg(tier){
+  const p=_BW_MJPEG[tier]; if(!p) return;
+  const f=document.getElementById('sel-fps');
+  if(f && Array.prototype.some.call(f.options,o=>o.value===String(p.fps))) f.value=String(p.fps);
+  toast('Applying…',4000);
+  try{
+    const r=await fetch('/api/stream/settings',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({mode:'mjpeg', fps:p.fps, quality:p.quality})});
+    const d=await r.json();
+    toast(d && d.ok ? 'Applied ✓' : 'Could not apply');
+    setTimeout(refreshStatus, 1500);
+  }catch(e){ toast('Not connected'); }
+}
+// Route each preset to the lever that actually works for the ACTIVE transport.
+function setBandwidthAuto(res,fps,tier){
+  if(_activeTransport === 'mjpeg' || _preferredTransport === 'mjpeg') return setBandwidthMjpeg(tier);
+  return setBandwidth(res,fps,tier);
+}
 // The transport the OPERATOR chose, kept apart from whatever is on the wire
 // right now. applyVideo POSTs this and the backend persists it into config.json
 // and re-reads it at every boot, so it must only ever change on a deliberate
@@ -2849,6 +2885,7 @@ function setBandwidth(res,fps,tier){
 // hiccup, then one click on a bandwidth preset (which is exactly what you reach
 // for when video just got worse) pinned EVERY viewer to MJPEG permanently,
 // across reboots, defeating the whole rearm/decay machinery below.
+let _vidSelsLoaded = false;              // load fps/res from the server exactly once
 let _preferredTransport = 'h264';        // matches the selected <option> in the markup
 let _transportPrefLoaded = false;        // first /api/status carries the persisted choice
 const _selMode = document.getElementById('sel-mode');
@@ -3617,6 +3654,22 @@ async function refreshStatus(){
     const r=await fetch('/api/status');const d=await r.json();
     applyStatus(d);
     if(typeof d.mjpeg_fallback === 'boolean') _mjpegFallbackAllowed = d.mjpeg_fallback;
+    // Load the LIVE encoder settings into the selects once. Without this the
+    // dropdowns kept their markup defaults, so any Apply/preset click POSTed a
+    // stale fps and silently overwrote the real tuning (and persisted it).
+    if(!_vidSelsLoaded && d.stream){
+      _vidSelsLoaded = true;
+      const f=document.getElementById('sel-fps'), r=document.getElementById('sel-res');
+      if(f && d.stream.fps){
+        const want=String(d.stream.fps);
+        if(!Array.prototype.some.call(f.options,o=>o.value===want)){
+          const op=document.createElement('option'); op.value=want; op.textContent=want+' fps'; f.appendChild(op);
+        }
+        f.value=want;
+      }
+      if(r && d.stream.resolution && Array.prototype.some.call(r.options,o=>o.value===d.stream.resolution))
+        r.value=d.stream.resolution;
+    }
     maybeShowPwWarn(!!d.default_pw);
   }catch(e){}
 }

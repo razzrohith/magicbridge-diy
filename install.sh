@@ -328,7 +328,7 @@ if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
     "resolution": "1920x1080",
     "fps":        50,
     "quality":    80,
-    "mode":       "auto"
+    "mode":       "mjpeg"
   },
   "mac_persist":   {},
   "mac_autospoof": true,
@@ -364,7 +364,7 @@ DEFAULTS = {
     },
     "video": {
         "device": "", "resolution": "1920x1080",
-        "fps": 30, "quality": 80, "mode": "auto",
+        "fps": 20, "quality": 12, "mode": "mjpeg",
     },
     "mac_persist": {},
     "mac_autospoof": True,
@@ -901,14 +901,16 @@ if [[ "$WITH_WEBRTC" == 1 ]]; then
     if bash "$INSTALL_DIR/install_janus_webrtc.sh"; then
         systemctl enable janus-webrtc 2>/dev/null || true
         systemctl start  janus-webrtc 2>/dev/null || true
-        # Prefer the H.264/WebRTC path; video.py falls back to MJPEG on its own
-        # if Janus or the C790 aren't actually available, so this is safe.
-        if command -v jq &>/dev/null && [[ -f "$CONFIG_DIR/config.json" ]]; then
-            tmp=$(mktemp)
-            jq '.video.mode = "h264"' "$CONFIG_DIR/config.json" > "$tmp" \
-                && mv "$tmp" "$CONFIG_DIR/config.json" && chmod 600 "$CONFIG_DIR/config.json"
-        fi
-        ok "WebRTC installed + enabled (video mode set to h264)"
+        # Deliberately does NOT flip video.mode to h264 any more. Installing the
+        # WebRTC stack should make H.264 AVAILABLE, not silently move the capture
+        # pipeline onto it. On a Pi 4 the SoC H.264 M2M encoder corrupts
+        # high-contrast repeating patterns after 10-20 seconds
+        # (raspberrypi/linux#5180, still open, and the I-frame does not repair
+        # it), and a KVM screen is exactly that content. Flipping the mode here
+        # is one of the paths that put units onto the broken encoder without
+        # anyone choosing it. Select WebRTC in the web UI, or set
+        # video.mode = "h264" in config.json, to opt in deliberately.
+        ok "WebRTC installed + enabled (capture stays on MJPEG; pick WebRTC in the UI to use it)"
     else
         warn "WebRTC build failed — the MJPEG path still works. Re-run later:"
         warn "  sudo bash $INSTALL_DIR/install_janus_webrtc.sh"

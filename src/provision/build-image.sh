@@ -143,7 +143,7 @@ if [[ "$MODE" == "verify" ]]; then
   chk "RAM-log tmpfs is mode=0755 (not 1777)"        '! grep -qE "magicbridge-ram.*mode=1777" "$R/etc/fstab"'
   chk "config: no auth (defaults on first boot)"     'python3 -c "import json,sys;sys.exit(0 if \"auth\" not in json.load(open(\"$R/etc/magicbridge/config.json\")) else 1)"'
   chk "config: mac_persist empty"                    'python3 -c "import json,sys;sys.exit(0 if not json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"mac_persist\") else 1)"'
-  chk "config: video.mode=auto (detects C790 or USB)" 'python3 -c "import json,sys;sys.exit(0 if json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"video\",{}).get(\"mode\")==\"auto\" else 1)"'
+  chk "config: video.mode=mjpeg (H.264 is opt-in)" 'python3 -c "import json,sys;sys.exit(0 if json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"video\",{}).get(\"mode\")==\"mjpeg\" else 1)"'
   echo ""
   if [[ $FAIL -eq 0 ]]; then ok "ALL CHECKS PASSED — safe to distribute"; exit 0
   else die "$FAIL check(s) FAILED — do NOT distribute this image"; fi
@@ -392,8 +392,16 @@ c.pop("auth",None); c.pop("tailscale",None); c.pop("duckdns",None)
 if isinstance(c.get("ai"),dict): c["ai"].pop("keys",None)   # provider API keys - never ship
 if isinstance(c.get("usb"),dict): c["usb"]["serial"]=""
 c["mac_persist"]={}                        # -> unique vendor MAC per unit
-c.setdefault("video",{})["mode"]="auto"    # -> detects C790/CSI or USB per unit
-c["video"]["fps"]=50                       # -> match a 1080p50 source (every frame; smoothest input). video.py caps to the real source refresh via a clean divisor
+c.setdefault("video",{})["mode"]="mjpeg"   # MJPEG, not auto/h264: the Pi4 SoC H.264 M2M
+# encoder corrupts high-contrast text after 10-20s (raspberrypi/linux#5180, unfixed,
+# and the I-frame does not repair it) and a KVM screen is exactly that content. The
+# MJPEG path uses a different hardware block and cannot show it. H.264 stays
+# available as a deliberate opt-in from the web UI.
+c["video"]["fps"]=20                       # smooth enough for desktop work; a clean
+# decimation of the 1080p50 source, and ~16 Mbit/s at quality 12, which fits a
+# typical WiFi uplink. 50 fps of 1080p MJPEG would be ~60 Mbit/s and saturate it.
+c["video"]["quality"]=12                   # MJPEG has no inter-frame compression, so
+# quality is the only real lever on bandwidth. Measured at 1080p: q12 = 96 KB/frame.
 c["mdns_alias"]=""                         # DISTRIBUTABLE default = full stealth: no
 # clone advertises the branded "magicbridge.local" on the LAN (N clones would
 # collide -> avahi renames losers magicbridge-2.local, leaking fleet size + the

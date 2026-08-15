@@ -503,9 +503,28 @@ class VideoManager:
             # present, so this stays safe on a CSI board without WebRTC built.
             if self.mode in (None, "", "auto"):
                 dtype = self.device_type(self.device)
-                self.mode = "h264" if dtype == "csi" else "mjpeg"
-                log.info("Auto capture mode: %s is '%s' -> %s mode",
-                         self.device, dtype, self.mode)
+                # "auto" resolves to MJPEG on BOTH device classes now.
+                #
+                # It used to pick H.264 for a CSI board. That is wrong on a Pi 4:
+                # the SoC's H.264 M2M encoder corrupts high-contrast repeating
+                # patterns (raspberrypi/linux#5180, still open) about 10-20s in,
+                # and "the I-frame does not restore the image", so a keyframe
+                # cannot repair it. A KVM screen - code editors, terminals,
+                # admin consoles - is exactly that content, so the corruption is
+                # the normal case here, not an edge case. It is produced inside
+                # the encoder before any packet is sent, so no amount of network
+                # tuning helps. The MJPEG path uses a DIFFERENT hardware block
+                # (M2M-IMAGE) and has no inter-frame prediction, so it cannot
+                # exhibit this at all. TinyPilot ships MJPEG as its primary
+                # transport on the same silicon for the same reason.
+                #
+                # H.264 remains fully supported, but it must now be an explicit
+                # opt-in (video.mode = "h264"), never something a unit lands on
+                # by default and then silently corrupts.
+                self.mode = "mjpeg"
+                log.info("Auto capture mode: %s is '%s' -> mjpeg "
+                         "(H.264 is opt-in: Pi4 M2M encoder corrupts text, see "
+                         "raspberrypi/linux#5180)", self.device, dtype)
 
             # CSI: follow the LIVE signal, never the configured resolution.
             # The TC358743 re-locks to whatever the source sends, so a config
@@ -674,6 +693,11 @@ class VideoManager:
             _is_csi = self.device_type(self.device) == "csi"
         except Exception:
             pass
+        # Anything at/above 720p is "high res" for MJPEG bandwidth purposes.
+        try:
+            _hi_res = int(str(self.resolution).split("x")[0]) >= 1280
+        except Exception:
+            _hi_res = True          # unknown: assume big and clamp (fail safe)
         cmd = [
             "ustreamer",
             "--device",         self.device,
@@ -683,13 +707,26 @@ class VideoManager:
                 "--format",       "UYVY",          # what the TC358743 actually delivers
                 "--encoder",      "M2M-IMAGE",     # SoC hardware JPEG encoder
                 "--dv-timings",                     # follow the live HDMI signal
+                # Match the H.264 launcher's proven numbers for this SAME SoC
+                # block. Measured there: workers=3 gave 239 KB median frames,
+                # 49 Mbit/s and heavy banding; workers=1 gave 73 KB, 25 Mbit/s,
+                # pixel-clean, and MORE frames (87 vs 78). Contending workers on
+                # one hardware encoder makes output worse and bigger, not faster.
+                "--workers",      "1",
+                "--buffers",      "8",
             ]
         else:
             cmd += ["--format", "MJPEG"]           # USB dongle: native HW MJPEG
         cmd += [
             "--resolution",     self.resolution,
             "--desired-fps",    str(self.fps),
-            "--quality",        str(self.quality),
+            # Clamp at high resolution. The shipped defaults are 80-90, and at
+            # 1080p that was measured at 31.9 Mbit/s - more than this class of
+            # link can carry, which is what turned the fallback into a link-
+            # saturating death spiral. MJPEG has no inter-frame compression, so
+            # quality is the ONLY lever on its size; a hard cap here means no
+            # config or UI click can put the unit back into that state.
+            "--quality",        str(min(self.quality, 30) if _hi_res else self.quality),
             "--host",           STREAM_HOST,
             "--port",           str(self.port),
             "--workers",        "2",
@@ -1016,12 +1053,14 @@ class VideoManager:
         broken MJPEG path forever, converting a momentary H.264 hiccup into a
         permanently dead stream. On CSI: leave mode alone and return False so
         the next restart retries H.264 once the transient clears."""
-        if self.device_type(self.device) == "csi":
-            self.h264_sink = None
-            log.warning("H.264 start failed on CSI device %s; NOT falling back to "
-                        "MJPEG (the board can't produce it) - will retry H.264",
-                        self.device)
-            return False
+        # The old code refused to fall back on CSI, on the premise that the
+        # board "can't produce" MJPEG. That premise is dead: _start_ustreamer now
+        # drives CSI natively with --format UYVY --encoder M2M-IMAGE (measured
+        # 24.7 fps on this hardware). Refusing meant a failed H.264 launch left
+        # video PERMANENTLY DARK while the watchdog relaunched the identical
+        # failing command forever - reachable on any install without
+        # --with-webrtc, where the apt ustreamer does not accept --h264-sink.
+        # Falling back to a proven working path always beats a black screen.
         self.mode = "mjpeg"
         self.h264_sink = None
         return self._start_ustreamer()
