@@ -185,7 +185,20 @@ body:not(.fs) .fs-hud{display:none!important}
 /* Main */
 #main{flex:1;display:flex;overflow:hidden;position:relative}
 #view{flex:1;position:relative;overflow:hidden;background:#000;min-width:0;cursor:default}
-#stream{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none}
+/* GPU-composite the video surfaces.
+   Without this the browser rescales every incoming 1920x1080 frame to the
+   viewport ON THE MAIN THREAD - the same thread that handles mouse/keyboard and
+   answers the latency ping. Measured: the WebSocket round trip is 15ms when
+   probed directly, but the page reported 288ms, i.e. ~270ms of main-thread
+   blocking. Promoting these elements to their own compositing layer moves the
+   per-frame scale/paint onto the GPU, so decoding a frame no longer stalls
+   input. translateZ(0) does the promotion, will-change keeps the layer alive
+   between frames (without it the layer is torn down and rebuilt constantly),
+   backface-visibility avoids an extra raster pass, and `contain` stops a frame
+   update from invalidating layout for the overlays stacked above the video. */
+#stream{width:100%;height:100%;object-fit:contain;display:block;pointer-events:none;
+  transform:translateZ(0);will-change:transform;backface-visibility:hidden;
+  contain:paint}
 #nosig{position:absolute;inset:0;display:flex;flex-direction:column;
   align-items:center;justify-content:center;gap:12px;background:#000;z-index:2}
 .nsico{opacity:.2}
@@ -696,7 +709,7 @@ body:not(.fs) .fs-hud{display:none!important}
 <div id="main">
   <div id="view">
     <img id="stream" src="/stream" alt="" onerror="onErr()" onload="onLoad()">
-    <video id="webrtc-view" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:contain;background:#000"></video>
+    <video id="webrtc-view" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:contain;background:#000;transform:translateZ(0);will-change:transform;backface-visibility:hidden;contain:paint"></video>
     <div id="nosig">
       <svg class="nsico" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1" style="display:none">
         <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>

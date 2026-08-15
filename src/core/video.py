@@ -927,13 +927,17 @@ class VideoManager:
             "--h264-sink-mode",   "660",
             "--h264-sink-rm",
             "--h264-bitrate",     str(self.bitrate),
-            # ~0.5s keyframe interval (was ~1s). On a lossy link a dropped packet
-            # corrupts the H.264 stream (the green bands) until the next keyframe
-            # refreshes it, so a shorter interval halves how long that corruption
-            # is visible. It also makes each keyframe smaller and the bitrate
-            # smoother (fewer big bursts), which a marginal WiFi uplink tolerates
-            # better. Never 0 (an invalid GOP breaks SPS/IDR pairing).
-            "--h264-gop",         str(max(1, _eff_fps // 2)),
+            # 1 second keyframe interval (PiKVM uses the same: gop == fps).
+            # A shorter GOP was tried to shorten visible corruption, but that
+            # only pays off on a LOSSY link, and this path measures 0% packet
+            # loss - the constraint here is BANDWIDTH, not loss. Keyframes are
+            # by far the most expensive frames, so at the low bitrates a real
+            # remote link allows (this one measured ~3 Mbit/s end to end),
+            # emitting them twice as often spends a large share of the budget
+            # re-sending a full picture instead of on actual detail. 1s keeps
+            # quality up and still recovers quickly. Never 0 (an invalid GOP
+            # breaks SPS/IDR pairing).
+            "--h264-gop",         str(max(1, _eff_fps)),
         ]
         try:
             self.process = subprocess.Popen(
