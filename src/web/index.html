@@ -829,6 +829,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="cur-opt" data-c="crosshair" onclick="setCursor('crosshair')">Crosshair</button>
             <button class="cur-opt" data-c="dot" onclick="setCursor('dot')">Dot</button>
           </div>
+          <div class="snote" style="margin-top:6px">Arrow &amp; Hidden show only the target's own pointer while you control. Crosshair &amp; Dot stay on screen as an aiming aid.</div>
           <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:pointer">
             <input type="checkbox" id="overlay-chk" onchange="toggleOverlay(this.checked)" checked style="accent-color:var(--accent)">
             Show predictive cursor when locked (relative mode)
@@ -2561,29 +2562,44 @@ document.addEventListener('contextmenu',e=>{
 });
 
 // Cursor
+// A small white dot with a dark outline, as a real CSS cursor (data URI), so the
+// "Dot" style is an actual pointer you can aim with - not just "no cursor". 6,6
+// is the hotspot (centre of the 12px dot).
+const _DOT_CURSOR = "url(\"data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'12'%20height%3D'12'%3E%3Ccircle%20cx%3D'6'%20cy%3D'6'%20r%3D'4'%20fill%3D'white'%20stroke%3D'black'%20stroke-width%3D'1.5'%2F%3E%3C%2Fsvg%3E\") 6 6, auto";
 let _cursorStyle='default';
 function setCursor(c){
   _cursorStyle=c;
-  document.querySelectorAll('.cur-opt').forEach(b=>b.classList.toggle('active',b.dataset.c===c));
+  // Scope to THIS card's buttons. The Relative/Absolute mode buttons also carry
+  // the .cur-opt class, so an unscoped querySelectorAll used to strip their
+  // 'active' highlight every time a cursor style was picked - which made the
+  // whole panel look like it was mis-toggling.
+  document.querySelectorAll('#cursor-opts .cur-opt').forEach(b=>b.classList.toggle('active',b.dataset.c===c));
+  // Keep the choice across reloads, like the predictive-cursor checkbox does.
+  try{ localStorage.setItem('mb_cursor', c); }catch(e){}
+  // Let the relative-mode predictive dot follow a Crosshair choice too.
+  const _cd=document.getElementById('cur-dot'); if(_cd) _cd.classList.toggle('cross', c==='crosshair');
   _applyViewCursor();
 }
-// In ABSOLUTE mode our cursor maps 1:1 onto the target's own pointer, so drawing
-// both just shows two arrows a few frames apart - which reads as "they don't
-// line up". While actually controlling, hide ours and let the target's pointer
-// be the single source of truth. It comes back the moment you release control,
-// so you can still see where you're aiming to click back in. Picking any cursor
-// style other than Arrow is treated as a deliberate override and is honoured
-// even while captured.
+// What you see OVER THE VIDEO. The interaction with the two mouse modes is the
+// part that confuses people, so, concretely:
+//  - ABSOLUTE mode: your real pointer maps 1:1 onto the target's own pointer.
+//    By default (Arrow) we HIDE the local one while you control, so you see only
+//    the target's - two arrows a few frames apart just read as "they don't line
+//    up". But Crosshair and Dot are deliberate aiming aids and ARE shown while
+//    controlling (this is the behaviour the old code described but never did).
+//  - RELATIVE mode: the browser's pointer lock hides the OS cursor no matter what
+//    this is set to, so the on-screen indicator there is the predictive dot
+//    (the checkbox below), whose shape follows a Crosshair choice.
+// Either way the local pointer returns the instant you release control.
 function _applyViewCursor(){
-  // While actually controlling, never draw our local arrow over the video. The
-  // target renders its own pointer (absolute mode maps 1:1 onto it), so a
-  // second local arrow just reads as a mismatched duplicate cursor. Requested
-  // directly by the operator: they want to see ONLY the target's own cursor.
-  // It returns the instant control is released, so you can still see where you
-  // are aiming to click back in. In relative mode the predictive dot (#cur-dot)
-  // remains the pointing indicator under pointer lock.
-  if(captured){ $view.style.cursor='none'; return; }
-  $view.style.cursor = (_cursorStyle==='dot' || _cursorStyle==='none') ? 'none' : _cursorStyle;
+  if(captured){
+    if(_cursorStyle==='crosshair'){ $view.style.cursor='crosshair'; return; }
+    if(_cursorStyle==='dot'){ $view.style.cursor=_DOT_CURSOR; return; }
+    $view.style.cursor='none'; return;   // Arrow (default) and Hidden: target's pointer is the truth
+  }
+  $view.style.cursor = _cursorStyle==='dot' ? _DOT_CURSOR
+                     : _cursorStyle==='none' ? 'none'
+                     : _cursorStyle;      // 'default' (arrow) | 'crosshair'
 }
 function toggleOverlay(on){
   _showOverlay=!!on;
@@ -2601,6 +2617,13 @@ function toggleOverlay(on){
   _showOverlay=on;
   const c=document.getElementById('overlay-chk'); if(c) c.checked=on;
   if(!on){ const d=document.getElementById('cur-dot'); if(d) d.style.display='none'; }
+})();
+// Restore the saved cursor style (default Arrow). setCursor also re-highlights
+// the right button and syncs the predictive dot's shape.
+(function(){
+  let c='default';
+  try{ const v=localStorage.getItem('mb_cursor'); if(v) c=v; }catch(e){}
+  if(typeof setCursor==='function') setCursor(c);
 })();
 
 // --- Target screen area (absolute-mouse calibration) -----------------------
