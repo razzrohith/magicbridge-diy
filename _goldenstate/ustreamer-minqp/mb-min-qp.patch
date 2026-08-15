@@ -1,0 +1,17 @@
+--- src/ustreamer/m2m.c.orig	2026-07-21 23:54:33.771392803 -0500
++++ src/ustreamer/m2m.c	2026-08-15 12:27:49.495806073 -0500
+@@ -251,7 +251,13 @@
+ 			SET_OPTION(V4L2_CID_MPEG_VIDEO_H264_LEVEL,		V4L2_MPEG_VIDEO_H264_LEVEL_5_1);
+ 		}
+ 		SET_OPTION(V4L2_CID_MPEG_VIDEO_REPEAT_SEQ_HEADER,	1);
+-		SET_OPTION(V4L2_CID_MPEG_VIDEO_H264_MIN_QP,			16);
++		{
++			// TEST BUILD: MIN_QP settable via MB_H264_MIN_QP so it can be swept
++			// without a rebuild per value. Default 16 = upstream behaviour.
++			const char *const _mq = getenv("MB_H264_MIN_QP");
++			const int _minqp = (_mq != NULL && atoi(_mq) > 0) ? atoi(_mq) : 16;
++			SET_OPTION(V4L2_CID_MPEG_VIDEO_H264_MIN_QP,			_minqp);
++		}
+ 		SET_OPTION(V4L2_CID_MPEG_VIDEO_H264_MAX_QP,			32);
+ 	} else if (enc->out_format == V4L2_PIX_FMT_MJPEG) {
+ 		SET_OPTION(V4L2_CID_MPEG_VIDEO_BITRATE,				enc->bitrate);

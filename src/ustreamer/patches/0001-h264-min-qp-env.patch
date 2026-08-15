@@ -1,0 +1,21 @@
+--- a/src/ustreamer/m2m.c
++++ b/src/ustreamer/m2m.c
+@@ -251,7 +251,17 @@
+ 			SET_OPTION(V4L2_CID_MPEG_VIDEO_H264_LEVEL,		V4L2_MPEG_VIDEO_H264_LEVEL_5_1);
+ 		}
+ 		SET_OPTION(V4L2_CID_MPEG_VIDEO_REPEAT_SEQ_HEADER,	1);
+-		SET_OPTION(V4L2_CID_MPEG_VIDEO_H264_MIN_QP,			16);
++		{
++			// MagicBridge: MIN_QP settable at runtime via MB_H264_MIN_QP.
++			// This is the ONLY working bitrate ceiling on the Pi 4B's
++			// bcm2835-codec (the --h264-bitrate target is inert here; MAX_QP
++			// and a re-applied bitrate were both measured to do nothing).
++			// MIN_QP bounds bits-per-frame, so it caps the motion peak that
++			// otherwise floods a slow uplink. Absent/invalid -> 16 (upstream).
++			const char *const _mq = getenv("MB_H264_MIN_QP");
++			const int _minqp = (_mq != NULL && atoi(_mq) > 0) ? atoi(_mq) : 16;
++			SET_OPTION(V4L2_CID_MPEG_VIDEO_H264_MIN_QP,			_minqp);
++		}
+ 		SET_OPTION(V4L2_CID_MPEG_VIDEO_H264_MAX_QP,			32);
+ 	} else if (enc->out_format == V4L2_PIX_FMT_MJPEG) {
+ 		SET_OPTION(V4L2_CID_MPEG_VIDEO_BITRATE,				enc->bitrate);
