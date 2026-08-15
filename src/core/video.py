@@ -1278,6 +1278,7 @@ class VideoManager:
             fails = 0
             res_check = 0      # throttles the live-timings comparison
             res_miss = 0       # consecutive resolution mismatches (debounce)
+            sig_absent = 0     # consecutive checks with NO source signal
             while True:
                 # Exponential backoff on consecutive failures so a persistently
                 # un-launchable stream doesn't restart-storm every 5 s forever
@@ -1306,6 +1307,39 @@ class VideoManager:
                 #    can't bounce a healthy stream.
                 # --query-dv-timings is a read-only query ioctl, safe to issue
                 # while ustreamer holds the node.
+                # Source signal came back = restart the stream.
+                #
+                # When the TARGET reboots (or sleeps, or its cable is replugged)
+                # the HDMI signal drops and returns at the SAME resolution.
+                # Neither existing trigger fires: ustreamer runs with
+                # --persistent so the process never dies, and the resolution is
+                # unchanged so the mismatch branch below never matches. The
+                # encoder therefore keeps running across the blackout while every
+                # connected viewer is left holding a decoder whose reference
+                # frames are gone. Clients only recovered via their own stall
+                # watchdog, which is deliberately patient (30s) so an idle desktop
+                # is not mistaken for a dead feed - that 30s of garbage-then-slow
+                # after a target reboot is exactly what this closes.
+                #
+                # Checked EVERY loop (~5s), not on the 15s resolution throttle,
+                # because this is the latency the operator actually feels.
+                # --query-dv-timings is a read-only ioctl and is safe while
+                # ustreamer holds the node; nothing here touches the target.
+                if not needs_restart and self.is_running():
+                    try:
+                        _is_csi_sig = bool(self.device) and self.device_type(self.device) == "csi"
+                    except Exception:
+                        _is_csi_sig = False
+                    if _is_csi_sig:
+                        _det_sig = self.detect_csi_timings(self.device)
+                        if _det_sig is None:
+                            sig_absent += 1          # source is dark (off/rebooting)
+                        elif sig_absent > 0:
+                            needs_restart = True
+                            reason = ("source signal returned after %d check(s) dark "
+                                      "(target power/reboot) - relaunching so viewers "
+                                      "get a clean stream" % sig_absent)
+                            sig_absent = 0
                 if not needs_restart and self.is_running():
                     res_check += 1
                     if res_check >= 3:
