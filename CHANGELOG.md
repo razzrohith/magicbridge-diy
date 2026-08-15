@@ -23,6 +23,20 @@ or understand.
 - Roughly half the bandwidth for the same picture. Video now sends a full frame
   every two seconds instead of every second, measured 4.18 down to 2.29 Mbit/s,
   which is what brings it inside what a typical remote connection carries.
+- Control is no longer dragged down by the picture. Moving things on the target
+  screen used to push video far past what a remote connection can carry, and the
+  keyboard and mouse queued up behind it. Measured on a real remote link, worst
+  case control delay dropped from about 940 ms to about 27 ms, and video now
+  stays under the connection's capacity instead of exceeding it four times over.
+- A new picture quality setting actually controls bandwidth, unlike the bitrate
+  setting which this hardware ignores. Lower quality means a slightly coarser
+  picture and much steadier control on a slow connection.
+- Fast mouse movement no longer builds a backlog. Moves were being queued into
+  the connection faster than it could send them, so the pointer ran behind and
+  clicks landed where it used to be. Movement is now held back while the
+  connection catches up, and the pointer jumps straight to the right place.
+- A working session is no longer dropped just for being slow, and if the
+  connection does drop, control comes back in at most 5 seconds instead of 15.
 - Known limitation, now documented: the video bitrate setting has no effect on
   this hardware. The Pi's built in encoder ignores it. Asking for 350 kbps and
   asking for 10000 kbps produce the same picture and the same bandwidth. Two
