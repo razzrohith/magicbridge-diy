@@ -807,6 +807,17 @@ class VideoManager:
             "--drop-same-frames", "10",
             "--resolution",       cmd_res,
             "--desired-fps",      str(_eff_fps),
+            # JPEG quality for the MJPEG side of this h264-mode process. It was
+            # left at ustreamer's default here, so the FALLBACK path served
+            # near-max-quality 1080p JPEGs. That is the heaviest thing this unit
+            # can put on the wire, and it is exactly what runs when WebRTC is
+            # unavailable or while several tabs are open (each tab pulls its own
+            # /stream). Measured on a weak uplink: 4 concurrent full-quality
+            # MJPEG pulls saturate the link, which starves the input WebSocket
+            # and makes the cursor stick. Capping it keeps the safety net usable
+            # instead of making the link worse than no video at all. Does not
+            # touch H.264 quality (that is --h264-bitrate below).
+            "--quality",          str(min(self.quality, 60)),
             "--host",             STREAM_HOST,
             "--port",             str(self.port),
             # THE single biggest latency win found so far. ustreamer documents

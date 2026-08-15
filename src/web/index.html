@@ -3143,27 +3143,33 @@ function startWebRTC(){
                 vid._mbConfirmPlaying = null;
               }
               if(vid._mbConfirmTimer){ clearInterval(vid._mbConfirmTimer); }
-              // GREEN-STARTUP FIX. Reveal the <video> only when the picture is
-              // CLEAN, not on the first frame. For the first 1-2s of a WebRTC
-              // connection ICE is still pruning dead candidate pairs, and Janus's
-              // failed sends on those pairs ("only sent -1 bytes" in its log)
-              // drop RTP, so the raw h264 decodes as green bands that crawl top
-              // to bottom until a keyframe refreshes them. The opaque #nosig
-              // "Connecting" overlay (z-index above the video) stays up covering
-              // that, and we lift it only once ICE is connected/completed AND
-              // pixels have been arriving steadily for ~1 keyframe interval
-              // (GOP is ~1s), so the first frame the operator actually sees is a
-              // clean one. The old trigger (first videoWidth>0) fired on the
-              // first, usually-green, frame - which is exactly what was on screen.
+              // Reveal on real pixels. Do NOT gate this on iceConnectionState.
+              //
+              // A previous version required iceConnectionState to be
+              // "connected"/"completed" before showing the video, to hide the
+              // first green frames. That BROKE the whole transport on this
+              // product's main use case: over Tailscale (an L3 link) Chrome's
+              // mDNS ".local" host candidates can never be resolved by Janus
+              // ("Failed to add some remote candidates (added 0, expected 1)"),
+              // so the pair that actually carries media is peer-reflexive and
+              // iceConnectionState can sit at "checking" even though the DTLS
+              // handshake completed and RTP is flowing. The gate therefore never
+              // opened, the UI sat on "Connecting...", and the fallback tore a
+              // WORKING WebRTC session down into MJPEG about a second after the
+              // handshake succeeded, then retried forever. Confirmed in Janus's
+              // log: "DTLS handshake has been completed" at :56, "Memsink closed"
+              // at :57.
+              //
+              // videoWidth > 0 is the honest signal that pixels are decoding.
+              // Requiring 2 consecutive polls (~0.5s, one GOP at gop=fps/2) still
+              // skips the first keyframe-less frames without depending on any ICE
+              // state string. The green itself is handled where it belongs: the
+              // jitter buffer + NACK repair below, not by hiding the video.
               let _confirmTries = 0, _stable = 0;
-              const _STABLE_NEEDED = 4;   // ~1s at 250ms: covers one GOP + margin
+              const _STABLE_NEEDED = 2;   // ~0.5s at 250ms: one GOP, no ICE dependency
               const _confirmTimer = setInterval(function(){
                 if(gen !== _webrtcGen){ clearInterval(_confirmTimer); return; }
-                const _pc = _janusHandle && _janusHandle.webrtcStuff && _janusHandle.webrtcStuff.pc;
-                const _iceOk = _pc && (_pc.iceConnectionState==='connected'
-                                    || _pc.iceConnectionState==='completed'
-                                    || _pc.connectionState==='connected');
-                if(vid.videoWidth > 0 && _iceOk){ _stable++; } else { _stable = 0; }
+                if(vid.videoWidth > 0){ _stable++; } else { _stable = 0; }
                 if(_stable >= _STABLE_NEEDED){
                   _confirmed();
                   clearInterval(_confirmTimer);
