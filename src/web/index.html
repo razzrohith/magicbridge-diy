@@ -3088,7 +3088,19 @@ function setVideoTransport(mode){
 // Measured: 146 /stream reconnects in 30 minutes while WebRTC could not hold a
 // session. With this on we simply never start MJPEG: if WebRTC drops we show
 // "Reconnecting" and re-attempt WebRTC, which provably fits the link.
-let _mjpegFallbackAllowed = true;   // set from /api/status (default true = old behavior)
+// Default FALSE: never put MJPEG on the wire until the server has confirmed it
+// is allowed. This defaulted to true, which meant every page load opened the
+// MJPEG stream immediately and only learned mjpeg_fallback=false when the first
+// /api/status reply landed a moment later. On a unit configured h264-only that
+// was catastrophic rather than cosmetic: measured on the operator's link, a
+// single such pull moved 27 MB and drove the uplink to 6.9 Mbit/s against a
+// ~3 Mbit/s path, i.e. 2x over capacity - which starved the very WebRTC
+// negotiation that was supposed to replace it, and showed up as garbage frames,
+// ~30s of unusable lag, and a 2300ms control ping.
+// The cost of the safe default is that a genuinely MJPEG unit waits for the
+// first status poll (well under a second) before its picture appears.
+let _mjpegFallbackAllowed = false;  // set from /api/status
+let _mjpegPolicyKnown = false;      // has the server actually told us yet?
 
 function _webrtcFallbackToMjpeg(reason){
   console.warn('WebRTC unavailable:', reason);
@@ -3720,7 +3732,24 @@ async function refreshStatus(){
   try{
     const r=await fetch('/api/status');const d=await r.json();
     applyStatus(d);
-    if(typeof d.mjpeg_fallback === 'boolean') _mjpegFallbackAllowed = d.mjpeg_fallback;
+    if(typeof d.mjpeg_fallback === 'boolean'){
+      _mjpegFallbackAllowed = d.mjpeg_fallback;
+      _mjpegPolicyKnown = true;
+      // Actively stop a stream that started before the policy was known. Hiding
+      // the <img> is NOT enough: display:none does not close an in-flight
+      // multipart connection, so it would keep consuming the whole uplink.
+      if(!_mjpegFallbackAllowed){
+        const _im = document.getElementById('stream');
+        if(_im && _im.getAttribute('src')){
+          try{ _im.removeAttribute('src'); }catch(e){}
+          _im.style.display = 'none';
+        }
+      }
+    } else {
+      // Older backend that does not report the flag: fall back to the previous
+      // permissive behaviour rather than leaving the operator with no video.
+      _mjpegPolicyKnown = true; _mjpegFallbackAllowed = true;
+    }
     // Load the LIVE encoder settings into the selects once. Without this the
     // dropdowns kept their markup defaults, so any Apply/preset click POSTed a
     // stale fps and silently overwrote the real tuning (and persisted it).
