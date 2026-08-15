@@ -82,6 +82,10 @@ class VideoManager:
         # resolution (ignored on CSI - we follow the source signal) and fps.
         self.bitrate    = 5000
         self.mode       = "auto"  # "auto" (detect hardware) -> "h264" (C790/CSI + Janus WebRTC, preferred) | "mjpeg" (MS2109/USB)
+        # True once a caller explicitly asked for a concrete mode (operator
+        # setting, or the persisted config at boot). A deliberate choice must
+        # never be silently re-resolved away by restart() - see restart().
+        self._mode_pinned = False
         self.port       = STREAM_PORT
         self.h264_sink  = None    # ustreamer memsink name, set when h264 mode starts
         self._lock      = threading.Lock()
@@ -474,7 +478,11 @@ class VideoManager:
             if bitrate is not None: self.bitrate    = _clampi(bitrate, 100, 20000, self.bitrate)
             if fps is not None:     self.fps        = _clampi(fps, 1, 60, self.fps)
             if quality is not None: self.quality    = _clampi(quality, 1, 100, self.quality)
-            if mode:                self.mode       = mode
+            if mode:
+                self.mode = mode
+                # Remember that this was ASKED FOR, not inferred. "auto" is not
+                # a pin - it is a request to infer.
+                self._mode_pinned = (mode != "auto")
 
             # Everything below picks the device and resolves the capture mode
             # from probed hardware, so throw away the memoized inventory first:
@@ -583,10 +591,21 @@ class VideoManager:
         if self.device and not os.path.exists(self.device):
             log.info("capture node %s is gone - re-detecting on restart", self.device)
             self.device = None
-        # If mode got stuck at mjpeg on a CSI board from an old transient H.264
-        # failure, let auto re-resolve it back to h264.
-        if self.mode == "mjpeg" and self.device and self.device_type(self.device) == "csi":
-            log.info("CSI device stuck in mjpeg mode - re-resolving via auto")
+        # If mode got STUCK at mjpeg on a CSI board from an old transient H.264
+        # failure, let auto re-resolve it back to h264 - but ONLY when nobody
+        # deliberately chose mjpeg.
+        #
+        # Without the _mode_pinned guard this silently undid a deliberate switch
+        # to MJPEG: this unit runs MJPEG on purpose because the Pi 4 hardware
+        # H.264 M2M encoder corrupts high-contrast text after 10-20s
+        # (raspberrypi/linux#5180, unfixed, and a keyframe does not repair it),
+        # and a KVM screen is exactly that content. The board is CSI and the mode
+        # is mjpeg, so this branch matched on EVERY restart() - the watchdog, a
+        # resolution change, a capture-node reappearing - and put the unit back
+        # on the broken encoder with the green banding, with nothing in the UI
+        # explaining why it came back.
+        if (not self._mode_pinned) and self.mode == "mjpeg"                 and self.device and self.device_type(self.device) == "csi":
+            log.info("CSI device stuck in mjpeg mode (not operator-chosen) - re-resolving via auto")
             self.mode = "auto"
         self.start()
 
