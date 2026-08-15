@@ -868,7 +868,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="srow"><span class="sk">Release</span><span class="sv">Right Ctrl or Esc (hold 2s)</span></div>
           <div class="srow"><span class="sk">Esc key (quick tap)</span><span class="sv">Sent to remote PC</span></div>
           <div class="srow"><span class="sk">Fullscreen</span><span class="sv">⛶ button</span></div>
-          <div class="srow"><span class="sk">Paste</span><span class="sv">Ctrl+V or bottom bar</span></div>
+          <div class="srow"><span class="sk">Paste text</span><span class="sv">Ctrl+Shift+V or bottom bar</span></div>
         </div>
       </div>
 
@@ -2129,7 +2129,16 @@ document.addEventListener('keydown',e=>{
     _rCtrlSent=true;
   }
   if(e.ctrlKey&&e.shiftKey&&e.code==='KeyF'){ releaseAll(); return; }
-  if(e.ctrlKey&&e.code==='KeyV'){ sendPaste(); e.preventDefault(); return; }
+  // Ctrl+SHIFT+V (not plain Ctrl+V) triggers OUR paste box, which types the text
+  // from the bottom bar into the target.
+  //
+  // Plain Ctrl+V used to be captured here and never forwarded, so the single
+  // most-used shortcut on the target silently did nothing: the operator pressed
+  // Ctrl+V expecting the TARGET's own clipboard to paste, and instead got our
+  // (usually empty) paste box. A remote-control surface must not steal the
+  // standard editing shortcuts of the machine it is controlling - the target
+  // has its own clipboard and Ctrl+C/Ctrl+V belong to it.
+  if(e.ctrlKey&&e.shiftKey&&e.code==='KeyV'){ sendPaste(); e.preventDefault(); return; }
   e.preventDefault();
   _sendDown(e.code);
 });
