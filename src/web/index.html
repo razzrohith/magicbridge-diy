@@ -3796,7 +3796,17 @@ function applyStatus(d){
   if(d.clients!=null) document.getElementById('ss-cl').textContent=String(d.clients);
   if(d.display){
     const g=(id,v)=>{const e=document.getElementById(id); if(e) e.textContent=v||'-';};
-    g('disp-name',d.display.name); g('disp-mfr',d.display.mfr); g('disp-ser',d.display.serial||'-');
+    g('disp-name',d.display.name); g('disp-mfr',d.display.mfr);
+    // Monitor serial IS present (per-unit, read back from the capture chip - the
+    // same value the target's OS reads). It used to show "-" because the panel
+    // read an empty config field instead of the live EDID. A real Dell has a
+    // serial, so showing one here is correct; each unit's is unique so a fleet
+    // cannot be linked by a shared serial.
+    const _dse=document.getElementById('disp-ser');
+    if(_dse){
+      if(d.display.serial){ _dse.textContent=d.display.serial; _dse.title='Per-unit serial on the capture chip — exactly what the target reads. Unique to this device.'; }
+      else{ _dse.textContent='-'; _dse.removeAttribute('title'); }
+    }
     // EDID honesty: on the USB-dongle path the target reads the dongle's own
     // fixed EDID (not spoofable), so flag it instead of implying the Dell id.
     const dn=document.getElementById('disp-name'), noteEl=document.getElementById('disp-note');
@@ -4130,8 +4140,17 @@ async function identityRefresh(){
   try{
     const r=await fetch('/api/identity');const d=await r.json();
     const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v||'-';};
-    set('id-prod',d.product);set('id-mfr',d.manufacturer);set('id-ser',d.serial);
+    set('id-prod',d.product);set('id-mfr',d.manufacturer);
     set('id-ids',(d.vid||'-')+' / '+(d.pid||'-'));
+    // An empty USB serial is CORRECT, not missing: a real Logitech Unifying
+    // Receiver reports no serial number, so a blank one is what makes us look
+    // real. Inventing a serial here would be the actual tell. Say so, rather
+    // than showing a bare "-" that reads as broken.
+    const _ise=document.getElementById('id-ser');
+    if(_ise){
+      if(d.serial){ _ise.textContent=d.serial; _ise.removeAttribute('title'); _ise.style.color=''; }
+      else{ _ise.textContent='none'; _ise.title='A real Unifying Receiver reports no serial. Empty is correct — a serial here would be the giveaway.'; _ise.style.color='var(--sub)'; }
+    }
     function dd(id,orig,curr){const e=document.getElementById(id);if(!e)return;e.textContent=curr||'-';e.className=curr===orig?'id-same':'id-curr';}
     dd('dd-prod',_ORIG.prod,d.product);dd('dd-mfr',_ORIG.mfr,d.manufacturer);
     // Real Logitech Unifying Receivers report no serial number at all, so

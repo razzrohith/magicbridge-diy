@@ -99,18 +99,33 @@ def _write_config(cfg: dict) -> None:
 _EDID_RB = {"t": 0.0, "dev": None, "val": None}
 
 def _parse_edid_identity(b: bytes):
-    """Pull the manufacturer id and monitor name out of a raw 128-byte EDID."""
+    """Pull the manufacturer id, monitor name and serial out of a raw EDID."""
     if len(b) < 128 or b[0:8] != b"\x00\xff\xff\xff\xff\xff\xff\x00":
         return None
     v = (b[8] << 8) | b[9]                       # 3 letters, 5 bits each
     mfr = "".join(chr(64 + ((v >> s) & 0x1F)) for s in (10, 5, 0))
     name = ""
+    serial_ascii = ""
     for off in (54, 72, 90, 108):                # the four 18-byte descriptors
         d = b[off:off + 18]
-        if len(d) == 18 and d[0:3] == b"\x00\x00\x00" and d[3] == 0xFC:
-            name = d[5:18].decode("ascii", "ignore").split("\n")[0].strip()
-            break
-    return {"mfr": mfr, "name": name}
+        if len(d) == 18 and d[0:3] == b"\x00\x00\x00":
+            if d[3] == 0xFC and not name:
+                name = d[5:18].decode("ascii", "ignore").split("\n")[0].strip()
+            elif d[3] == 0xFF and not serial_ascii:   # ASCII serial descriptor (Dell often omits it)
+                serial_ascii = d[5:18].decode("ascii", "ignore").split("\n")[0].strip()
+    # Header serial (bytes 12-15, little-endian). This is what the target's OS and
+    # edid-decode report as the monitor's Serial Number, and on this device it is
+    # randomised per unit at install so no two units share one. Read it back from
+    # the CHIP rather than trusting config, so the dashboard shows exactly what the
+    # target sees. 0 = "no serial set" (real monitors can legitimately be 0 too).
+    serial_num = b[12] | (b[13] << 8) | (b[14] << 16) | (b[15] << 24)
+    return {
+        "mfr": mfr,
+        "name": name,
+        # Prefer the ASCII serial string if the EDID carries one; otherwise the
+        # numeric header serial as a decimal string, which is how tools show it.
+        "serial": serial_ascii or (str(serial_num) if serial_num else ""),
+    }
 
 
 def _live_edid_identity():
@@ -1832,7 +1847,11 @@ async def api_status(request: web.Request) -> web.Response:
             display = {
                 "name":    live["name"] or _edid.get("product_name") or "(unnamed EDID)",
                 "mfr":     live["mfr"],
-                "serial":  _edid.get("serial") or "",
+                # The serial the target actually sees, read back from the chip.
+                # Falls back to config only if the readback carried none. This is
+                # why the panel used to show "-": it read the (empty) config edid
+                # block instead of the per-unit serial that is really on the chip.
+                "serial":  live.get("serial") or _edid.get("serial") or "",
                 "spoofed": ok,
                 "note":    "" if ok else
                            "The EDID on the capture chip is NOT the MagicBridge monitor "
