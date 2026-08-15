@@ -103,6 +103,8 @@ if [[ "$DO_CHECK" == 1 ]]; then
   chk "edid blob (1080p50)"                    "test -f $INSTALL_DIR/edid/mb-edid-1080p50.hex"
   chk "script: mb-hdmi-init.sh"                "test -x /usr/local/bin/mb-hdmi-init.sh"
   chk "RAM-log tmpfs mounted"                  "findmnt -no FSTYPE /var/log/magicbridge-ram | grep -q tmpfs"
+  chk "journald RAM-only (Storage=volatile)"   "grep -qs '^Storage=volatile' /etc/systemd/journald.conf.d/*.conf"
+  chk "no persistent journal on the card"      "[ ! -d /var/log/journal ]"
   chk "TLS cert"                               "test -f $CONFIG_DIR/ssl/cert.pem"
   chk "nginx site enabled"                     "test -L /etc/nginx/sites-enabled/magicbridge"
   for s in mb-gadget magicbridge stealth-dashboard mb-provision mb-mdns-alias mb-hdmi-init mb-hdmi-watch mb-oled; do
@@ -552,7 +554,10 @@ if [[ -n "$MB_GEN_PW" ]]; then
           echo "User: (none)";
           echo "Password: ${MB_GEN_PW}"; echo;
           echo "${MB_PW_NOTE}";
-          echo "Change it after first login. Delete this file once you have it."; } \
+          echo "Change it after first login. Delete this file once you have it."; echo;
+          echo "NOTE: your browser will warn the connection is not private. That";
+          echo "is expected on a private device with a self-signed certificate:";
+          echo "choose Advanced, then Proceed."; } \
           > "$MB_BOOTP/magicbridge-password.txt" 2>/dev/null || true
         chmod 600 "$MB_BOOTP/magicbridge-password.txt" 2>/dev/null || true
         sync
@@ -610,6 +615,29 @@ if grep -q '[[:space:]]/var/log/magicbridge-ram[[:space:]]' /etc/fstab; then
 fi
 echo "$FSTAB_LINE" >> /etc/fstab
 ok "tmpfs fstab entry set (mode=0755) for /var/log/magicbridge-ram"
+
+# ── journald must be RAM-only too ────────────────────────────────────────────
+# The app logs every connection (client IP, User-Agent, timestamps) through the
+# root logger, and systemd sends service stdout to the journal. Putting the
+# app's own logs on a tmpfs achieves nothing if journald is persisting the same
+# information to /var/log/journal on the SD card - pulling the card would still
+# reveal a full connection history, which is exactly what the anonymity model
+# forbids. Storage=volatile keeps the journal in /run (RAM, wiped on power off).
+# ForwardToSyslog=no stops a second copy reaching /var/log/syslog if rsyslog is
+# ever installed. Removing an existing /var/log/journal matters because
+# journald's default Storage=auto persists *whenever that directory exists*.
+mkdir -p /etc/systemd/journald.conf.d
+cat > /etc/systemd/journald.conf.d/00-magicbridge-volatile.conf <<'JCONF'
+# MagicBridge: keep the journal in RAM. See the anonymity model - nothing that
+# identifies usage, location or peers may persist on the SD card.
+[Journal]
+Storage=volatile
+ForwardToSyslog=no
+RuntimeMaxUse=32M
+JCONF
+rm -rf /var/log/journal 2>/dev/null || true
+systemctl restart systemd-journald 2>/dev/null || true
+ok "journald pinned to RAM (Storage=volatile, no syslog forwarding)"
 mkdir -p /var/log/magicbridge-ram
 mountpoint -q /var/log/magicbridge-ram || mount /var/log/magicbridge-ram 2>/dev/null || true
 # A tmpfs remount won't change its mode, but chmod does - and that's what fixes

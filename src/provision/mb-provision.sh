@@ -343,12 +343,23 @@ if [[ -f "$WIFI_FILE" ]]; then
     echo "[$(date)] Connecting to '$SSID'…"
     oled "@CONNECTING" "Connecting to WiFi:" "$SSID"
     nmcli connection delete "$SSID" 2>/dev/null || true
+    # 802-11-wireless.hidden yes: without it a hidden SSID never associates,
+    # because NM only probes for networks it saw in a scan. Harmless on a normal
+    # broadcast network, which still connects exactly as before.
+    #
+    # key-mgmt is deliberately NOT pinned to wpa-psk any more. Pinning it makes a
+    # WPA3/SAE-only router fail association even with the CORRECT password, and
+    # the buyer sees "WiFi setup failed", i.e. we blame their password for a
+    # setting we chose. Left unset, NetworkManager negotiates PSK or SAE from
+    # what the AP actually advertises, covering WPA2, WPA3 and mixed mode.
     if [[ -z "$PASS" ]]; then
         nmcli connection add type wifi con-name "$SSID" ssid "$SSID" \
+              802-11-wireless.hidden yes \
               connection.autoconnect yes
     else
         nmcli connection add type wifi con-name "$SSID" ssid "$SSID" \
-              wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PASS" \
+              802-11-wireless.hidden yes \
+              wifi-sec.psk "$PASS" \
               connection.autoconnect yes
     fi
     nmcli connection up "$SSID" || true

@@ -708,7 +708,12 @@ body:not(.fs) .fs-hud{display:none!important}
 <!-- Main -->
 <div id="main">
   <div id="view">
-    <img id="stream" src="/stream" alt="" onerror="onErr()" onload="onLoad()">
+    <!-- No src= here on purpose: with it, the browser opens the MJPEG stream at
+         page PARSE, before any JS can check whether this unit allows MJPEG at
+         all. On an mjpeg_fallback=false unit that put 1080p on a link that
+         cannot carry it during the exact window WebRTC needs to connect.
+         setVideoTransport()/retryStream() set src when it is actually allowed. -->
+    <img id="stream" alt="" onerror="onErr()" onload="onLoad()">
     <video id="webrtc-view" autoplay playsinline muted style="display:none;width:100%;height:100%;object-fit:contain;background:#000;transform:translateZ(0);will-change:transform;backface-visibility:hidden;contain:paint"></video>
     <div id="nosig">
       <svg class="nsico" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1" style="display:none">
@@ -1824,6 +1829,13 @@ function onErr(){
   }, _nosigDelay);
 }
 function retryStream(){
+  // Hard gate. On a unit configured mjpeg_fallback=false, MJPEG must NEVER go
+  // on the wire: 1080p MJPEG needs 10-25 Mbit/s and those units are on links
+  // that cannot carry it, so opening it saturates the uplink and is precisely
+  // what stops WebRTC from connecting. Enforced HERE rather than at the call
+  // sites because retryStream has several callers (transport switch, WS
+  // reconnect, the anti-stall timer) and missing one re-opens the stream.
+  if(typeof _mjpegFallbackAllowed!=='undefined' && !_mjpegFallbackAllowed) return;
   if(_mjpegSuspended) return;   // hidden tab: stay off the wire until we're visible again
   // ABORT the previous multipart connection before opening a new one. Assigning
   // .src alone does NOT reliably tear down an in-flight multipart/x-mixed-replace
@@ -3021,8 +3033,17 @@ function setVideoTransport(mode){
     // instead of eagerly. The win: a WebRTC that is slow or never confirms now
     // leaves the WORKING MJPEG on screen instead of a black frame under a stale
     // "No Signal" overlay - which was the first-load bug.
-    if(!img.getAttribute('src')) retryStream();   // ensure MJPEG is actually live
-    img.style.display = '';
+    if(typeof _mjpegFallbackAllowed!=='undefined' && !_mjpegFallbackAllowed){
+      // Exclusive WebRTC: show the connecting overlay instead of MJPEG, so the
+      // connect window is not spent competing with a stream we are not allowed
+      // to use anyway.
+      try{ img.removeAttribute('src'); }catch(e){}
+      img.style.display = 'none';
+      if(typeof _nsState==='function') _nsState('connecting');
+    } else {
+      if(!img.getAttribute('src')) retryStream();   // ensure MJPEG is actually live
+      img.style.display = '';
+    }
     vid.style.display = 'none';    // revealed by _confirmed() once it has pixels
     startWebRTC();
   } else {

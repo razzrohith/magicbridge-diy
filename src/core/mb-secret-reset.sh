@@ -129,7 +129,10 @@ if [[ "$PW_OUT" == "1" && -s /run/magicbridge/.new-web-password ]]; then
     if [ -d "$BOOT" ]; then
         { echo "MagicBridge web login"; echo "URL : https://${CURHN:-this-device}.local/  (or the IP on the OLED)";
           echo "User: (none)"; echo "Password: ${NEWPW}"; echo;
-          echo "Change it after first login. Delete this file once you have it."; } \
+          echo "Change it after first login. Delete this file once you have it."; echo;
+          echo "NOTE: your browser will warn the connection is not private. That";
+          echo "is expected on a private device with a self-signed certificate:";
+          echo "choose Advanced, then Proceed."; } \
           > "$BOOT/magicbridge-password.txt" 2>/dev/null || true
         sync
         info "per-unit web password written to $BOOT/magicbridge-password.txt"

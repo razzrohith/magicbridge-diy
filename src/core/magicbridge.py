@@ -2884,10 +2884,18 @@ async def api_wifi(request):
             return web.json_response({"ok": False, "error": "Password must be at least 8 characters"})
         cmd = ["nmcli", "connection", "add", "type", "wifi",
                "con-name", ssid, "ssid", ssid,
+               # Required for a HIDDEN network: NetworkManager only probes for
+               # SSIDs it saw in a scan, so without this a hidden network never
+               # associates. Harmless on a normal broadcast network.
+               "802-11-wireless.hidden", "yes",
                "connection.autoconnect", "yes",
                "connection.autoconnect-priority", "10"]
         if psk:
-            cmd += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk]
+            # key-mgmt deliberately NOT pinned to wpa-psk: that makes a WPA3
+            # (SAE-only) router fail association even with the correct password.
+            # Unset, NM negotiates PSK or SAE from what the AP advertises, so
+            # WPA2, WPA3 and mixed mode all work.
+            cmd += ["wifi-sec.psk", psk]
         # Off-loop, same reason as the GET branch: adding a network can take
         # 15s + 10s, and blocking the loop there means the operator's mouse
         # and keyboard die mid-session just because someone saved a WiFi.
@@ -2897,7 +2905,7 @@ async def api_wifi(request):
         if not ok and "already" in out.lower():
             if psk:
                 r2 = await _run_off_loop(["nmcli", "connection", "modify", ssid,
-                               "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk],
+                               "802-11-wireless.hidden", "yes", "wifi-sec.psk", psk],
                               capture_output=True, text=True, timeout=10)
             else:
                 r2 = await _run_off_loop(["nmcli", "connection", "modify", ssid,

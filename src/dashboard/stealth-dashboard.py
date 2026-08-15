@@ -2935,7 +2935,10 @@ def api_wifi_add():
     cmd = ["connection","add","type","wifi","ifname","wlan0",
            "con-name",ssid,"ssid",ssid,"connection.autoconnect","yes",
            "connection.autoconnect-priority",str(prio)]
-    if pwd: cmd += ["wifi-sec.key-mgmt","wpa-psk","wifi-sec.psk",pwd]
+    # hidden yes so a non-broadcast SSID associates; key-mgmt left unset so
+    # NetworkManager negotiates PSK or SAE (WPA3) from what the AP advertises.
+    cmd += ["802-11-wireless.hidden", "yes"]
+    if pwd: cmd += ["wifi-sec.psk", pwd]
     r = _nm(*cmd,timeout=12)
     if r.returncode == 0:
         _log_sess(f"WiFi saved: {ssid}")
