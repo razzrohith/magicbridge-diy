@@ -37,6 +37,12 @@ or understand.
   connection catches up, and the pointer jumps straight to the right place.
 - A working session is no longer dropped just for being slow, and if the
   connection does drop, control comes back in at most 5 seconds instead of 15.
+- The heavyweight backup video path now switches itself on only when the device
+  actually needs it, instead of being armed on every unit. A unit running normal
+  video never opens it, so it cannot flood a slow connection; a unit whose normal
+  video genuinely cannot start turns it on by itself and still shows a picture
+  rather than a black screen. It also switches back off on its own once normal
+  video works again.
 - Known limitation, now documented: the video bitrate setting has no effect on
   this hardware. The Pi's built in encoder ignores it. Asking for 350 kbps and
   asking for 10000 kbps produce the same picture and the same bandwidth. Two

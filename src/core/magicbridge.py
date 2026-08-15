@@ -1695,6 +1695,43 @@ async def index_handler(request: web.Request) -> web.Response:
     )
 
 
+def _mjpeg_fallback_policy() -> bool:
+    """Whether the browser is allowed to open the MJPEG stream at all.
+
+    Default is OFF. MJPEG is an unbounded TCP flow with no bitrate ceiling and
+    no frame dropping, so on a link that cannot carry 1080p MJPEG it does not
+    act as a safety net: it saturates the uplink, which is the very thing that
+    stops WebRTC from recovering. Measured on this hardware it pulled 27 MB and
+    drove a ~3 Mbit/s path to 6.9 Mbit/s. See _webrtcFallbackToMjpeg in
+    index.html.
+
+    But it is enabled automatically when the device PROVES it needs it, rather
+    than being armed on every unit just in case:
+
+      - video.mode is the live effective mode, not the request. video.py sets it
+        to "mjpeg" both when "auto" resolves that way and when an H.264 launch
+        fails and _fallback_or_fail() takes over. Either way the unit now has no
+        second transport, so refusing the stream is not a bandwidth saving, it
+        is a permanently black screen. That case therefore wins over any stored
+        preference - an operator must not be able to switch their own video off
+        by hand. build-image.sh already asserts this same invariant.
+
+      - Otherwise an explicit setting is honoured, and with nothing set the
+        answer is False, because H.264 is up and MJPEG can only do harm.
+
+    Deriving it live means it also self-corrects: a unit that failed to H.264
+    once and later starts cleanly goes back to WebRTC-only on its own.
+    """
+    try:
+        if str(getattr(video, "mode", "") or "") == "mjpeg":
+            return True
+    except Exception:
+        # Never let a status probe decide the answer is "no video".
+        return True
+    explicit = (_load_cfg().get("video", {}) or {}).get("mjpeg_fallback")
+    return explicit if isinstance(explicit, bool) else False
+
+
 async def api_status(request: web.Request) -> web.Response:
     """Overall system status."""
     def _gather():
@@ -1847,12 +1884,7 @@ async def api_status(request: web.Request) -> web.Response:
         # device for 30 days" will not see the login page again for a month, so
         # the login-page warning alone would never reach them.
         "default_pw":   _using_default_pw(),
-        # Whether the client may fall back to MJPEG at all. Defaults to True
-        # (the long-standing behavior). Set video.mjpeg_fallback = false on a
-        # unit whose uplink cannot carry 1080p MJPEG: there the fallback is not
-        # a safety net, it saturates the link and prevents WebRTC from ever
-        # recovering. See the comment on _webrtcFallbackToMjpeg in index.html.
-        "mjpeg_fallback": bool((_load_cfg().get("video", {}) or {}).get("mjpeg_fallback", True)),
+        "mjpeg_fallback": _mjpeg_fallback_policy(),
     })
 
 
