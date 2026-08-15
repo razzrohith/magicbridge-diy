@@ -1130,7 +1130,7 @@ body:not(.fs) .fs-hud{display:none!important}
             <ul id="sys-whatsnew-list" style="margin:0;padding-left:18px;font-size:11px;color:var(--text);line-height:1.65"></ul>
           </div>
           <div id="sys-update-out" style="display:none;font-size:10px;background:var(--surf2);border:1px solid var(--border);border-radius:4px;padding:6px;margin:6px 0;white-space:pre-wrap;max-height:120px;overflow:auto;font-family:monospace;color:var(--muted)"></div>
-          <button class="sbtn" onclick="sysCheckVer()" style="margin-top:6px">↺ Check for updates</button>
+          <button class="sbtn" onclick="sysCheckVer(true)" style="margin-top:6px">↺ Check for updates</button>
           <button class="sbtn suc" id="sys-update-btn" onclick="sysUpdate()" style="margin-top:4px">⬆ Update now</button>
         </div>
         </div>
@@ -1683,7 +1683,13 @@ let _pt=0;
 // timer ever runs.
 let _pingTimer = null;
 function ping(){
-  if(ws&&ws.readyState===1){_pt=Date.now();ws.send(JSON.stringify({type:'ping'}));}
+  // Send our own timestamp and measure against the ECHO, not against a shared
+  // _pt. The backend already echoes "t" back untouched. With a single global the
+  // reading is only correct if exactly one ping is ever in flight, and it silently
+  // absorbs any delay between the pong ARRIVING and this handler RUNNING - so a
+  // momentarily busy main thread reads as network latency and sends you chasing a
+  // network problem that is not there.
+  if(ws&&ws.readyState===1){_pt=Date.now();ws.send(JSON.stringify({type:'ping',t:_pt}));}
   clearTimeout(_pingTimer);
   _pingTimer=setTimeout(ping,3000);
 }
@@ -1699,7 +1705,8 @@ function send(o){
 }
 function onMsg(d){
   if(d.type==='pong'){
-    const ms=Date.now()-_pt;
+    const _sent = (typeof d.t === 'number' && d.t > 0) ? d.t : _pt;
+    const ms=Date.now()-_sent;
     document.getElementById('sv-lat').textContent=ms+'ms';
     document.getElementById('s-lat').textContent=ms+' ms';
     _railSpark(ms);
@@ -3405,8 +3412,15 @@ function startWebRTC(){
               // This delays only the VIDEO; the cursor rides a separate WebSocket
               // and is unaffected, so felt CONTROL latency does not change. (A
               // future build can make this adapt to the measured link/RTT.)
+              // 20ms, not 80. The 80 was added while a runaway MJPEG stream was
+              // saturating the uplink and corrupting frames; that leak is fixed and
+              // this path measures 0% packet loss with zero Janus send failures, so
+              // a large buffer no longer buys anything - it is pure glass-to-glass
+              // latency on every single frame, which is exactly what makes a KVM
+              // feel sluggish even when the network is fast. A small cushion is
+              // kept for ordinary reorder rather than dropping to 0.
               try{
-                const _JB_MS = 80;
+                const _JB_MS = 20;
                 const pc = _janusHandle && _janusHandle.webrtcStuff && _janusHandle.webrtcStuff.pc;
                 if(pc && pc.getReceivers){
                   pc.getReceivers().forEach(function(r){
@@ -4078,7 +4092,12 @@ async function wifiConnect(btn){
 }
 
 // System Update
-async function sysCheckVer(){
+// userInitiated: only a click should be allowed to interrupt with a toast, and
+// only a click should be allowed to spend bandwidth at a bad moment. This does a
+// real `git fetch` to GitHub on the device, so on a weak or congested uplink it
+// competes directly with the video stream - which is exactly when it also fails
+// and pops "Check failed" at someone who never asked for an update check.
+async function sysCheckVer(userInitiated){
   try{
     const r=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'status'})});
     const d=await r.json();
@@ -4129,7 +4148,11 @@ async function sysCheckVer(){
     }
     const out=document.getElementById('sys-update-out');
     out.textContent=d.out||'';out.style.display=d.out?'block':'none';
-  }catch(e){toast('Check failed');}
+  }catch(e){
+    if(userInitiated) toast('Check failed');
+    // Silent otherwise: an automatic check that could not reach GitHub is not an
+    // event the operator needs to see, and on a bad link it fires constantly.
+  }
 }
 async function sysUpdate(){
   // Re-check against GitHub first (cheap, read-only fetch+compare) instead of
@@ -4842,7 +4865,11 @@ renderMacros();
 refreshLockdownStatus();
 refreshJigglerStatus();
 refreshHidAutoDcStatus();
-sysCheckVer();
+// sysCheckVer() deliberately NOT called on page load. It performs a network
+// `git fetch` on the device, so on a congested uplink every single load spent
+// bandwidth racing the video stream it was about to display, and popped
+// "Check failed" when it lost that race. The System tab still checks when
+// opened, and the Check for updates button is always there.
 oledUpdatePreview();
 refreshOledSettings();
 refreshWolSettings();
