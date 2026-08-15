@@ -807,17 +807,21 @@ class VideoManager:
             "--drop-same-frames", "10",
             "--resolution",       cmd_res,
             "--desired-fps",      str(_eff_fps),
-            # JPEG quality for the MJPEG side of this h264-mode process. It was
-            # left at ustreamer's default here, so the FALLBACK path served
-            # near-max-quality 1080p JPEGs. That is the heaviest thing this unit
-            # can put on the wire, and it is exactly what runs when WebRTC is
-            # unavailable or while several tabs are open (each tab pulls its own
-            # /stream). Measured on a weak uplink: 4 concurrent full-quality
-            # MJPEG pulls saturate the link, which starves the input WebSocket
-            # and makes the cursor stick. Capping it keeps the safety net usable
-            # instead of making the link worse than no video at all. Does not
-            # touch H.264 quality (that is --h264-bitrate below).
-            "--quality",          str(min(self.quality, 60)),
+            # JPEG quality for the MJPEG FALLBACK side of this h264-mode process.
+            # Kept deliberately low, and this is not cosmetic - it is what stops a
+            # death spiral. The CSI path must capture at the source resolution
+            # (1080p here), and ustreamer cannot downscale it, so the only lever
+            # on MJPEG's size is quality. Measured on the unit: at default quality
+            # each /stream pull was 3.4-3.7 MB and 1080p MJPEG runs roughly
+            # 30-50 Mbit/s, against a WiFi uplink measured as low as 30 Mbit/s.
+            # So every fallback saturated the link 100%, which starved the input
+            # WebSocket (the cursor sticking), stalled the stream, forced another
+            # reconnect, and left no bandwidth for WebRTC to ever recover - 146
+            # /stream reconnects in 30 minutes. H.264 at 2 Mbit/s fits this link
+            # comfortably; MJPEG at full quality never can. Low quality keeps the
+            # safety net from being worse than having no video at all.
+            # Does NOT affect H.264 quality (that is --h264-bitrate below).
+            "--quality",          str(min(self.quality, 30)),
             "--host",             STREAM_HOST,
             "--port",             str(self.port),
             # THE single biggest latency win found so far. ustreamer documents
