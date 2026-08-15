@@ -1848,6 +1848,7 @@ function retryVideo(){
 // Skipped entirely while WebRTC is the active transport - the MJPEG <img>
 // is hidden then and this would just churn its background connection.
 setInterval(()=>{
+  if(typeof _mjpegFallbackAllowed!=='undefined' && !_mjpegFallbackAllowed) return;   // MJPEG disabled: never churn it
   if(typeof _activeTransport!=='undefined' && _activeTransport==='h264') return;
   if(document.hidden) return;   // nobody is watching: don't churn a connection we may have closed
   const el=document.getElementById('s-stream');
@@ -2977,8 +2978,38 @@ function setVideoTransport(mode){
 // though the dropdown/server said h264. Drops back to MJPEG and says so in the
 // note under the dropdown, leaving the dropdown itself (the stored preference)
 // exactly as the operator set it.
+// WEBRTC-EXCLUSIVE MODE (config video.mjpeg_fallback = false).
+//
+// Why this exists: on a weak uplink the MJPEG fallback is not a safety net, it
+// is the thing that keeps the link broken. The CSI path must capture at the
+// source resolution and ustreamer cannot downscale, so MJPEG here is 1080p and
+// runs far heavier than H.264 (measured on the unit: MJPEG ~30-50 Mbit/s at
+// default quality vs H.264 at 2 Mbit/s, against a WiFi uplink measured as low
+// as 30 Mbit/s). So every fallback saturates the uplink 100%, which starves the
+// input WebSocket (cursor sticking), stalls the stream, triggers the 15s
+// anti-stall reconnect, and leaves no bandwidth for WebRTC to ever recover.
+// Measured: 146 /stream reconnects in 30 minutes while WebRTC could not hold a
+// session. With this on we simply never start MJPEG: if WebRTC drops we show
+// "Reconnecting" and re-attempt WebRTC, which provably fits the link.
+let _mjpegFallbackAllowed = true;   // set from /api/status (default true = old behavior)
+
 function _webrtcFallbackToMjpeg(reason){
-  console.warn('WebRTC unavailable, falling back to MJPEG:', reason);
+  console.warn('WebRTC unavailable:', reason);
+  if(!_mjpegFallbackAllowed){
+    // Never hand the link to MJPEG. Keep the video element, show the overlay,
+    // and re-attempt WebRTC on a short cooldown.
+    clearTimeout(_webrtcTimeout);
+    stopWebRTC();
+    _activeTransport = 'h264';
+    try{ const _i=document.getElementById('stream'); if(_i){ _i.style.display='none'; _i.removeAttribute('src'); } }catch(e){}
+    if(typeof _nsState==='function') _nsState('connecting');
+    clearTimeout(_webrtcRearmTimer);
+    _webrtcRearmTimer = setTimeout(function(){
+      _webrtcGaveUp = false;         // next status poll re-attempts WebRTC
+      if(typeof setVideoTransport==='function') setVideoTransport('h264');
+    }, 3000);
+    return;
+  }
   _webrtcGaveUp = true;         // pause the status poll from re-triggering WebRTC…
   clearTimeout(_webrtcTimeout);
   stopWebRTC();
@@ -3576,6 +3607,7 @@ async function refreshStatus(){
   try{
     const r=await fetch('/api/status');const d=await r.json();
     applyStatus(d);
+    if(typeof d.mjpeg_fallback === 'boolean') _mjpegFallbackAllowed = d.mjpeg_fallback;
     maybeShowPwWarn(!!d.default_pw);
   }catch(e){}
 }

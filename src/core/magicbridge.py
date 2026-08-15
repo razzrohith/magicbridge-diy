@@ -1801,6 +1801,12 @@ async def api_status(request: web.Request) -> web.Response:
         # device for 30 days" will not see the login page again for a month, so
         # the login-page warning alone would never reach them.
         "default_pw":   _using_default_pw(),
+        # Whether the client may fall back to MJPEG at all. Defaults to True
+        # (the long-standing behavior). Set video.mjpeg_fallback = false on a
+        # unit whose uplink cannot carry 1080p MJPEG: there the fallback is not
+        # a safety net, it saturates the link and prevents WebRTC from ever
+        # recovering. See the comment on _webrtcFallbackToMjpeg in index.html.
+        "mjpeg_fallback": bool((_load_cfg().get("video", {}) or {}).get("mjpeg_fallback", True)),
     })
 
 
