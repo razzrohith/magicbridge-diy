@@ -3043,6 +3043,10 @@ const _WEBRTC_DECAY_MS = 300000;   // 5 min
 // while video actually renders; if it stops advancing we recover here. This is
 // the h264 twin of the MJPEG onErr() self-heal.
 let _wrtcLastFrames = -1, _wrtcStallPolls = 0;
+// Byte baseline for the stall detector. Kept alongside the frame baseline so a
+// stall can be told apart from a death: frames flat + bytes flat = dead, frames
+// flat + bytes growing = alive and waiting on a keyframe.
+let _wrtcLastBytes = -1;
 // When the CURRENT attempt first showed pixels. The stall watchdog is
 // deliberately slow (30s) so a legitimately static desktop is never mistaken
 // for a dead feed, but that same patience made a BROKEN start take 30s to
@@ -3348,6 +3352,7 @@ function startWebRTC(){
                 clearTimeout(_webrtcTimeout); _webrtcTimeout = null;
                 _webrtcRetries = 0;   // good connection -> refill the recovery budget
                 _wrtcLastFrames = -1; _wrtcStallPolls = 0;   // restart stall baseline
+                _wrtcLastBytes  = -1;
                 _wrtcConfirmedAt = Date.now();
                 _webrtcConfirmed = true;
                 // The MJPEG handover already happened at track-up (above); by
@@ -3447,31 +3452,56 @@ function startWebRTC(){
                           // frozen stream was itself causing the drop-outs. A real
                           // freeze still recovers, just 30s later, and the picture
                           // is not lost in the meantime.
+                          // Media arriving? framesDecoded stalling while BYTES
+                          // are still growing does not mean the stream died - it
+                          // means the decoder is waiting on something, almost
+                          // always a keyframe that is still in flight. That is
+                          // the normal state a few seconds into a hard drag on a
+                          // slow link, and it is exactly when the short leash
+                          // below used to fire. Demoting there is the same
+                          // mistake the connect deadline used to make: it throws
+                          // away a live ICE/DTLS session and forces ANOTHER
+                          // keyframe onto the link that was already struggling.
+                          // Ask for the keyframe, and do not let a still-fed
+                          // session count toward the demotion budget at all.
+                          const _bytesMoving = (r.bytesReceived != null
+                                                && _wrtcLastBytes >= 0
+                                                && r.bytesReceived !== _wrtcLastBytes);
+                          if(r.bytesReceived != null) _wrtcLastBytes = r.bytesReceived;
                           if(r.framesDecoded!=null){
                             if(_wrtcLastFrames >= 0 && r.framesDecoded === _wrtcLastFrames && r.framesDecoded > 0){
-                              // Short leash for the first 30s of a new attempt
-                              // (3 polls = 6s), long leash afterwards (15 polls
-                              // = 30s). A stream that never really got going is
-                              // recovered in seconds instead of half a minute;
-                              // a settled stream on an idle desktop still gets
-                              // the full 30s before anyone calls it dead.
-                              const _young = (_wrtcConfirmedAt > 0) && (Date.now() - _wrtcConfirmedAt < 30000);
-                              const _limit = (_young ? 3 : 15);
                               _wrtcStallPolls++;
-                              // Try the cheap repair BEFORE the expensive one.
-                              // A stalled decoder is usually waiting on a
-                              // keyframe it never got, and asking for one costs
-                              // a single message. Demoting the session costs a
-                              // full teardown, a new ICE handshake AND a
-                              // keyframe - on a link that is stalling precisely
-                              // because it is short of bandwidth. Ask at the
-                              // halfway mark, so a recoverable stall never
-                              // reaches the demotion path at all.
-                              if(_wrtcStallPolls === Math.max(1, Math.floor(_limit / 2))){
-                                requestKeyframe('stalled decoder');
+                              // How long to tolerate this, in 2s polls.
+                              //
+                              // Bytes still arriving = the session is ALIVE and
+                              // the decoder is waiting on something, essentially
+                              // always a keyframe still in flight. That is the
+                              // normal state a few seconds into a hard drag on a
+                              // slow link. It gets a long budget (60s) because
+                              // demoting there repeats the exact mistake the
+                              // connect deadline used to make: throw away a live
+                              // ICE/DTLS session and force ANOTHER keyframe onto
+                              // the link that was already struggling. The budget
+                              // is not infinite though - a decoder that is fed
+                              // and still never decodes is genuinely broken and
+                              // does need the teardown eventually.
+                              //
+                              // Nothing arriving at all keeps the old leashes:
+                              // 6s while the session is young (a stream that
+                              // never got going is recovered in seconds), 30s
+                              // once settled, because a STATIC target screen
+                              // produces no new frames by design and no stat can
+                              // tell "nothing changed" from "the stream died".
+                              const _young = (_wrtcConfirmedAt > 0) && (Date.now() - _wrtcConfirmedAt < 30000);
+                              const _limit = _bytesMoving ? 30 : (_young ? 3 : 15);
+                              // Cheap repair first, and keep offering it while
+                              // stalled. requestKeyframe is rate limited to one
+                              // per 2s, so this cannot become a keyframe storm.
+                              if(_wrtcStallPolls === 1 || _wrtcStallPolls % 3 === 0){
+                                requestKeyframe('decoder stalled');
                               }
                               if(_wrtcStallPolls >= _limit){
-                                _wrtcStallPolls = 0; _wrtcLastFrames = -1;
+                                _wrtcStallPolls = 0; _wrtcLastFrames = -1; _wrtcLastBytes = -1;
                                 _webrtcFallbackToMjpeg('video stalled (no new frames)');
                               }
                             } else {
