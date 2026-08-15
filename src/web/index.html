@@ -3294,39 +3294,18 @@ function startWebRTC(){
               // skips the first keyframe-less frames without depending on any ICE
               // state string. The green itself is handled where it belongs: the
               // jitter buffer + NACK repair below, not by hiding the video.
+              // A keyframe gate was tried here to hide the brief green (a viewer
+              // joining mid-GOP decodes garbage until the first keyframe), but it
+              // could leave the UI stuck on "Connecting" when frames were slow to
+              // arrive - far worse than a short green flash, because the operator
+              // then gets NO picture at all and the 20s connect timeout tears
+              // down an otherwise usable session. Showing an imperfect picture
+              // immediately beats showing nothing.
               let _confirmTries = 0, _stable = 0;
-              const _STABLE_NEEDED = 2;   // ~0.5s at 250ms: one GOP, no ICE dependency
-              // Wait for the first KEYFRAME before revealing, not merely for
-              // pixels. A viewer joining an already-running stream lands
-              // mid-GOP, so the decoder emits garbage (the green bands) until a
-              // keyframe arrives. videoWidth>0 is true of that garbage, which is
-              // why the green was visible for a second or two on every load.
-              // keyFramesDecoded is the precise signal for "the picture is now
-              // built from a real reference frame", and unlike iceConnectionState
-              // it does not depend on candidate types, so it cannot repeat the
-              // gate that previously killed every session over Tailscale.
-              // Feature-detected, and bounded: if the browser never reports it we
-              // reveal anyway after ~3s rather than hang on "Connecting".
-              let _kfSeen = false, _kfSupported = null;
-              const _kfPoll = function(){
-                try{
-                  const _pcs = _janusHandle && _janusHandle.webrtcStuff && _janusHandle.webrtcStuff.pc;
-                  if(!_pcs || !_pcs.getStats) { _kfSupported = false; return; }
-                  _pcs.getStats(null).then(function(st){
-                    st.forEach(function(r){
-                      if(r.type==='inbound-rtp' && r.kind==='video'){
-                        if(r.keyFramesDecoded == null){ _kfSupported = false; }
-                        else { _kfSupported = true; if(r.keyFramesDecoded > 0) _kfSeen = true; }
-                      }
-                    });
-                  }).catch(function(){ _kfSupported = false; });
-                }catch(e){ _kfSupported = false; }
-              };
+              const _STABLE_NEEDED = 2;   // ~0.5s at 250ms
               const _confirmTimer = setInterval(function(){
                 if(gen !== _webrtcGen){ clearInterval(_confirmTimer); return; }
-                _kfPoll();
-                const _pictureClean = (_kfSupported === false) || _kfSeen || _confirmTries >= 12;
-                if(vid.videoWidth > 0 && _pictureClean){ _stable++; } else { _stable = 0; }
+                if(vid.videoWidth > 0){ _stable++; } else { _stable = 0; }
                 if(_stable >= _STABLE_NEEDED){
                   _confirmed();
                   clearInterval(_confirmTimer);
