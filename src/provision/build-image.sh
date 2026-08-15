@@ -167,6 +167,7 @@ if [[ "$MODE" == "verify" ]]; then
   chk "RAM-log tmpfs is mode=0755 (not 1777)"        '! grep -qE "magicbridge-ram.*mode=1777" "$R/etc/fstab"'
   chk "config: no auth (defaults on first boot)"     'python3 -c "import json,sys;sys.exit(0 if \"auth\" not in json.load(open(\"$R/etc/magicbridge/config.json\")) else 1)"'
   chk "config: mac_persist empty"                    'python3 -c "import json,sys;sys.exit(0 if not json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"mac_persist\") else 1)"'
+  chk "config: mjpeg mode has mjpeg_fallback enabled" 'python3 -c "import json,sys;v=json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"video\",{});sys.exit(0 if (v.get(\"mode\")!=\"mjpeg\" or v.get(\"mjpeg_fallback\",True)) else 1)"'
   chk "config: video.mode=mjpeg (H.264 is opt-in)" 'python3 -c "import json,sys;sys.exit(0 if json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"video\",{}).get(\"mode\")==\"mjpeg\" else 1)"'
   echo ""
   [[ -n "$BV" ]] && { umount "$BV" 2>/dev/null || true; rmdir "$BV" 2>/dev/null || true; }
@@ -483,6 +484,13 @@ c.setdefault("video",{})["mode"]="mjpeg"   # MJPEG, not auto/h264: the Pi4 SoC H
 c["video"]["fps"]=20                       # smooth enough for desktop work; a clean
 # decimation of the 1080p50 source, and ~16 Mbit/s at quality 12, which fits a
 # typical WiFi uplink. 50 fps of 1080p MJPEG would be ~60 Mbit/s and saturate it.
+# MUST be true on a distributable image. It is inherited from whatever config the
+# golden unit had, and this dev unit runs h264 with fallback DISABLED (correct
+# there: 1080p MJPEG cannot fit its ~3 Mbit/s remote link). Shipping that pairing
+# with mode="mjpeg" is fatal: the client hard-gates MJPEG off, there is no other
+# transport, the <img> never errors so the Retry button is never revealed, and
+# the buyer gets a permanent "Connecting..." with working keyboard and mouse.
+c["video"]["mjpeg_fallback"]=True
 c["video"]["quality"]=12                   # MJPEG has no inter-frame compression, so
 # quality is the only real lever on bandwidth. Measured at 1080p: q12 = 96 KB/frame.
 c["mdns_alias"]=""                         # DISTRIBUTABLE default = full stealth: no

@@ -247,6 +247,14 @@ else
     # _draw_phase_anim's @WIFI branch.
     oled "@WIFI" "Join: $AP_SSID" "Open $AP_IP"
 
+    # Arm teardown BEFORE the portal blocks. The portal waits indefinitely, so a
+    # systemd TimeoutStartSec kill (or any signal) while nobody is completing
+    # setup used to bypass teardown entirely: nginx left stopped, system dnsmasq
+    # stopped, wlan0 still pinned at 192.168.73.1 with the :80/:443 DNAT rules
+    # in place, and the OLED still pointing at a hotspot that is gone. Reads as a
+    # bricked unit until a power cycle. ap_teardown is once-only (AP_TORNDOWN), so
+    # the trap plus the inline call after the portal cannot double-run it.
+    trap ap_teardown EXIT INT TERM
     # Run captive portal (blocks until user submits). errexit is already off for
     # the whole AP phase (set +e above), so a portal crash still falls through
     # to teardown - the Pi must never be left broadcasting an unreachable AP.
@@ -277,7 +285,6 @@ ap_teardown() {
     [ "${NGINX_WAS_ACTIVE:-0}" = "1" ] && systemctl start nginx 2>/dev/null || true
     systemctl start dnsmasq 2>/dev/null || true
 }
-trap ap_teardown EXIT INT TERM
 ap_teardown
 # Mirror a human-readable report onto the FAT boot partition. THIS IS THE
 # ESCAPE HATCH: a unit that has neither WiFi nor a working hotspot is otherwise

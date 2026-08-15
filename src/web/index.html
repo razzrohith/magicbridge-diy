@@ -3733,10 +3733,21 @@ function applyPowerHealth(d){
 async function refreshStatus(){
   try{
     const r=await fetch('/api/status');const d=await r.json();
-    applyStatus(d);
+    // Learn the MJPEG policy BEFORE applyStatus(). applyStatus -> the transport
+    // sync path can call retryStream(), and retryStream hard-gates on
+    // _mjpegFallbackAllowed, which defaults to false. Setting the flag after
+    // applyStatus meant the very first (and decisive) call always ran while the
+    // client still believed MJPEG was forbidden, so an MJPEG-mode unit never
+    // started its stream at all and sat on "Connecting". Later polls early-return
+    // in the transport sync, so nothing ever retried.
     if(typeof d.mjpeg_fallback === 'boolean'){
       _mjpegFallbackAllowed = d.mjpeg_fallback;
       _mjpegPolicyKnown = true;
+    } else {
+      _mjpegPolicyKnown = true; _mjpegFallbackAllowed = true;   // older backend
+    }
+    applyStatus(d);
+    if(typeof d.mjpeg_fallback === 'boolean'){
       // Actively stop a stream that started before the policy was known. Hiding
       // the <img> is NOT enough: display:none does not close an in-flight
       // multipart connection, so it would keep consuming the whole uplink.
@@ -3747,10 +3758,6 @@ async function refreshStatus(){
           _im.style.display = 'none';
         }
       }
-    } else {
-      // Older backend that does not report the flag: fall back to the previous
-      // permissive behaviour rather than leaving the operator with no video.
-      _mjpegPolicyKnown = true; _mjpegFallbackAllowed = true;
     }
     // Load the LIVE encoder settings into the selects once. Without this the
     // dropdowns kept their markup defaults, so any Apply/preset click POSTed a

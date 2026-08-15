@@ -716,7 +716,10 @@ class VideoManager:
                 "--buffers",      "8",
             ]
         else:
-            cmd += ["--format", "MJPEG"]           # USB dongle: native HW MJPEG
+            # USB dongle: native hardware MJPEG, no shared SoC encoder involved,
+            # so two workers are fine here. Keep clearly more buffers than
+            # workers so a frame is never recycled mid-encode.
+            cmd += ["--format", "MJPEG", "--workers", "2", "--buffers", "6"]
         cmd += [
             "--resolution",     self.resolution,
             "--desired-fps",    str(self.fps),
@@ -729,10 +732,6 @@ class VideoManager:
             "--quality",        str(min(self.quality, 30) if _hi_res else self.quality),
             "--host",           STREAM_HOST,
             "--port",           str(self.port),
-            "--workers",        "2",
-            # Same buffer-starvation fix as the H.264 path above: keep clearly
-            # more buffers than workers so a frame is never recycled mid-encode.
-            "--buffers",        "6",
             "--persistent",
             # Do not re-send identical frames. MJPEG has no inter-frame
             # compression, so a completely static desktop otherwise costs the

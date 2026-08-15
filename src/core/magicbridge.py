@@ -3033,7 +3033,15 @@ _UPD_FILE_MAP = {
     "src/core/mb-power-test.sh":          ("/usr/local/bin/mb-power-test.sh", None),
     "src/provision/mb-provision.sh":      ("/usr/local/bin/mb-provision.sh", None),
     "src/nginx/magicbridge.conf":         ("/etc/nginx/sites-available/magicbridge", "nginx-reload"),
-    "src/edid/mb-edid-1080p50.hex":       (_UPD_INSTALL_DIR + "/edid/mb-edid-1080p50.hex", None),
+    # NOT in this map on purpose. mb-firstboot-late.sh gives every unit a UNIQUE
+    # EDID serial precisely so two units cannot be correlated by what they present
+    # to their targets. Copying the repo blob here would overwrite that with the
+    # shared baked serial, so a fleet-wide incremental update would leave every
+    # unit advertising the SAME monitor serial - and nothing on the unit would
+    # ever re-randomise it. Leaving it out means a change to the EDID classifies
+    # as an unknown runtime file, which sends the update down the full path that
+    # copies AND re-randomises. install.sh still deploys the blob normally.
+    #   "src/edid/mb-edid-1080p50.hex": (...)
 }
 # Non-runtime paths: changing only these needs no deploy (docs, build-host tools).
 # NOTE .ps1 is handled separately below - those are Windows helper scripts that
@@ -3701,18 +3709,29 @@ async def main():
 
     # Start video stream
     vc  = cfg.get("video", {})
+    # Coerce defensively. These feed int() below, and the service is
+    # Restart=always/RestartSec=3, so one malformed value in config.json (a
+    # string, null, a float from a hand-edit) turns into a permanent boot loop
+    # with no web UI, no HID and no video until someone SSHes in.
+    def _vint(key, dflt):
+        try:
+            return int(vc.get(key, dflt))
+        except (TypeError, ValueError):
+            log.warning("config video.%s is invalid (%r) - using %s",
+                        key, vc.get(key), dflt)
+            return dflt
     loop = asyncio.get_running_loop()
     log.info("Starting video stream…")
     ok = await loop.run_in_executor(None, lambda: video.start(
         device     = vc.get("device"),
         resolution = vc.get("resolution", "1920x1080"),
-        fps        = int(vc.get("fps", 30)),
-        quality    = int(vc.get("quality", 80)),
+        fps        = _vint("fps", 30),
+        quality    = _vint("quality", 80),
         # Must be passed here too, not just on the live-settings path. Without
         # it a bitrate chosen in the UI is written to config.json and then
         # silently ignored on the next restart, snapping back to the default -
         # the setting "sticks" in the file and not in reality.
-        bitrate    = int(vc.get("bitrate", 5000)),
+        bitrate    = _vint("bitrate", 5000),
         # "auto": video.start() detects the capture hardware and picks the
         # pipeline — C790/CSI -> H.264+WebRTC (preferred), USB dongle -> MJPEG.
         # Falls back to mjpeg on its own if the CSI/Janus path can't start, so

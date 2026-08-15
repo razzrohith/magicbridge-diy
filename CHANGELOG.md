@@ -12,6 +12,23 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.2.0
+
+- Fixes two ways a brand new unit could come up with working keyboard and mouse
+  but a permanently black screen. Affected freshly flashed units and fresh
+  installs only; an already working unit was never affected.
+- The device keeps its own unique monitor identity through updates. An update
+  could previously overwrite it with a shared one, which would have made
+  separate units look identical to the computers they control.
+- Installing no longer aborts on a slow or offline package mirror, so a unit on
+  a poor connection can still be updated.
+- Setup no longer leaves the device stranded if nobody completes the WiFi setup
+  page and the device gives up waiting.
+- A hand-edited or corrupted settings file can no longer stop the device
+  starting; it falls back to safe defaults and says so in the log.
+- Sharper picture on the default video path, which was quietly running with
+  settings that had never been tested.
+
 ## 1.1.0
 
 - Video no longer opens a second, heavyweight stream on every page load. That

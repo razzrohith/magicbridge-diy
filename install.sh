@@ -120,7 +120,13 @@ fi
 # 1. PREREQUISITES
 # ══════════════════════════════════════════════════════════════════════════════
 info "Updating apt lists..."
-apt-get update -qq
+# Tolerate a failing refresh. Under `set -euo pipefail` a bare apt-get update
+# aborts the WHOLE installer on an unreachable mirror, an expired key or a
+# captive portal - and because api_update has already advanced the clone by
+# this point, install.sh never reaches its deployed-commit stamp, so the panel
+# re-offers the same upgrade forever and it fails identically every time.
+# Every apt-get install below already tolerates failure.
+apt-get update -qq || warn "apt refresh failed (offline or bad mirror) - continuing with cached lists"
 
 # Install git first so clone works even if the rest fails
 apt-get install -y git 2>&1 | grep -E "^(Setting up|E:|W:)" || true
