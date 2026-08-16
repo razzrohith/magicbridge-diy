@@ -12,6 +12,20 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.3.2
+
+- Shipping fix: freshly set-up units now build the video engine with the
+  bandwidth ceiling that keeps remote control responsive. Without it a new unit
+  would have had the old problem back (heavy video on movement, laggy control)
+  the moment its owner switched to the low-latency video mode.
+- Remote video recovers on its own after a power-on. If the device booted before
+  its secure remote link was ready, remote video used to stay black until you
+  reopened the stream settings; it now reconnects by itself within about half a
+  minute.
+- The device now uses its disguised network identity from the very first WiFi
+  connection during setup, instead of briefly showing its real one. This only
+  concerns your own network; the computer it controls never sees it either way.
+
 ## 1.3.1
 
 - The Mouse Cursor buttons now do something while you are controlling. Before,
