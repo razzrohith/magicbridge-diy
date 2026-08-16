@@ -170,9 +170,47 @@ rm -f /var/lib/tailscale/tailscaled.state 2>/dev/null || true
 rm -f /etc/cron.d/mb-duckdns 2>/dev/null || true
 systemctl disable mb-mac.service 2>/dev/null || true
 rm -f /etc/systemd/system/mb-mac.service 2>/dev/null || true
-# Drop the NM-layer MAC override too, so a fresh unit picks a NEW random
-# vendor MAC on first boot (via the dashboard) instead of the builder's.
+# Drop the builder's NM-layer MAC override, then MINT a fresh per-unit vendor
+# MAC HERE - before any WiFi association - instead of leaving it to the
+# dashboard. The dashboard's _ensure_default_mac only runs after mb-provision
+# has already joined WiFi, so the FIRST association (and the setup-AP BSSID)
+# would otherwise broadcast the real Raspberry Pi OUI (dc:a6:32...) on the
+# owner's LAN. We stamp mac_persist so the dashboard sees the identity as
+# already chosen and never overrides it with a different value (which would
+# flip the MAC mid-life). Uses the SAME NM cloned-mac mechanism the dashboard
+# uses, just earlier. Fully fail-closed: on ANY error the unit simply connects
+# on the real MAC (the prior behaviour) - this never blocks first-boot WiFi.
 rm -f /etc/NetworkManager/conf.d/00-mb-macspoof.conf 2>/dev/null || true
+if python3 - "$CFG" /etc/NetworkManager/conf.d/00-mb-macspoof.conf <<'PYMAC' 2>/dev/null
+import json, sys, secrets, os, pathlib
+CFG, NMCONF = sys.argv[1], sys.argv[2]
+OUIS = [[0x00,0x14,0x22],[0x9C,0x7B,0xEF],[0x64,0x1B,0x2F]]   # Dell/HP/Samsung (real MA-L)
+def rmac(oui): return ":".join("%02x"%b for b in list(oui)+[secrets.randbits(8) for _ in range(3)])
+try: c = json.load(open(CFG))
+except Exception: c = {}
+if not c.get("mac_autospoof", True) or c.get("mac_persist"):
+    sys.exit(2)                       # opt-out, or already chosen -> leave it
+oui = secrets.choice(OUIS); wifi = rmac(oui); eth = rmac(oui)
+persist = {"wlan0": wifi}
+try:
+    for n in sorted(os.listdir("/sys/class/net")):
+        if n.startswith(("eth","en")): persist[n] = eth
+except Exception:
+    persist.setdefault("eth0", eth)
+c.setdefault("mac_persist", {}).update(persist)
+tmp = CFG + ".tmp"; open(tmp,"w").write(json.dumps(c, indent=2)); os.replace(tmp, CFG)
+p = pathlib.Path(NMCONF); p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text("# Managed by MagicBridge - realistic NIC identity (stealth panel).\n"
+             "[connection]\n"
+             "wifi.cloned-mac-address=%s\n"
+             "ethernet.cloned-mac-address=%s\n" % (wifi, eth))
+PYMAC
+then
+    info "MAC pre-armed for the first WiFi join (vendor OUI, before provisioning)"
+    nmcli general reload 2>/dev/null || true
+else
+    info "MAC pre-arm skipped (opt-out/already-set/error; dashboard will arm it)"
+fi
 
 # 8. Clear any provisioning/first-boot leftovers + RAM logs.
 rm -f /etc/magicbridge/.provision-wifi /tmp/mb-ts-key 2>/dev/null || true
