@@ -169,6 +169,12 @@ if [[ "$MODE" == "verify" ]]; then
   chk "config: mac_persist empty"                    'python3 -c "import json,sys;sys.exit(0 if not json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"mac_persist\") else 1)"'
   chk "config: mjpeg_fallback NOT baked in (device derives it)" 'python3 -c "import json,sys;v=json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"video\",{});sys.exit(0 if \"mjpeg_fallback\" not in v else 1)"'
   chk "config: video.mode=mjpeg (H.264 is opt-in)" 'python3 -c "import json,sys;sys.exit(0 if json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"video\",{}).get(\"mode\")==\"mjpeg\" else 1)"'
+  # If a WebRTC-enabled ustreamer is baked in, it MUST be the MIN_QP-patched build.
+  # A stock /usr/local/bin/ustreamer would ship the H.264 latency bug (no bitrate
+  # ceiling -> ~13 Mbit/s motion peaks -> ~1s control latency the moment a customer
+  # opts into H.264). Conditional: an MJPEG-only golden legitimately has no such
+  # binary (it uses apt /usr/bin/ustreamer), so absence passes.
+  chk "ustreamer (if built) is the MIN_QP-patched build" '[ ! -e "$R/usr/local/bin/ustreamer" ] || grep -aq MB_H264_MIN_QP "$R/usr/local/bin/ustreamer"'
   echo ""
   [[ -n "$BV" ]] && { umount "$BV" 2>/dev/null || true; rmdir "$BV" 2>/dev/null || true; }
   if [[ $FAIL -eq 0 ]]; then ok "ALL CHECKS PASSED — safe to distribute"; exit 0
