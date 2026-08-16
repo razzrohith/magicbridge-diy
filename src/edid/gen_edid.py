@@ -36,7 +36,8 @@ def desc(tag, payload):
     b = [0x00, 0x00, 0x00, tag, 0x00] + list(payload)
     return (b + [0x20] * 18)[:18]
 
-W, H = 598, 336  # image size mm (16:9)
+W, H = 527, 296  # image size mm = real Dell P2419H 23.8" active area (was 598x336
+                 # = 27", which contradicted the P2419H name to any size-aware tool)
 
 # ---- BASE BLOCK -------------------------------------------------------
 e = [0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x00]
@@ -47,7 +48,7 @@ e += [0x6B, 0xA0]                    # product code 0xA06B (P2419H), little-endi
 e += [0x01, 0x00, 0x00, 0x00]        # serial
 e += [0x01, 0x22]                    # week 1, year 2024 (0x22=34 -> 1990+34)
 e += [0x01, 0x03]                    # EDID 1.3
-e += [0x80, 0x3C, 0x22, 0x78, 0x0A]  # digital, 60x34cm, gamma 2.2, RGB
+e += [0x80, 0x35, 0x1E, 0x78, 0x0A]  # digital, 53x30cm (23.8" P2419H), gamma 2.2, RGB
 e += [0x0D, 0xC9, 0xA0, 0x57, 0x47, 0x98, 0x27, 0x12, 0x48, 0x4C]  # chromaticity
 # established timings: 640x480@60, 800x600@60, 1024x768@60  (BIOS/UEFI safety)
 e += [0x21, 0x08, 0x00]
