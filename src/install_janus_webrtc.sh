@@ -250,6 +250,29 @@ if [[ "$JANUS_OK" == true ]]; then
         sed -i 's|packet.extensions.abs_capture_ts = rtp.grab_ntp_ts;|/* MagicBridge: abs_capture_ts absent from installed Janus RTP struct (API skew); non-essential capture-time RTP ext, video path unaffected */|' janus/src/client.c
         ok "Patched out abs_capture_ts (Janus v1.0.0 API compatibility)"
     fi
+    # MIN_QP ceiling patch. THE most important patch: on the Pi 4B bcm2835-codec
+    # the H.264 --h264-bitrate target is inert, and MIN_QP (bits-per-frame floor)
+    # is the ONLY control that caps the motion peak. Stock ustreamer hardcodes it
+    # to 16; without this a fresh unit's video bursts to ~13 Mbit/s on screen
+    # motion, floods a typical remote uplink and drives control latency to ~1s.
+    # We make it read env MB_H264_MIN_QP (video.py sets it from video.min_qp,
+    # default 30). C ignores whitespace, so the replacement is a one-line block
+    # wrapping the original SET_OPTION; getenv/atoi are already available
+    # (m2m.c includes <stdlib.h>). Canonical form: src/ustreamer/patches/
+    # 0001-h264-min-qp-env.patch. Guarded + idempotent: the pattern is gone after
+    # patching, so a reused/rebuilt checkout is not double-patched.
+    if grep -q 'V4L2_CID_MPEG_VIDEO_H264_MIN_QP,[[:space:]]*16);' src/ustreamer/m2m.c; then
+        sed -i 's|SET_OPTION(V4L2_CID_MPEG_VIDEO_H264_MIN_QP,[[:space:]]*16);|{ const char *_mq = getenv("MB_H264_MIN_QP"); int _minqp = (_mq \&\& atoi(_mq) > 0) ? atoi(_mq) : 16; SET_OPTION(V4L2_CID_MPEG_VIDEO_H264_MIN_QP, _minqp); }|' src/ustreamer/m2m.c
+        if grep -q 'MB_H264_MIN_QP' src/ustreamer/m2m.c; then
+            ok "Patched MIN_QP to read env MB_H264_MIN_QP (bandwidth ceiling)"
+        else
+            die "MIN_QP patch did not take — refusing to build a unit without the bitrate ceiling. Check src/ustreamer/m2m.c against src/ustreamer/patches/0001-h264-min-qp-env.patch."
+        fi
+    elif grep -q 'MB_H264_MIN_QP' src/ustreamer/m2m.c; then
+        ok "MIN_QP env patch already present (reused checkout)"
+    else
+        die "Could not find the MIN_QP line to patch in ustreamer m2m.c (upstream may have changed at $USTREAMER_TAG). Without the ceiling a fresh unit has the latency bug; refusing to ship stock. Update the patch."
+    fi
     make WITH_JANUS=1 WITH_GPIO=0 WITH_SYSTEMD=0 -j"$(nproc)" 2>&1 | tail -60
     if [[ -f ustreamer ]]; then
         install -m 755 ustreamer /usr/local/bin/ustreamer
