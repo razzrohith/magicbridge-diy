@@ -1360,6 +1360,7 @@ class VideoManager:
             res_check = 0      # throttles the live-timings comparison
             res_miss = 0       # consecutive resolution mismatches (debounce)
             sig_absent = 0     # consecutive checks with NO source signal
+            ice_check = 0      # throttles the tailnet ICE re-evaluation
             while True:
                 # Exponential backoff on consecutive failures so a persistently
                 # un-launchable stream doesn't restart-storm every 5 s forever
@@ -1452,6 +1453,26 @@ class VideoManager:
                                     res_miss = 0
                             else:
                                 res_miss = 0   # no signal -> leave the live stream alone
+                # Cold-boot ICE recovery for remote WebRTC. _tune_janus_ice offers
+                # tailscale0 as a candidate only while the tailnet is up, but it was
+                # only evaluated at stream start. On a cold boot where ustreamer came
+                # up before tailscaled reached Running, tailscale0 was left on the
+                # ignore list and a REMOTE operator got no media until a manual
+                # Settings->Stream->Apply. Re-check periodically while running h264.
+                # _tune_janus_ice returns False (no-op) unless the up/down state
+                # actually flipped, so Janus is bounced at most once - when the
+                # tailnet finally comes up - and never for a LAN operator. Both calls
+                # self-guard on a non-WebRTC unit (no janus.jcfg / service inactive).
+                if not needs_restart and self.is_running() and self.mode == "h264":
+                    ice_check += 1
+                    if ice_check >= 6:          # ~30s at the 5s base interval
+                        ice_check = 0
+                        try:
+                            if self._tune_janus_ice():
+                                log.info("Janus ICE re-evaluated by watchdog (tailnet state changed) - bouncing Janus")
+                                self._notify_janus_sink_ready()
+                        except Exception:
+                            pass
                 if not needs_restart:
                     fails = 0
                     continue
