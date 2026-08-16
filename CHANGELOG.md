@@ -12,6 +12,21 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.3.1
+
+- The Mouse Cursor buttons now do something while you are controlling. Before,
+  every style looked the same during control. Now Crosshair and Dot stay on
+  screen as an aiming aid, while Arrow and Hidden show only the target's own
+  pointer. Your choice is also remembered between sessions.
+- The monitor Serial shown under "How the target sees it" now displays the real
+  per-unit serial the target reads, instead of a dash. Nothing the target sees
+  changed; the panel was simply reading the wrong place. The USB Serial now says
+  "none" with an explanation, because a real wireless receiver has none and
+  inventing one would be the giveaway.
+- The device now reports a 23.8 inch screen, matching the monitor it imitates,
+  instead of a 27 inch one. This only affects newly set-up units; a running unit
+  is unchanged until it is next set up fresh.
+
 ## 1.3.0
 
 - Fixes the fault behind "it worked for a moment and then went strange". The
