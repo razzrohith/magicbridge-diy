@@ -409,6 +409,26 @@ class VideoManager:
             width, height = int(w.group(1)), int(h.group(1))
             if width < 160 or height < 120:      # 0x0 = no signal locked
                 return None
+            # Reject a BAD LOCK, not just "no lock". On a degraded HDMI link the
+            # TC358743 reports a plausible-looking width/height while never
+            # actually decoding the sync structure, and the giveaway is that both
+            # horizontal porches read 0. Every real timing has blanking (1080p50
+            # is frontporch 528 / backporch 148; 720p60 is 110/220) - zero on both
+            # sides is not a mode that exists. Measured on a real unit with a
+            # marginal cable: it cycled 960/1279/1280/1536/1920 x1080 with the
+            # pixel clock wandering 99/118.8/148.5 MHz and 0/0 porches on every
+            # bad read. Treating those as a real signal is what made the watchdog
+            # relaunch the stream ~14 times in 10 minutes and left the operator
+            # staring at green. Returning None instead means "no usable signal",
+            # which the callers already handle by leaving the running stream
+            # alone. Conservative: only reject when BOTH fields are present and
+            # both are 0, so a source (or a v4l2-ctl build) that simply does not
+            # report porches is never misjudged.
+            fp = re.search(r"Horizontal frontporch:\s*(\d+)", r.stdout)
+            bp = re.search(r"Horizontal backporch:\s*(\d+)", r.stdout)
+            if fp and bp and int(fp.group(1)) == 0 and int(bp.group(1)) == 0:
+                log.debug("ignoring bad DV lock %dx%d (both h-porches 0)", width, height)
+                return None
             fps = int(round(float(f.group(1)))) if f else 0
             return (width, height, fps)
         except Exception as e:
@@ -1358,7 +1378,8 @@ class VideoManager:
         def _watch():
             fails = 0
             res_check = 0      # throttles the live-timings comparison
-            res_miss = 0       # consecutive resolution mismatches (debounce)
+            res_miss = 0       # consecutive AGREEING resolution mismatches (debounce)
+            res_last = ""      # the candidate new resolution res_miss is counting
             sig_absent = 0     # consecutive checks with NO source signal
             ice_check = 0      # throttles the tailnet ICE re-evaluation
             while True:
@@ -1440,19 +1461,44 @@ class VideoManager:
                                 # dark stream instead of a ~30 s restart storm.
                                 # (Belt-and-braces: self.resolution is no longer
                                 # clamped, so live == self.resolution here anyway.)
-                                res_miss = 0
+                                res_miss = 0; res_last = ""
                             elif det:
                                 live = "%dx%d" % (det[0], det[1])
                                 if live != self.resolution:
-                                    res_miss += 1
+                                    # The debounce must confirm the SAME new value
+                                    # twice, not merely "mismatched twice". A
+                                    # degraded HDMI link does not report one
+                                    # wrong resolution, it reports a DIFFERENT
+                                    # wrong one every read: measured on a real
+                                    # unit the chip cycled 960x1080, 1279x1080,
+                                    # 1280x1080, 1536x1080, 1920x1080 while the
+                                    # pixel clock wandered 99/118.8/148.5 MHz with
+                                    # both porches reading 0 (i.e. it never truly
+                                    # locked). Counting any-two-mismatches made
+                                    # every pair of disagreeing junk reads look
+                                    # like a confirmed mode change, so the stream
+                                    # relaunched ~14 times in 10 minutes and the
+                                    # operator saw permanent green: each restart
+                                    # bounces ustreamer AND Janus, so viewers
+                                    # never get a decodable GOP.
+                                    # Requiring agreement means a REAL mode change
+                                    # (which reports the same new value every read)
+                                    # still restarts within one extra poll, while
+                                    # an unstable link no longer triggers anything.
+                                    if live == res_last:
+                                        res_miss += 1
+                                    else:
+                                        res_miss = 1          # new candidate, start over
+                                        res_last = live
                                     if res_miss >= 2:
                                         needs_restart = True
                                         reason = "source resolution changed %s -> %s" % (
                                             self.resolution, live)
                                 else:
                                     res_miss = 0
+                                    res_last = ""
                             else:
-                                res_miss = 0   # no signal -> leave the live stream alone
+                                res_miss = 0; res_last = ""   # no signal -> leave the live stream alone
                 # Cold-boot ICE recovery for remote WebRTC. _tune_janus_ice offers
                 # tailscale0 as a candidate only while the tailnet is up, but it was
                 # only evaluated at stream start. On a cold boot where ustreamer came
@@ -1481,7 +1527,7 @@ class VideoManager:
                 time.sleep(2)   # let it come up before judging
                 fails = 0 if self.is_running() else min(fails + 1, 4)
                 res_check = 0
-                res_miss = 0
+                res_miss = 0; res_last = ""
         t = threading.Thread(target=_watch, daemon=True, name="mb-video-watchdog")
         t.start()
         self._mon_thr = t
