@@ -1185,6 +1185,10 @@ class MouseJiggler:
         # left") on purpose, so it survives a service restart and a reboot with
         # its meaning intact - a relative countdown would silently restart.
         self.off_at = None
+        # The operator's ORIGINAL choice, purely for redisplay while armed.
+        # off_at remains the single source of truth for when to fire.
+        self.off_tz = None
+        self.off_time = None
         self._deadline_task = None
         # Set by the app at startup so the deadline can persist enabled=False
         # when it fires. Without this an auto-off would be forgotten on the next
@@ -1200,10 +1204,13 @@ class MouseJiggler:
         # style change does not silently cancel a schedule the operator set.
         if off_at != "keep":
             self.off_at = float(off_at) if off_at else None
+            if not self.off_at:
+                self.off_tz = self.off_time = None
         # A deadline is meaningless while disabled, and leaving a stale one set
         # would fire against a later manual enable.
         if not self.enabled:
             self.off_at = None
+            self.off_tz = self.off_time = None
 
     def remaining(self):
         """Seconds until auto-off, or None if no deadline is armed."""
@@ -1226,8 +1233,11 @@ class MouseJiggler:
             "styles":    {k: v["label"] for k, v in JIGGLER_STYLES.items()},
             "off_at":    self.off_at,            # epoch seconds, or null
             "off_at_local": local,               # human, in the DEVICE's timezone
+            "off_tz":    self.off_tz,            # the zone the operator PICKED, if any
+            "off_time":  self.off_time,          # the HH:MM they typed, if any
             "remaining": None if rem is None else int(rem),
-            "tz":        time.strftime("%Z"),    # so the UI can say which zone it means
+            "tz":        time.strftime("%Z"),    # the DEVICE's current zone
+            "timezones": _tz_choices(),          # what the picker offers
         }
 
     def start(self):
@@ -1268,7 +1278,8 @@ class MouseJiggler:
                 log.info("Jiggler auto-off fired (scheduled deadline reached)")
                 if self._persist:
                     try:
-                        await _call_off_loop(self._persist, False, self.style, None)
+                        self.off_tz = self.off_time = None
+                        await _call_off_loop(self._persist, False, self.style, None, None, None)
                     except Exception:
                         log.warning("jiggler auto-off could not be persisted", exc_info=True)
             except asyncio.CancelledError:
@@ -2693,12 +2704,106 @@ async def api_identity(request):
     return web.json_response({"ok": False, "error": "unknown action"}, status=400)
 
 
-def _jiggler_persist(enabled: bool, style: str, off_at):
-    """Write the jiggler's three persisted fields. Blocking (file IO), so call
-    it via _call_off_loop from async code."""
+def _jiggler_persist(enabled: bool, style: str, off_at, off_tz=None, off_time=None):
+    """Write the jiggler's persisted fields. Blocking (file IO), so call it via
+    _call_off_loop from async code.
+
+    off_tz/off_time are the operator's ORIGINAL choice ("16:00", "US Central").
+    off_at alone is the source of truth for WHEN to fire - these two exist only
+    so the panel can redisplay the choice while a schedule is armed, instead of
+    showing a bare timestamp that loses which clock the operator meant."""
     cfg = _load_cfg()
-    cfg["jiggler"] = {"enabled": bool(enabled), "style": style, "off_at": off_at}
+    cfg["jiggler"] = {"enabled": bool(enabled), "style": style, "off_at": off_at,
+                      "off_tz": off_tz, "off_time": off_time}
     _save_cfg(cfg)
+
+
+# Timezones offered for the jiggler's "switch off at HH:MM" schedule. A curated
+# list, not all 599 zones: a 599-entry <select> is unusable on a narrow settings
+# panel, and these cover the operator plus the common remote cases. Labels are
+# built at request time so the abbreviation is HONEST year-round - the same zone
+# renders "US Central (CDT)" in July and "US Central (CST)" in January, rather
+# than a hardcoded string that is wrong for half the year.
+JIGGLER_TIMEZONES = [
+    ("America/New_York",    "US Eastern"),
+    ("America/Chicago",     "US Central"),
+    ("America/Denver",      "US Mountain"),
+    ("America/Los_Angeles", "US Pacific"),
+    ("UTC",                 "UTC"),
+    ("Europe/London",       "London"),
+    ("Europe/Berlin",       "Central Europe"),
+    ("Asia/Dubai",          "Dubai"),
+    ("Asia/Kolkata",        "India"),
+    ("Asia/Singapore",      "Singapore"),
+    ("Asia/Tokyo",          "Tokyo"),
+    ("Australia/Sydney",    "Sydney"),
+]
+
+
+def _tz_choices():
+    """The timezone list for the UI, each with its CURRENT abbreviation/offset so
+    the operator can see what the zone means today. Falls back to a bare label if
+    tzdata is unavailable rather than failing the whole status call."""
+    import datetime as _dt
+    out = []
+    try:
+        from zoneinfo import ZoneInfo
+    except Exception:
+        return [{"tz": t, "label": lbl} for t, lbl in JIGGLER_TIMEZONES]
+    now = _dt.datetime.now(_dt.timezone.utc)
+    for tzname, label in JIGGLER_TIMEZONES:
+        try:
+            z = ZoneInfo(tzname)
+            loc = now.astimezone(z)
+            abbr = loc.strftime("%Z")
+            off = loc.utcoffset() or _dt.timedelta(0)
+            mins = int(off.total_seconds() // 60)
+            sign = "+" if mins >= 0 else "-"
+            hh, mm = divmod(abs(mins), 60)
+            out.append({"tz": tzname,
+                        "label": "%s (%s)" % (label, abbr),
+                        "offset": "UTC%s%02d:%02d" % (sign, hh, mm)})
+        except Exception:
+            out.append({"tz": tzname, "label": label})
+    return out
+
+
+def _next_time_in_tz(hhmm: str, tzname: str, now: float = None):
+    """Resolve 'HH:MM' in an ARBITRARY timezone to the next absolute epoch.
+
+    Returns (epoch, shifted) where shifted=True means the requested wall time
+    does not exist on that date because it falls in a daylight-saving GAP (in
+    the US spring-forward, 02:00-02:59 simply never happens). Python keeps such
+    a time nominal, so converting to an epoch and back moves it forward an hour;
+    we detect that and report it, so the UI can show the real switch-off moment
+    instead of silently lying about it. For an AMBIGUOUS time in the fall-back
+    hour (02:30 happens twice) Python's default fold=0 picks the FIRST, earlier
+    occurrence, which is the sane reading of "switch off at 02:30".
+    """
+    import datetime as _dt
+    from zoneinfo import ZoneInfo
+    parts = str(hhmm).strip().split(":")
+    if len(parts) != 2 or not all(x.isdigit() for x in parts):
+        raise ValueError("expected HH:MM, got %r" % (hhmm,))
+    hh, mm = int(parts[0]), int(parts[1])
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        raise ValueError("expected HH:MM in 00:00..23:59, got %r" % (hhmm,))
+    try:
+        z = ZoneInfo(tzname)
+    except Exception:
+        raise ValueError("unknown timezone %r" % (tzname,))
+    base = (_dt.datetime.now(z) if now is None
+            else _dt.datetime.fromtimestamp(now, z))
+    cand = base.replace(hour=hh, minute=mm, second=0, microsecond=0)
+    if cand <= base:
+        # Re-pin the wall time after adding a day: a DST change on the boundary
+        # would otherwise leave it an hour off.
+        cand = (cand + _dt.timedelta(days=1)).replace(
+            hour=hh, minute=mm, second=0, microsecond=0)
+    epoch = cand.timestamp()
+    back = _dt.datetime.fromtimestamp(epoch, z)
+    shifted = (back.hour, back.minute) != (hh, mm)
+    return epoch, shifted
 
 
 def _next_local_time(hhmm: str, now: float = None) -> float:
@@ -2766,7 +2871,19 @@ async def api_jiggler(request):
                 return web.json_response({"ok": False, "error": "off_after_minutes must be 1..10080"}, status=400)
             off_at = time.time() + mins * 60.0
         elif "off_at_time" in d and d["off_at_time"]:
-            off_at = _next_local_time(str(d["off_at_time"]))
+            # off_at_tz is optional: omitted means the DEVICE's own timezone,
+            # which is the pre-existing behaviour (and what its tests assert).
+            _tz = d.get("off_at_tz") or ""
+            if _tz:
+                off_at, _shifted = _next_time_in_tz(str(d["off_at_time"]), str(_tz))
+                if _shifted:
+                    # The requested wall time does not exist that day (DST gap).
+                    # Honour the shifted time rather than refusing, but the UI
+                    # shows the resolved moment so it is never a silent lie.
+                    log.info("jiggler off-time %s %s falls in a DST gap; using the shifted time",
+                             d["off_at_time"], _tz)
+            else:
+                off_at = _next_local_time(str(d["off_at_time"]))
         elif "off_at" in d:
             off_at = float(d["off_at"]) if d["off_at"] else None
     except (ValueError, TypeError) as e:
@@ -2779,7 +2896,15 @@ async def api_jiggler(request):
         off_at = None
 
     jiggler.configure(enabled, style, off_at)
-    await _call_off_loop(_jiggler_persist, jiggler.enabled, jiggler.style, jiggler.off_at)
+    # Remember what the operator actually chose, for redisplay while armed.
+    if off_at != "keep":
+        if off_at and "off_at_time" in d and d["off_at_time"]:
+            jiggler.off_time = str(d["off_at_time"])
+            jiggler.off_tz   = str(d.get("off_at_tz") or "") or None
+        elif off_at and "off_after_minutes" in d:
+            jiggler.off_time = jiggler.off_tz = None
+    await _call_off_loop(_jiggler_persist, jiggler.enabled, jiggler.style,
+                         jiggler.off_at, jiggler.off_tz, jiggler.off_time)
     return web.json_response({"ok": True, **jiggler.status()})
 
 
@@ -3922,6 +4047,9 @@ async def main():
         except Exception:
             pass
     jiggler.configure(_j_enabled, jc.get("style", JIGGLER_DEFAULT_STYLE), _j_off)
+    if jiggler.off_at:
+        jiggler.off_tz   = jc.get("off_tz")
+        jiggler.off_time = jc.get("off_time")
     jiggler.start()
     log.info("Jiggler ready (enabled=%s, style=%s, auto-off=%s)",
              jiggler.enabled, jiggler.style, jiggler.status().get("off_at_local") or "none")

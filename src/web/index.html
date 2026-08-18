@@ -1207,46 +1207,68 @@ body:not(.fs) .fs-hud{display:none!important}
           <button class="sbtn" id="jiggler-btn" onclick="toggleJiggler()">Enable Jiggler</button>
           <div id="jiggler-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
 
-          <div style="border-top:1px solid var(--border);margin-top:11px;padding-top:9px">
-            <div class="scard-title" style="margin:0 0 6px"><span class="dot-cyn"></span>Auto switch off
+          <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
+            <div class="scard-title" style="margin:0 0 7px"><span class="dot-cyn"></span>Auto switch off
               <span id="jig-off-pill" style="margin-left:auto;font-size:10px;font-weight:400;text-transform:none;color:var(--muted)">not scheduled</span>
             </div>
-            <div class="snote" style="margin-bottom:8px">Turn the jiggler off by itself. Times are this device's clock (<span id="jig-tz">-</span>).</div>
 
-            <div class="cur-opts" id="jig-off-mode" style="margin-bottom:8px">
-              <button class="cur-opt active" data-m="none"  onclick="jigOffMode('none')">No auto off</button>
-              <button class="cur-opt"        data-m="after" onclick="jigOffMode('after')">After a while</button>
-              <button class="cur-opt"        data-m="at"    onclick="jigOffMode('at')">At a time</button>
+            <!-- Segmented control as a 3-column GRID, not flex-wrap. .cur-opt in a
+                 wrapping flex row wrapped raggedly at narrow widths; equal grid
+                 columns always fit on one line and never leave an orphan. -->
+            <div id="jig-off-mode" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:9px">
+              <button class="cur-opt active" data-m="none"  onclick="jigOffMode('none')" style="width:100%;padding:0 4px">Never</button>
+              <button class="cur-opt"        data-m="after" onclick="jigOffMode('after')" style="width:100%;padding:0 4px">After</button>
+              <button class="cur-opt"        data-m="at"    onclick="jigOffMode('at')" style="width:100%;padding:0 4px">At a time</button>
             </div>
 
+            <!-- AFTER: a number + a unit, which is what was actually asked for.
+                 Every .sbtn/.sinput here carries width:auto;margin:0 - both classes
+                 are hard width:100%, and that is what collapsed the old flex row. -->
             <div id="jig-off-after" style="display:none">
-              <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
-                <button class="sbtn" style="flex:1;min-width:56px" onclick="jigOffAfter(15)">15m</button>
-                <button class="sbtn" style="flex:1;min-width:56px" onclick="jigOffAfter(30)">30m</button>
-                <button class="sbtn" style="flex:1;min-width:56px" onclick="jigOffAfter(60)">1h</button>
-                <button class="sbtn" style="flex:1;min-width:56px" onclick="jigOffAfter(120)">2h</button>
-                <button class="sbtn" style="flex:1;min-width:56px" onclick="jigOffAfter(480)">8h</button>
+              <div class="snote" style="margin:0 0 6px">Stop this long from now.</div>
+              <div style="display:grid;grid-template-columns:minmax(0,1fr) 78px;gap:5px;margin-bottom:6px">
+                <input class="sinput" type="number" id="jig-off-num" min="1" max="10080" value="1"
+                       style="width:auto;margin:0;text-align:center">
+                <select class="ssel" id="jig-off-unit" style="width:100%;margin:0;padding:0 4px">
+                  <option value="m">minutes</option>
+                  <option value="h" selected>hours</option>
+                </select>
               </div>
-              <div style="display:flex;gap:6px;align-items:center">
-                <input class="sinput" type="number" id="jig-off-mins" min="1" max="10080" placeholder="minutes" style="flex:1;margin:0">
-                <button class="sbtn pri" style="flex:none" onclick="jigOffAfterCustom()">Set</button>
+              <button class="sbtn pri" style="margin:0 0 8px" onclick="jigOffAfterCustom()">Set timer</button>
+              <div class="snote" style="margin:0 0 5px">Or pick a common one</div>
+              <!-- SIX presets in a 3-col grid = two full rows, so nothing is ever
+                   stretched alone across its own row like the old 5-item flex. -->
+              <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px">
+                <button class="sbtn" style="margin:0" onclick="jigOffAfter(15)">15m</button>
+                <button class="sbtn" style="margin:0" onclick="jigOffAfter(30)">30m</button>
+                <button class="sbtn" style="margin:0" onclick="jigOffAfter(60)">1h</button>
+                <button class="sbtn" style="margin:0" onclick="jigOffAfter(120)">2h</button>
+                <button class="sbtn" style="margin:0" onclick="jigOffAfter(240)">4h</button>
+                <button class="sbtn" style="margin:0" onclick="jigOffAfter(480)">8h</button>
               </div>
             </div>
 
+            <!-- AT A TIME: stacked full-width controls. A time field, a timezone
+                 select and a button do not fit on one 300px row without squeezing
+                 the timezone name to nothing, so they get their own lines. -->
             <div id="jig-off-at" style="display:none">
-              <div style="display:flex;gap:6px;align-items:center">
-                <input class="sinput" type="time" id="jig-off-clock" style="flex:1;margin:0">
-                <button class="sbtn pri" style="flex:none" onclick="jigOffAtTime()">Set</button>
-              </div>
-              <div class="snote" style="margin:6px 0 0">If that time has already passed today, it means tomorrow.</div>
+              <div class="snote" style="margin:0 0 6px">Stop at a clock time.</div>
+              <label class="wifi-label" for="jig-off-clock" style="display:block;margin-bottom:3px">Time</label>
+              <input class="sinput" type="time" id="jig-off-clock" style="margin:0 0 7px">
+              <label class="wifi-label" for="jig-off-tz" style="display:block;margin-bottom:3px">Timezone</label>
+              <select class="ssel" id="jig-off-tz" style="width:100%;margin:0 0 7px"></select>
+              <button class="sbtn pri" style="margin:0" onclick="jigOffAtTime()">Set time</button>
+              <div class="snote" style="margin:6px 0 0">If it already passed today, it means tomorrow.</div>
             </div>
 
-            <div id="jig-off-active" style="display:none;margin-top:8px;padding:6px 8px;border-radius:4px;
-                 background:rgba(34,211,238,.10);border:1px solid var(--accent);font-size:11px">
-              <div>Switching off at <b id="jig-off-when">-</b></div>
-              <div style="color:var(--sub);margin-top:2px">in <span id="jig-off-left">-</span></div>
-              <button class="sbtn" style="margin-top:6px" onclick="jigOffCancel()">Cancel schedule</button>
+            <div id="jig-off-active" style="display:none;margin-top:9px;padding:7px 9px;border-radius:var(--r);
+                 background:rgba(34,211,238,.10);border:1px solid #22d3ee40;font-size:11px">
+              <div style="color:var(--sub);font-size:10px;text-transform:uppercase;letter-spacing:.4px">Stopping in</div>
+              <div id="jig-off-left" style="font-size:17px;font-weight:600;color:#8beefc;margin:1px 0 3px">-</div>
+              <div id="jig-off-when" style="color:var(--sub);line-height:1.45">-</div>
+              <button class="sbtn" style="margin:7px 0 0" onclick="jigOffCancel()">Cancel</button>
             </div>
+          </div>
           </div>
         </div>
         <div class="scard">
@@ -4573,17 +4595,42 @@ function _jigStartTick(){
   _jigOffTick=setInterval(paint,1000);
 }
 
+function _jigTzFill(d){
+  const sel=document.getElementById('jig-off-tz');
+  if(!sel || !d.timezones || !d.timezones.length) return;
+  if(sel.dataset.filled==='1') return;          // build once; keeps the selection
+  sel.innerHTML='';
+  d.timezones.forEach(t=>{
+    const o=document.createElement('option');
+    o.value=t.tz; o.textContent=t.label + (t.offset?(' '+t.offset):'');
+    sel.appendChild(o);
+  });
+  // Default to the zone the DEVICE is in, so the common case is zero clicks.
+  const dev=(d.timezones.find(t=>(t.label||'').indexOf('('+d.tz+')')>=0));
+  sel.value = (d.off_tz) || (dev?dev.tz:sel.options[0].value);
+  sel.dataset.filled='1';
+}
+
 function _jigRenderOff(d){
   _jigOffAt = d.off_at || null;
+  _jigTzFill(d);
   const box=document.getElementById('jig-off-active');
   const pill=document.getElementById('jig-off-pill');
-  const tz=document.getElementById('jig-tz');
-  if(tz && d.tz) tz.textContent=d.tz;
   if(!box||!pill) return;
   if(_jigOffAt){
     box.style.display='';
     const w=document.getElementById('jig-off-when');
-    if(w) w.textContent=d.off_at_local||'-';
+    if(w){
+      // Always show the DEVICE's clock, because that is when it will really
+      // happen. If the operator picked a DIFFERENT zone, show their wording too,
+      // so a schedule set in another timezone is never ambiguous.
+      let html='at <b>'+(d.off_at_local||'-')+'</b>';
+      if(d.off_time && d.off_tz){
+        const nice=(d.timezones||[]).find(t=>t.tz===d.off_tz);
+        html+='<br>you set '+d.off_time+' '+((nice&&nice.label)||d.off_tz);
+      }
+      w.innerHTML=html;
+    }
     pill.textContent='scheduled';
     pill.style.color='var(--accent)';
     _jigStartTick();
@@ -4592,7 +4639,6 @@ function _jigRenderOff(d){
     pill.textContent='not scheduled';
     pill.style.color='var(--muted)';
     clearInterval(_jigOffTick);
-    // Reset the picker so the UI never implies a schedule the device lacks.
     document.querySelectorAll('#jig-off-mode .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.m==='none'));
     const a=document.getElementById('jig-off-after'), t=document.getElementById('jig-off-at');
     if(a) a.style.display='none';
@@ -4624,17 +4670,24 @@ async function _jigPostOff(payload, okMsg){
 }
 
 function jigOffAfter(mins){ _jigPostOff({off_after_minutes:mins}, 'Jiggler will stop in '+_jigFmtLeft(mins*60)); }
+
+// Number + unit, which is what was actually asked for. Converted to minutes here
+// so the API contract stays a single unit and the existing tests keep passing.
 function jigOffAfterCustom(){
-  const el=document.getElementById('jig-off-mins');
-  const v=parseInt(el&&el.value,10);
-  if(!v || v<1 || v>10080){ toast('Enter 1 to 10080 minutes'); return; }
-  jigOffAfter(v);
+  const n=parseInt((document.getElementById('jig-off-num')||{}).value,10);
+  const u=(document.getElementById('jig-off-unit')||{}).value||'m';
+  if(!n || n<1){ toast('Enter a number first'); return; }
+  const mins = (u==='h') ? n*60 : n;
+  if(mins>10080){ toast('Maximum is 7 days (168 hours)'); return; }
+  jigOffAfter(mins);
 }
+
 function jigOffAtTime(){
   const el=document.getElementById('jig-off-clock');
-  const v=el&&el.value;                       // "HH:MM" from <input type=time>
+  const v=el&&el.value;                       // "HH:MM" (24h) from <input type=time>
   if(!v){ toast('Pick a time first'); return; }
-  _jigPostOff({off_at_time:v}, 'Jiggler will stop at '+v);
+  const tz=(document.getElementById('jig-off-tz')||{}).value||'';
+  _jigPostOff({off_at_time:v, off_at_tz:tz||undefined}, 'Jiggler will stop at '+v);
 }
 function jigOffCancel(){
   // off_at:null clears the deadline. enabled is deliberately preserved -
