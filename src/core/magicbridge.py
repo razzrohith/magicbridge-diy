@@ -1613,7 +1613,16 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     sid = _sec.token_hex(8)
     t0 = time.time()
     _ws_clients.add(ws)
-    _ws_info[ws] = {"ip": ip, "since": t0, "ua": ua}
+    # sid is stored so a session can be ADDRESSED later (listed, kicked). It is
+    # already generated for the session log; reusing it means the id an operator
+    # sees in the panel is the same one that appears in the log.
+    _ws_info[ws] = {"ip": ip, "since": t0, "ua": ua, "sid": sid}
+    # Tell the client its own id, so the panel can label one row "this browser"
+    # and refuse to offer a Kick button that would disconnect the operator.
+    try:
+        await ws.send_json({"type": "hello", "sid": sid})
+    except Exception:
+        pass
     log.info("WS connect  from %s  (total: %d)", ip, len(_ws_clients))
     _sess_log(sid, ip, ua, "connect")
 
@@ -1961,8 +1970,10 @@ async def api_status(request: web.Request) -> web.Response:
     # devices - this is the admin looking at their own device, not a leak.
     _now = time.time()
     viewers = sorted(
+        # sid rides along so the panel can ADDRESS a session: label our own row
+        # "this browser" and hand the others a working Disconnect button.
         ({"ip": v.get("ip", "?"), "secs": int(_now - v.get("since", _now)),
-          "ua": v.get("ua", "")[:180]}
+          "ua": v.get("ua", "")[:180], "sid": v.get("sid")}
          for v in list(_ws_info.values())),
         key=lambda x: x["secs"], reverse=True,
     )
@@ -2064,6 +2075,78 @@ async def api_devices(request: web.Request) -> web.Response:
     loop = asyncio.get_running_loop()
     devs = await loop.run_in_executor(None, video.detect_devices)
     return web.json_response(devs)
+
+
+def _ua_short(ua: str) -> str:
+    """A human label for a browser, not the full 120-char User-Agent string."""
+    ua = ua or ""
+    browser = ("Edge" if "Edg/" in ua else
+               "Chrome" if "Chrome/" in ua else
+               "Firefox" if "Firefox/" in ua else
+               "Safari" if "Safari/" in ua else "Browser")
+    osname = ("Windows" if "Windows" in ua else
+              "macOS" if ("Mac OS" in ua or "Macintosh" in ua) else
+              "iOS" if ("iPhone" in ua or "iPad" in ua) else
+              "Android" if "Android" in ua else
+              "Linux" if "Linux" in ua else "")
+    return (browser + (" on " + osname if osname else "")).strip()
+
+
+async def api_sessions(request: web.Request) -> web.Response:
+    """GET  /api/sessions  - who is connected right now.
+    POST /api/sessions  {"action":"kick","sid":"..."} - disconnect one.
+
+    Sessions are the WebSocket connections: that is what carries keyboard and
+    mouse, so a connected socket is exactly "someone who can control the target".
+    Counting viewers alone would miss an idle tab that still holds input rights.
+    """
+    now = time.time()
+    if request.method == "GET":
+        out = []
+        for ws, info in list(_ws_info.items()):
+            out.append({
+                "sid": info.get("sid"),
+                "ip": info.get("ip"),
+                "ua": _ua_short(info.get("ua")),
+                "since": info.get("since"),
+                "seconds": int(max(0, now - (info.get("since") or now))),
+                "closed": bool(getattr(ws, "closed", False)),
+            })
+        out.sort(key=lambda x: x["since"] or 0)
+        return web.json_response({"ok": True, "sessions": out, "count": len(out)})
+
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    if str(d.get("action")) != "kick":
+        return web.json_response({"ok": False, "error": "unknown action"}, status=400)
+    sid = str(d.get("sid") or "")
+    if not sid:
+        return web.json_response({"ok": False, "error": "sid required"}, status=400)
+
+    target = None
+    for ws, info in list(_ws_info.items()):
+        if info.get("sid") == sid:
+            target = ws
+            break
+    if target is None:
+        return web.json_response({"ok": False, "error": "no such session"}, status=404)
+    try:
+        # Tell the client WHY before dropping it. The close code alone is not
+        # enough: aiohttp rewrites it when a reader is mid-receive, and a proxy
+        # in front can flatten it too, so a browser would see an ordinary drop
+        # and cheerfully reconnect - which would make the kick do nothing.
+        # An application message survives all of that.
+        try:
+            await target.send_json({"type": "kicked"})
+        except Exception:
+            pass
+        await target.close(code=4000, message=b"disconnected by operator")
+        log.info("WS session %s kicked by operator", sid)
+    except Exception as e:
+        return web.json_response({"ok": False, "error": str(e)}, status=500)
+    return web.json_response({"ok": True, "kicked": sid})
 
 
 async def api_stream_settings(request: web.Request) -> web.Response:
@@ -4190,6 +4273,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/power",     api_power)
     app.router.add_get("/api/identity",  api_identity)
     app.router.add_post("/api/identity", api_identity)
+    app.router.add_get("/api/sessions",  api_sessions)
+    app.router.add_post("/api/sessions", api_sessions)
     app.router.add_get("/api/jiggler",  api_jiggler)
     app.router.add_post("/api/jiggler", api_jiggler)
     app.router.add_get("/api/hid-autodisconnect",  api_hid_autodisconnect)

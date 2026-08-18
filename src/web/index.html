@@ -132,9 +132,13 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar,body.fs #railnav{display:none!i
 .spark{display:inline-flex;align-items:flex-end;gap:1px;height:11px;margin-left:3px}
 .spark i{width:2px;background:currentColor;opacity:.85;display:inline-block;border-radius:1px}
 #ss-viewers{margin:2px 0 4px}
+.vw-kick{background:transparent;border:1px solid var(--border);color:var(--muted);
+  border-radius:5px;font:inherit;font-size:9px;letter-spacing:.02em;padding:1px 6px;
+  cursor:pointer;flex:none;white-space:nowrap}
+.vw-kick:hover{border-color:var(--red);color:var(--red)}
 .vw{display:flex;gap:8px;align-items:baseline;font-size:11px;padding:4px 0;border-top:1px solid var(--border)}
-.vw-ip{color:var(--text);font-family:ui-monospace,monospace;min-width:100px}
-.vw-dev{color:var(--sub);flex:1}
+.vw-ip{color:var(--text);font-family:ui-monospace,monospace;min-width:0;flex:none}
+.vw-dev{color:var(--sub);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .vw-dur{color:var(--muted);font-variant-numeric:tabular-nums}
 .vw-none{color:var(--muted);font-size:11px;padding:4px 0}
 .tbtn{height:28px;padding:0 10px;background:var(--card);border:1px solid var(--border);
@@ -1770,6 +1774,12 @@ function connect(){
     if(_hb) _hb.clear();
     ping(); };
   ws.onclose=(ev)=>{
+    if(_kicked){
+      dot('err','Disconnected');
+      if(typeof captured!=='undefined' && captured){ _intentional=true; _setCaptured(false); }
+      toast('This session was disconnected from the panel. Reload the page to reconnect.');
+      return;
+    }
     // Distinguish a genuine auth/handshake rejection (closes WITHOUT ever
     // opening) from a normal mid-session drop (network blip, laptop sleep,
     // fullscreen transition). The old code counted EVERY close toward the
@@ -1843,6 +1853,12 @@ function send(o){
   return false;
 }
 function onMsg(d){
+  // The server names our own connection on connect, so the connection list can
+  // mark one row "this browser" and never offer to disconnect the operator.
+  if(d.type==='hello'){ _mySid=d.sid||null; return; }
+  // Dropped on purpose by whoever holds the panel. Do NOT reconnect: coming
+  // back two seconds later would make Disconnect meaningless.
+  if(d.type==='kicked'){ _kicked=true; return; }
   if(d.type==='pong'){
     const _sent = (typeof d.t === 'number' && d.t > 0) ? d.t : _pt;
     const ms=Date.now()-_sent;
@@ -3927,6 +3943,22 @@ function uaShort(ua){
 function _escHtml(s){ return String(s==null?'':s)
   .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
   .replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+// A connected browser can type on the target, so the connection list doubles as
+// access control: this drops one session's socket. It cannot target our own row
+// (the button is not rendered there), so an operator cannot lock themselves out.
+let _mySid = null, _kicked = false;
+async function sessKick(sid){
+  if(!sid) return;
+  if(!confirm('Disconnect this session?\n\nIt loses keyboard and mouse straight away and will not reconnect on its own. Whoever is on it can still reload the page and come back, so change the password if you want them out for good.')) return;
+  try{
+    const r=await fetch('/api/sessions',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'kick', sid:sid})});
+    const d=await r.json();
+    toast(d.ok?'Session disconnected':(d.error||'Could not disconnect'));
+    refreshStatus();
+  }catch(e){ toast('Could not disconnect'); }
+}
+
 function applyStatus(d){
   if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;
     const ct=document.getElementById('chip-temp'); if(ct){ct.classList.remove('lv-g','lv-a','lv-r');ct.classList.add('lv-'+(d.temp_c>75?'r':d.temp_c>65?'a':'g'));}}
@@ -3943,9 +3975,16 @@ function applyStatus(d){
     const list=document.getElementById('ss-viewers');
     if(list){
       list.innerHTML = d.viewers.length
-        ? d.viewers.map(v=>'<div class="vw"><span class="vw-ip">'+_escHtml(v.ip)+'</span>'
-            +'<span class="vw-dev">'+_escHtml(uaShort(v.ua))+'</span>'
-            +'<span class="vw-dur">'+durShort(v.secs)+'</span></div>').join('')
+        ? d.viewers.map(v=>{
+            const me = v.sid && v.sid===_mySid;
+            return '<div class="vw"><span class="vw-ip">'+_escHtml(v.ip)+'</span>'
+              +'<span class="vw-dev">'+_escHtml(uaShort(v.ua))+(me?' (this browser)':'')+'</span>'
+              +'<span class="vw-dur">'+durShort(v.secs)+'</span>'
+              +(me||!v.sid ? ''
+                           : '<button class="vw-kick" title="Disconnect this session"'
+                             +' onclick="sessKick(&quot;'+_escHtml(v.sid)+'&quot;)">Disconnect</button>')
+              +'</div>';
+          }).join('')
         : '<div class="vw-none">no active connections</div>';
     }
   }
