@@ -259,6 +259,26 @@ body:not(.fs) .fs-hud{display:none!important}
   color:var(--muted);font-size:17px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .12s}
 .railbtn:hover{background:rgba(255,255,255,.06);color:var(--sub)}
 .railbtn.active{background:rgba(92,150,255,.16);color:var(--accent-l);border-color:rgba(92,150,255,.32)}
+/* The rail now IS the section nav, so each button needs a name - an icon-only
+   strip of seven is a guessing game. Small caps under the glyph keeps it
+   scannable without widening the rail much. */
+#railnav{width:58px}
+.railbtn{width:46px;height:auto;min-height:40px;flex-direction:column;gap:2px;padding:5px 0;position:relative}
+.railbtn .rlab{font-size:8px;letter-spacing:.3px;text-transform:uppercase;line-height:1;font-weight:600}
+.railbtn .rico{font-size:15px;line-height:1}
+.railbtn .rdot{position:absolute;top:4px;right:7px;width:5px;height:5px;border-radius:50%;background:transparent}
+.railbtn .rdot.ok{background:var(--green)}
+.railbtn .rdot.warn{background:var(--yellow,#eab308)}
+.railbtn .rdot.err{background:var(--red)}
+.rail-sep{width:26px;height:1px;background:var(--border);margin:3px 0;flex:none}
+/* Section header inside the panel, so you can see which section you are in
+   without looking back at the rail. */
+.sys-head{display:flex;align-items:center;gap:8px;padding:0 0 10px;margin-bottom:2px;
+  border-bottom:1px solid var(--border)}
+.sys-head .h-ico{font-size:17px;line-height:1}
+.sys-head .h-txt{min-width:0}
+.sys-head .h-title{font-size:12px;font-weight:700;color:var(--text);letter-spacing:.3px}
+.sys-head .h-sub{font-size:10px;color:var(--muted);display:block;margin-top:1px}
 #sidenav{display:none}
 .tab{display:none;padding:14px}
 .tab.active{display:block}
@@ -864,29 +884,6 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="snote" style="margin-bottom:0">Opens the Windows display picker on the remote PC.</div>
         </div>
         <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>Wake-on-LAN</div>
-          <input class="sinput wifi-field" type="text" id="wol-mac" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" spellcheck="false" style="margin-bottom:8px">
-          <div style="display:flex;gap:8px">
-            <button class="sbtn" onclick="wolSave()" style="flex:1">💾 Save</button>
-            <button class="sbtn pri" onclick="wolWake()" style="flex:1">⚡ Wake PC</button>
-          </div>
-          <div class="snote" id="wol-msg" style="margin-bottom:0;margin-top:6px;display:none"></div>
-          <div class="snote" style="margin-bottom:0">Powers on the target. Needs WOL enabled in its BIOS.</div>
-          <div class="scard-title" style="margin-top:12px"><span class="dot-cyn"></span>Wake schedule <span style="font-size:10px;color:var(--muted);margin-left:auto;font-weight:400;text-transform:none">auto wake at set times</span></div>
-          <div id="wol-sched-list"></div>
-          <div style="display:flex;gap:5px;margin-top:5px">
-            <input class="sinput" type="time" id="wsch-time" style="width:auto;margin:0">
-            <select class="ssel" id="wsch-days" style="width:auto;margin:0">
-              <option value="*">Every day</option>
-              <option value="1-5">Weekdays</option>
-              <option value="0,6">Weekends</option>
-              <option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option>
-              <option value="4">Thu</option><option value="5">Fri</option><option value="6">Sat</option><option value="0">Sun</option>
-            </select>
-            <button class="sbtn" onclick="wolSchedAdd()" style="margin:0">+ Add</button>
-          </div>
-        </div>
-        <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Shortcuts</div>
           <div class="srow"><span class="sk">Capture</span><span class="sv">Click</span></div>
           <div class="srow"><span class="sk">Release</span><span class="sv">Right Ctrl or Esc (hold 2s)</span></div>
@@ -1049,27 +1046,10 @@ body:not(.fs) .fs-hud{display:none!important}
 
       <!-- System tab -->
       <div class="tab" id="panel-system">
-        <div class="sys-nav">
-          <button class="sys-nav-item active" data-cat="monitoring" onclick="sysNavShow('monitoring')" title="Status &amp; health">
-            <span class="ico">📊</span>
-            <span class="sys-nav-label">Monitor<span class="sys-dot ok" id="sys-dot-monitoring"></span></span>
-          </button>
-          <button class="sys-nav-item" data-cat="peripherals" onclick="sysNavShow('peripherals')" title="Devices &amp; identity">
-            <span class="ico">🖱</span>
-            <span class="sys-nav-label">Devices</span>
-          </button>
-          <button class="sys-nav-item" data-cat="security" onclick="sysNavShow('security')" title="Security &amp; account">
-            <span class="ico">🛡</span>
-            <span class="sys-nav-label">Security<span class="sys-dot warn" id="sys-dot-security"></span></span>
-          </button>
-          <button class="sys-nav-item" data-cat="power" onclick="sysNavShow('power')" title="Reboot &amp; shutdown">
-            <span class="ico">⚡</span>
-            <span class="sys-nav-label">Power<span class="sys-dot ok" id="sys-dot-power"></span></span>
-          </button>
-          <button class="sys-nav-item" data-cat="update" onclick="sysNavShow('update')" title="Software update">
-            <span class="ico">⬆</span>
-            <span class="sys-nav-label">Update<span class="sys-dot ok" id="sys-dot-update"></span></span>
-          </button>
+        <div class="sys-head">
+          <span class="h-ico" id="sys-head-ico">📊</span>
+          <span class="h-txt"><span class="h-title" id="sys-head-title">Monitor</span>
+            <span class="h-sub" id="sys-head-sub">Live status and health</span></span>
         </div>
         <div class="sys-content">
 
@@ -1099,7 +1079,7 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
         </div>
         <div class="scard">
-          <div class="scard-title"><span class="dot-yel"></span>Connection &amp; Devices</div>
+          <div class="scard-title"><span class="dot-yel"></span>Connections</div>
           <div class="srow"><span class="sk">HID KB</span><span class="sv" id="ss-hkb">-</span></div>
           <div class="srow"><span class="sk">HID Mouse</span><span class="sv" id="ss-hms">-</span></div>
           <div class="srow"><span class="sk">Video</span><span class="sv" id="ss-dev">-</span></div>
@@ -1131,13 +1111,36 @@ body:not(.fs) .fs-hud{display:none!important}
 
         <div class="sys-cat" data-cat="power">
         <div class="scard">
-          <div class="scard-title"><span class="dot-yel" style="background:var(--red)"></span>Pi Power</div>
+          <div class="scard-title"><span class="dot-yel" style="background:var(--red)"></span>This Device</div>
           <div class="snote" style="margin-bottom:8px">Reboot or shut down. Shutdown needs a manual power-on.</div>
           <button class="sbtn warn" onclick="piPower('reboot')">↺ Reboot Pi</button>
           <button class="sbtn dan" onclick="piPower('shutdown')" style="margin-top:4px">⏻ Shutdown Pi</button>
         </div>
         </div>
 
+        <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>Target Computer</div>
+          <input class="sinput wifi-field" type="text" id="wol-mac" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" spellcheck="false" style="margin-bottom:8px">
+          <div style="display:flex;gap:8px">
+            <button class="sbtn" onclick="wolSave()" style="flex:1">💾 Save</button>
+            <button class="sbtn pri" onclick="wolWake()" style="flex:1">⚡ Wake PC</button>
+          </div>
+          <div class="snote" id="wol-msg" style="margin-bottom:0;margin-top:6px;display:none"></div>
+          <div class="snote" style="margin-bottom:0">Wakes the computer this device controls. Needs Wake-on-LAN enabled in its BIOS.</div>
+          <div class="scard-title" style="margin-top:12px"><span class="dot-cyn"></span>Wake schedule <span style="font-size:10px;color:var(--muted);margin-left:auto;font-weight:400;text-transform:none">auto wake at set times</span></div>
+          <div id="wol-sched-list"></div>
+          <div style="display:flex;gap:5px;margin-top:5px">
+            <input class="sinput" type="time" id="wsch-time" style="width:auto;margin:0">
+            <select class="ssel" id="wsch-days" style="width:auto;margin:0">
+              <option value="*">Every day</option>
+              <option value="1-5">Weekdays</option>
+              <option value="0,6">Weekends</option>
+              <option value="1">Mon</option><option value="2">Tue</option><option value="3">Wed</option>
+              <option value="4">Thu</option><option value="5">Fri</option><option value="6">Sat</option><option value="0">Sun</option>
+            </select>
+            <button class="sbtn" onclick="wolSchedAdd()" style="margin:0">+ Add</button>
+          </div>
+        </div>
         <div class="sys-cat" data-cat="update">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>Software Update</div>
@@ -1173,7 +1176,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <div id="pw-change-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
         <div class="scard">
-          <div class="scard-title"><span class="dot-yel" style="background:var(--cyan,#39d0ff)"></span>Two-Factor (TOTP)</div>
+          <div class="scard-title"><span class="dot-yel" style="background:var(--cyan,#39d0ff)"></span>Two-Factor Login</div>
           <div class="snote" style="margin-bottom:8px">Authenticator code on top of the password.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="tfa-status">-</span></div>
           <!-- Re-enrolling while 2FA is ALREADY on needs the current password, so
@@ -1316,8 +1319,8 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
         </div>
         <div class="scard">
-          <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>HID Connect Only While In Use</div>
-          <div class="snote" style="margin-bottom:8px">Unplugs USB when idle, reconnects on use. Not with the jiggler.</div>
+          <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>Auto-Disconnect USB</div>
+          <div class="snote" style="margin-bottom:8px">Unplugs the keyboard and mouse from the target when idle, reconnects the moment you use them. Do not combine with the jiggler.</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="hidautodc-status">-</span></div>
           <label class="wifi-label" for="hidautodc-idle" style="margin-top:8px">Disconnect after (minutes idle)</label>
           <input class="sinput wifi-field" id="hidautodc-idle" type="number" min="1" max="180" value="15" onchange="hidAutoDcIdleChanged()" style="margin-bottom:8px">
@@ -1426,7 +1429,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <div id="disp-note" class="snote" style="display:none;margin-top:6px;color:var(--yellow)"></div>
         </div>
         <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>USB Device
+          <div class="scard-title"><span class="dot-acc"></span>USB Identity
             <span id="id-tag" class="tag tag-ok" style="margin-left:auto">Default</span>
           </div>
           <div class="srow"><span class="sk">Device</span><span class="sv ac" id="id-prod">-</span></div>
@@ -1435,7 +1438,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="srow"><span class="sk">VID/PID</span><span class="sv" id="id-ids" style="font-family:monospace;font-size:11px">-</span></div>
         </div>
         <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>Profile vs Current</div>
+          <div class="scard-title"><span class="dot-acc"></span>Identity Details</div>
           <table class="id-table">
             <tr><th>Field</th><th>Profile Default</th><th>Now</th></tr>
             <tr><td>Product</td><td class="id-orig">USB Receiver</td><td class="id-same" id="dd-prod">-</td></tr>
@@ -1454,9 +1457,21 @@ body:not(.fs) .fs-hud{display:none!important}
   </aside>
 
   <nav id="railnav">
-    <button class="railbtn active" data-tab="stream" onclick="railTab('stream')" title="Stream">📹</button>
-    <button class="railbtn" data-tab="network" onclick="railTab('network')" title="Network">📶</button>
-    <button class="railbtn" data-tab="system" onclick="railTab('system')" title="System">⚙</button>
+    <button class="railbtn active" data-tab="stream" onclick="railGo('stream')" title="Video and input">
+      <span class="rico">📹</span><span class="rlab">Stream</span></button>
+    <div class="rail-sep"></div>
+    <button class="railbtn" data-tab="system" data-cat="monitoring" onclick="railGo('system','monitoring')" title="Status and health">
+      <span class="rico">📊</span><span class="rlab">Monitor</span><span class="rdot ok" id="sys-dot-monitoring"></span></button>
+    <button class="railbtn" data-tab="system" data-cat="peripherals" onclick="railGo('system','peripherals')" title="Jiggler, USB and screen identity">
+      <span class="rico">🖱</span><span class="rlab">Devices</span></button>
+    <button class="railbtn" data-tab="network" onclick="railGo('network')" title="Remote access">
+      <span class="rico">📶</span><span class="rlab">Network</span></button>
+    <button class="railbtn" data-tab="system" data-cat="security" onclick="railGo('system','security')" title="Password, 2FA and lockdown">
+      <span class="rico">🛡</span><span class="rlab">Security</span><span class="rdot warn" id="sys-dot-security"></span></button>
+    <button class="railbtn" data-tab="system" data-cat="power" onclick="railGo('system','power')" title="Power this device and the target">
+      <span class="rico">⚡</span><span class="rlab">Power</span><span class="rdot ok" id="sys-dot-power"></span></button>
+    <button class="railbtn" data-tab="system" data-cat="update" onclick="railGo('system','update')" title="Software update">
+      <span class="rico">⬆</span><span class="rlab">Update</span><span class="rdot ok" id="sys-dot-update"></span></button>
   </nav>
 </div>
 
@@ -2974,24 +2989,44 @@ function setSidebarForControl(visible){
   document.getElementById('sidebar').classList.toggle('open', on);
   document.getElementById('sbdrop').classList.toggle('on', on);
 }
+// The rail carries five of these as its own buttons now, so highlighting has to
+// match tab AND category - three buttons share data-tab="system" and matching on
+// the tab alone would light all three at once.
+let _sysCat='monitoring';
+function _railSync(tab, cat){
+  document.querySelectorAll('.railbtn').forEach(b=>{
+    const bc=b.dataset.cat||'';
+    b.classList.toggle('active', b.dataset.tab===tab && bc===(cat||''));
+  });
+}
 function showTab(name){
   if(name==='agent') name='stream'; // Agent tab hidden this build - see nav comment above
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   document.querySelectorAll('.snav-btn').forEach(b=>b.classList.remove('active'));
-  document.querySelectorAll('.railbtn').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));
   document.getElementById('panel-'+name).classList.add('active');
   document.getElementById('tab-'+name).classList.add('active');
-  if(name==='system'){refreshStatus();refreshJigglerStatus();refreshHidAutoDcStatus();sysCheckVer();refreshOledSettings();identityRefresh();}
+  _railSync(name, name==='system' ? _sysCat : '');
+  // sysCheckVer is deliberately NOT here any more. It fetches from GitHub, and
+  // now that Monitor/Devices/Security/Power are each their own rail button,
+  // leaving it here would hit the network on every one of those clicks. It runs
+  // from sysNavShow when the Update section is actually opened.
+  if(name==='system'){refreshStatus();refreshJigglerStatus();refreshHidAutoDcStatus();refreshOledSettings();identityRefresh();}
   if(name==='network'){wifiRefresh();tsRefresh();}
 }
-// Rail icon click: open the panel to that tab; clicking the already-open tab
-// collapses it back to the rail (video full-width again).
-function railTab(name){
-  const isActive=document.getElementById('tab-'+name).classList.contains('active');
-  if(_sideOpen && isActive){ toggleSidebar(); return; }
-  showTab(name);
+// Rail click. Same collapse-on-second-click behaviour as before, but a section
+// only counts as "already open" when its CATEGORY matches too, so clicking
+// Devices while Monitor is open switches sections instead of closing the panel.
+function railGo(tab, cat){
+  const onTab=document.getElementById('tab-'+tab).classList.contains('active');
+  const same = _sideOpen && onTab && (!cat || _sysCat===cat);
+  if(same){ toggleSidebar(); return; }
+  if(cat) _sysCat=cat;
+  showTab(tab);
+  if(cat) sysNavShow(cat);
   if(!_sideOpen) toggleSidebar();
 }
+// Kept so any older call site (or a bookmark/handler) still works.
+function railTab(name){ railGo(name); }
 
 // Combos
 let _cmOpen=false;
@@ -4904,12 +4939,35 @@ function hidAutoDcIdleChanged(){
 // which sys-nav-item is highlighted. Purely a display/grouping change -
 // none of the underlying cards, IDs, or their refresh functions moved or
 // changed, so nothing else in this file needed to know about it.
+// Icon + name + one line saying what the section is for. The old horizontal
+// sub-nav carried the names; now that the rail does, the panel still needs to
+// state where you are.
+const SYS_CAT_META={
+  monitoring:  {ico:'📊', title:'Monitor',  sub:'Live status and health'},
+  peripherals: {ico:'🖱', title:'Devices',  sub:'Jiggler, USB and screen identity'},
+  security:    {ico:'🛡', title:'Security', sub:'Password, two-factor and lockdown'},
+  power:       {ico:'⚡', title:'Power',    sub:'This device and the target computer'},
+  update:      {ico:'⬆', title:'Update',   sub:'Software version and release notes'},
+};
 const SYS_CAT_LABELS={monitoring:'Monitoring',peripherals:'Devices & identity',security:'Security & account',power:'Power',update:'Software update'};
 function sysNavShow(cat){
+  _sysCat=cat;
   document.querySelectorAll('.sys-nav-item').forEach(b=>b.classList.toggle('active',b.dataset.cat===cat));
   document.querySelectorAll('.sys-cat').forEach(c=>c.classList.toggle('active',c.dataset.cat===cat));
+  _railSync('system', cat);
+  const meta=SYS_CAT_META[cat];
+  if(meta){
+    const i=document.getElementById('sys-head-ico'), t=document.getElementById('sys-head-title'),
+          u=document.getElementById('sys-head-sub');
+    if(i) i.textContent=meta.ico;
+    if(t) t.textContent=meta.title;
+    if(u) u.textContent=meta.sub;
+  }
   const sub=document.getElementById('sys-cat-sub');
   if(sub) sub.textContent=SYS_CAT_LABELS[cat]||cat;
+  // Only check for updates when the Update section is actually opened - it is a
+  // network round trip to GitHub, not something to fire on every section click.
+  if(cat==='update' && typeof sysCheckVer==='function') sysCheckVer();
   // Refresh 2FA state whenever Security is opened, so the panel can't show a
   // stale "Off" after it was enabled from another tab or reset over SSH.
   if(cat==='security' && typeof tfaRefresh==='function') tfaRefresh();
@@ -5462,7 +5520,10 @@ setInterval(()=>{
 //   identity / OLED / WiFi / lockdown - operator-driven, they cannot change
 //                  underneath you.
 const _LIVE_PANEL = {
-  system:  { every: 1, fns: ['refreshJigglerStatus', 'refreshHidAutoDcStatus'] },
+  // Keyed by tab, then narrowed by the open system CATEGORY, so opening Monitor
+  // does not poll device endpoints it never displays.
+  system:  { every: 1, cats: {peripherals: ['refreshJigglerStatus','refreshHidAutoDcStatus'],
+                              monitoring:  ['refreshStatus']} },
   network: { every: 3, fns: ['tsRefresh'] },     // ~15s: tailnet state moves slowly
 };
 let _panelTick = 0;
@@ -5479,7 +5540,8 @@ setInterval(()=>{
   if(!spec) return;
   _panelTick++;
   if(_panelTick % spec.every) return;
-  spec.fns.forEach(n=>{ try{ if(typeof window[n]==='function') window[n](); }catch(e){} });
+  const fns = spec.fns || (spec.cats ? (spec.cats[_sysCat]||[]) : []);
+  fns.forEach(n=>{ try{ if(typeof window[n]==='function') window[n](); }catch(e){} });
 }, 5000);
 </script>
 </body>
