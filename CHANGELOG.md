@@ -12,6 +12,18 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.4.0
+
+- The mouse jiggler can now switch itself off. Set a time ("stop at 4 pm") or a
+  duration ("stop in 1 hour"), with one-tap presets for 15 minutes up to 8
+  hours. The panel shows exactly when it will stop and counts down to it.
+- Times use the device's own clock, and the panel says which timezone that is so
+  there is no guessing. Asking for a time that has already passed today means
+  tomorrow.
+- The schedule survives a restart or a power cut. If the device was off when the
+  stop time passed, it starts with the jiggler already off rather than carrying
+  on past the time you set.
+
 ## 1.3.2
 
 - Shipping fix: freshly set-up units now build the video engine with the
