@@ -832,7 +832,17 @@ body:not(.fs) .fs-hud{display:none!important}
               <option value="5">5 fps</option>
             </select>
           </div>
-          <div class="srow" style="margin-top:6px"><span class="sk">Bandwidth</span>
+          <div class="srow" style="margin-top:6px"><span class="sk">Picture quality</span>
+            <select class="ssel" id="sel-quality" style="width:auto;margin:0" onchange="applyVideo()">
+              <option value="20">Sharp - fast link</option>
+              <option value="26">Clear</option>
+              <option value="30" selected>Balanced</option>
+              <option value="34">Light</option>
+              <option value="40">Lightest - slow link</option>
+            </select>
+          </div>
+          <div class="snote" style="margin:5px 0 0">Lower quality means a slightly coarser picture and a much steadier connection. This is the control that actually changes bandwidth on this hardware.</div>
+          <div class="srow" style="margin-top:6px"><span class="sk">Presets</span>
             <span style="display:flex;gap:4px">
               <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidthAuto('640x360',15,'low')" title="Slow or remote links">Low</button>
               <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidthAuto('1280x720',30,'bal')" title="Balanced, default">Bal</button>
@@ -3076,7 +3086,15 @@ document.getElementById('pinput').addEventListener('keydown',e=>{if(e.key==='Ent
 // barely moves the wire. The H.264 bitrate was hardcoded at 5000 kbps, so "Low"
 // did almost nothing for someone on a congested link. Now each preset carries a
 // real bitrate target too.
-const _BW_BITRATE = {low: 1500, bal: 4000, sharp: 8000};
+// The H.264 bandwidth lever on this hardware is MIN_QP, NOT --h264-bitrate.
+// The bitrate target is inert here: measured on the unit, asking for 350 kbps
+// and asking for 10000 kbps both emitted ~4.2 Mbit/s, because ustreamer pins the
+// encoder's quantizer window and the rate controller never gets to act. MIN_QP
+// bounds bits PER FRAME, so it is the only thing that caps the motion peak - and
+// the peak is what floods a slow uplink and drags control latency with it.
+// Measured static, same screen: MIN_QP 16 -> 1.26 Mbit/s, 24 -> 0.84, 30 -> 0.64.
+// Higher number = coarser picture = less bandwidth.
+const _BW_MINQP = {low: 40, bal: 30, sharp: 20};
 // MJPEG needs a different lever than WebRTC. On a CSI capture the resolution is
 // discarded (we must follow the source signal) and `bitrate` only ever reaches
 // --h264-bitrate, so on the MJPEG path the ONLY things that move the wire are
@@ -3096,7 +3114,9 @@ function setBandwidth(res,fps,tier){
   // blank and applyVideo's parseInt('') is NaN, so fps is dropped server-side -
   // which is exactly what "Sharp" (50) used to do before 50 fps existed here.
   if(f && Array.prototype.some.call(f.options,o=>o.value===String(fps))) f.value=String(fps);
-  applyVideo(_BW_BITRATE[tier]);
+  const q=document.getElementById('sel-quality');
+  if(q && _BW_MINQP[tier]!=null) q.value=String(_BW_MINQP[tier]);
+  applyVideo();
 }
 // Bandwidth preset for the MJPEG path: drives fps + quality instead of a
 // resolution the CSI pipeline throws away and a bitrate only H.264 reads.
@@ -3142,12 +3162,18 @@ function _showActualTransport(){
     ? 'Running on '+(_activeTransport==='h264'?'WebRTC · H.264':'MJPEG')+' right now (automatic fallback). Your choice above is unchanged.'
     : 'WebRTC by default, falls back to MJPEG if unavailable.';
 }
-async function applyVideo(bitrate){
+async function applyVideo(){
   const res=document.getElementById('sel-res').value;
   const fps=parseInt(document.getElementById('sel-fps').value);
   const mode=_preferredTransport;
+  // min_qp, not bitrate. The bitrate field still exists in the API for
+  // compatibility but the encoder ignores it, so sending it would be theatre.
+  const qEl=document.getElementById('sel-quality');
+  const min_qp=qEl?parseInt(qEl.value,10):undefined;
+  const body={resolution:res, fps, mode};
+  if(min_qp && !isNaN(min_qp)) body.min_qp=min_qp;
   try{
-    const r=await fetch('/api/stream/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(bitrate?{resolution:res,fps,mode,bitrate}:{resolution:res,fps,mode})});
+    const r=await fetch('/api/stream/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const d=await r.json();
     if(d.ok){
       toast('Video updated ✓ - reconnecting stream…');
