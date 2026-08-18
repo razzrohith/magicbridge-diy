@@ -409,26 +409,18 @@ class VideoManager:
             width, height = int(w.group(1)), int(h.group(1))
             if width < 160 or height < 120:      # 0x0 = no signal locked
                 return None
-            # Reject a BAD LOCK, not just "no lock". On a degraded HDMI link the
-            # TC358743 reports a plausible-looking width/height while never
-            # actually decoding the sync structure, and the giveaway is that both
-            # horizontal porches read 0. Every real timing has blanking (1080p50
-            # is frontporch 528 / backporch 148; 720p60 is 110/220) - zero on both
-            # sides is not a mode that exists. Measured on a real unit with a
-            # marginal cable: it cycled 960/1279/1280/1536/1920 x1080 with the
-            # pixel clock wandering 99/118.8/148.5 MHz and 0/0 porches on every
-            # bad read. Treating those as a real signal is what made the watchdog
-            # relaunch the stream ~14 times in 10 minutes and left the operator
-            # staring at green. Returning None instead means "no usable signal",
-            # which the callers already handle by leaving the running stream
-            # alone. Conservative: only reject when BOTH fields are present and
-            # both are 0, so a source (or a v4l2-ctl build) that simply does not
-            # report porches is never misjudged.
-            fp = re.search(r"Horizontal frontporch:\s*(\d+)", r.stdout)
-            bp = re.search(r"Horizontal backporch:\s*(\d+)", r.stdout)
-            if fp and bp and int(fp.group(1)) == 0 and int(bp.group(1)) == 0:
-                log.debug("ignoring bad DV lock %dx%d (both h-porches 0)", width, height)
-                return None
+            # NOTE: do NOT try to reject a "bad lock" by looking at the porch
+            # fields. A previous version returned None when both horizontal
+            # porches read 0, on the theory that a real timing always has
+            # blanking. That is FALSE on this hardware: the TC358743 driver
+            # reports frontporch/backporch = 0 even on a perfectly good, stable
+            # 1920x1080 @ 148.5 MHz 1080p50 lock (verified on the unit, 6/6
+            # identical reads). The heuristic therefore rejected the REAL signal
+            # and left ustreamer stuck at the wrong resolution. A degraded link
+            # is caught the correct, hardware-agnostic way instead: the watchdog
+            # debounce now requires the SAME new resolution twice in a row, so a
+            # flapping source (which reports a DIFFERENT wrong value each read)
+            # no longer triggers a restart.
             fps = int(round(float(f.group(1)))) if f else 0
             return (width, height, fps)
         except Exception as e:
