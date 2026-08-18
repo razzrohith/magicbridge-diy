@@ -1116,8 +1116,6 @@ body:not(.fs) .fs-hud{display:none!important}
           <button class="sbtn warn" onclick="piPower('reboot')">↺ Reboot Pi</button>
           <button class="sbtn dan" onclick="piPower('shutdown')" style="margin-top:4px">⏻ Shutdown Pi</button>
         </div>
-        </div>
-
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Target Computer</div>
           <input class="sinput wifi-field" type="text" id="wol-mac" placeholder="AA:BB:CC:DD:EE:FF" autocomplete="off" spellcheck="false" style="margin-bottom:8px">
@@ -1141,6 +1139,8 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="sbtn" onclick="wolSchedAdd()" style="margin:0">+ Add</button>
           </div>
         </div>
+        </div>
+
         <div class="sys-cat" data-cat="update">
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>Software Update</div>
@@ -1328,7 +1328,35 @@ body:not(.fs) .fs-hud{display:none!important}
           <div id="hidautodc-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
         <div class="scard">
-          <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>OLED Display</div>
+          <div class="scard-title"><span class="dot-acc"></span>How the target sees it</div>
+          <div class="snote" style="margin-bottom:8px">What the connected computer sees. Change in /stealth/.</div>
+          <div class="srow"><span class="sk">Monitor</span><span class="sv ac" id="disp-name">-</span></div>
+          <div class="srow"><span class="sk">Maker</span><span class="sv" id="disp-mfr">-</span></div>
+          <div class="srow"><span class="sk">Serial</span><span class="sv" id="disp-ser" style="font-family:monospace;font-size:11px">-</span></div>
+          <div id="disp-note" class="snote" style="display:none;margin-top:6px;color:var(--yellow)"></div>
+        </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>USB Identity
+            <span id="id-tag" class="tag tag-ok" style="margin-left:auto">Default</span>
+          </div>
+          <div class="srow"><span class="sk">Device</span><span class="sv ac" id="id-prod">-</span></div>
+          <div class="srow"><span class="sk">Maker</span><span class="sv" id="id-mfr">-</span></div>
+          <div class="srow"><span class="sk">Serial</span><span class="sv" id="id-ser" style="font-family:monospace;font-size:11px">-</span></div>
+          <div class="srow"><span class="sk">VID/PID</span><span class="sv" id="id-ids" style="font-family:monospace;font-size:11px">-</span></div>
+        </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>Identity Details</div>
+          <table class="id-table">
+            <tr><th>Field</th><th>Profile Default</th><th>Now</th></tr>
+            <tr><td>Product</td><td class="id-orig">USB Receiver</td><td class="id-same" id="dd-prod">-</td></tr>
+            <tr><td>Maker</td><td class="id-orig">Logitech</td><td class="id-same" id="dd-mfr">-</td></tr>
+            <tr><td>Serial</td><td class="id-orig">(none)</td><td class="id-same" id="dd-ser">-</td></tr>
+            <tr><td>VID</td><td class="id-orig">0x046d</td><td class="id-same" id="dd-vid">-</td></tr>
+            <tr><td>PID</td><td class="id-orig">0xc52b</td><td class="id-same" id="dd-pid">-</td></tr>
+          </table>
+        </div>
+        <div class="scard">
+          <div class="scard-title"><span class="dot-yel" style="background:var(--purple)"></span>OLED Screen</div>
           <div class="snote" style="margin-bottom:8px">What the case screen shows. Applies live.</div>
 
           <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:pointer;margin-bottom:10px">
@@ -1419,34 +1447,6 @@ body:not(.fs) .fs-hud{display:none!important}
           <button class="sbtn suc" onclick="saveOledSettings()">Save</button>
           <button class="sbtn" onclick="resetOledSettings()" style="margin-top:4px">↺ Reset to Default</button>
           <div id="oled-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
-        </div>
-        <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>How the target sees it</div>
-          <div class="snote" style="margin-bottom:8px">What the connected computer sees. Change in /stealth/.</div>
-          <div class="srow"><span class="sk">Monitor</span><span class="sv ac" id="disp-name">-</span></div>
-          <div class="srow"><span class="sk">Maker</span><span class="sv" id="disp-mfr">-</span></div>
-          <div class="srow"><span class="sk">Serial</span><span class="sv" id="disp-ser" style="font-family:monospace;font-size:11px">-</span></div>
-          <div id="disp-note" class="snote" style="display:none;margin-top:6px;color:var(--yellow)"></div>
-        </div>
-        <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>USB Identity
-            <span id="id-tag" class="tag tag-ok" style="margin-left:auto">Default</span>
-          </div>
-          <div class="srow"><span class="sk">Device</span><span class="sv ac" id="id-prod">-</span></div>
-          <div class="srow"><span class="sk">Maker</span><span class="sv" id="id-mfr">-</span></div>
-          <div class="srow"><span class="sk">Serial</span><span class="sv" id="id-ser" style="font-family:monospace;font-size:11px">-</span></div>
-          <div class="srow"><span class="sk">VID/PID</span><span class="sv" id="id-ids" style="font-family:monospace;font-size:11px">-</span></div>
-        </div>
-        <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>Identity Details</div>
-          <table class="id-table">
-            <tr><th>Field</th><th>Profile Default</th><th>Now</th></tr>
-            <tr><td>Product</td><td class="id-orig">USB Receiver</td><td class="id-same" id="dd-prod">-</td></tr>
-            <tr><td>Maker</td><td class="id-orig">Logitech</td><td class="id-same" id="dd-mfr">-</td></tr>
-            <tr><td>Serial</td><td class="id-orig">(none)</td><td class="id-same" id="dd-ser">-</td></tr>
-            <tr><td>VID</td><td class="id-orig">0x046d</td><td class="id-same" id="dd-vid">-</td></tr>
-            <tr><td>PID</td><td class="id-orig">0xc52b</td><td class="id-same" id="dd-pid">-</td></tr>
-          </table>
         </div>
         </div>
 
