@@ -175,6 +175,11 @@ if [[ "$MODE" == "verify" ]]; then
   # opts into H.264). Conditional: an MJPEG-only golden legitimately has no such
   # binary (it uses apt /usr/bin/ustreamer), so absence passes.
   chk "ustreamer (if built) is the MIN_QP-patched build" '[ ! -e "$R/usr/local/bin/ustreamer" ] || grep -aq MB_H264_MIN_QP "$R/usr/local/bin/ustreamer"'
+  # The web UI's HTML must be well-formed. A single stray </div> once closed
+  # <aside id="sidebar"> early and threw the right-hand rail to the bottom-left
+  # of the window - with no error anywhere: the page loaded, the JS ran, and
+  # `node --check` passed. Only a tree walk catches it, so it is a ship gate.
+  chk "web UI HTML is structurally sound"            'python3 "$R/opt/magicbridge-repo/tests/test_html_structure.py" "$R/opt/magicbridge/web/index.html" >/dev/null 2>&1'
   echo ""
   [[ -n "$BV" ]] && { umount "$BV" 2>/dev/null || true; rmdir "$BV" 2>/dev/null || true; }
   if [[ $FAIL -eq 0 ]]; then ok "ALL CHECKS PASSED — safe to distribute"; exit 0
