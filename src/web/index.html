@@ -2753,12 +2753,6 @@ function toggleOverlay(on){
   const c=document.getElementById('overlay-chk'); if(c) c.checked=on;
   if(!on){ const d=document.getElementById('cur-dot'); if(d) d.style.display='none'; }
 })();
-// Restore which automation tab was last open.
-(function(){
-  let k='off';
-  try{ const v=localStorage.getItem('mb_jigkind'); if(v) k=v; }catch(e){}
-  if(typeof jigKind==='function') jigKind(k);
-})();
 // Restore the saved cursor style (default Arrow). setCursor also re-highlights
 // the right button and syncs the predictive dot's shape.
 (function(){
@@ -4910,6 +4904,21 @@ function _jigRenderSched(d){
     box.style.display='none';
   }
 }
+
+// Restore which automation tab was last open.
+//
+// MUST live here, after jigKind and the const it reads. It used to sit ~2000
+// lines earlier, next to the cursor-style restore. `function jigKind` hoists so
+// the CALL resolved, but the const _JIG_KIND_NOTE it dereferences does not - it
+// was still in the temporal dead zone, so this threw
+// "Cannot access '_JIG_KIND_NOTE' before initialization" and killed the rest of
+// the script: no WebSocket, no status pills, no settings panel. The page looked
+// like the backend was down when the backend was perfectly healthy.
+(function(){
+  let k='off';
+  try{ const v=localStorage.getItem('mb_jigkind'); if(v) k=v; }catch(e){}
+  try{ jigKind(k); }catch(e){ /* never let a restore break page init */ }
+})();
 
 // HID connect-only-during-active-use
 async function refreshHidAutoDcStatus(){
