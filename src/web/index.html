@@ -1206,6 +1206,48 @@ body:not(.fs) .fs-hud{display:none!important}
           </select>
           <button class="sbtn" id="jiggler-btn" onclick="toggleJiggler()">Enable Jiggler</button>
           <div id="jiggler-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+
+          <div style="border-top:1px solid var(--border);margin-top:11px;padding-top:9px">
+            <div class="scard-title" style="margin:0 0 6px"><span class="dot-cyn"></span>Auto switch off
+              <span id="jig-off-pill" style="margin-left:auto;font-size:10px;font-weight:400;text-transform:none;color:var(--muted)">not scheduled</span>
+            </div>
+            <div class="snote" style="margin-bottom:8px">Turn the jiggler off by itself. Times are this device's clock (<span id="jig-tz">-</span>).</div>
+
+            <div class="cur-opts" id="jig-off-mode" style="margin-bottom:8px">
+              <button class="cur-opt active" data-m="none"  onclick="jigOffMode('none')">No auto off</button>
+              <button class="cur-opt"        data-m="after" onclick="jigOffMode('after')">After a while</button>
+              <button class="cur-opt"        data-m="at"    onclick="jigOffMode('at')">At a time</button>
+            </div>
+
+            <div id="jig-off-after" style="display:none">
+              <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
+                <button class="sbtn" style="flex:1;min-width:56px" onclick="jigOffAfter(15)">15m</button>
+                <button class="sbtn" style="flex:1;min-width:56px" onclick="jigOffAfter(30)">30m</button>
+                <button class="sbtn" style="flex:1;min-width:56px" onclick="jigOffAfter(60)">1h</button>
+                <button class="sbtn" style="flex:1;min-width:56px" onclick="jigOffAfter(120)">2h</button>
+                <button class="sbtn" style="flex:1;min-width:56px" onclick="jigOffAfter(480)">8h</button>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input class="sinput" type="number" id="jig-off-mins" min="1" max="10080" placeholder="minutes" style="flex:1;margin:0">
+                <button class="sbtn pri" style="flex:none" onclick="jigOffAfterCustom()">Set</button>
+              </div>
+            </div>
+
+            <div id="jig-off-at" style="display:none">
+              <div style="display:flex;gap:6px;align-items:center">
+                <input class="sinput" type="time" id="jig-off-clock" style="flex:1;margin:0">
+                <button class="sbtn pri" style="flex:none" onclick="jigOffAtTime()">Set</button>
+              </div>
+              <div class="snote" style="margin:6px 0 0">If that time has already passed today, it means tomorrow.</div>
+            </div>
+
+            <div id="jig-off-active" style="display:none;margin-top:8px;padding:6px 8px;border-radius:4px;
+                 background:rgba(34,211,238,.10);border:1px solid var(--accent);font-size:11px">
+              <div>Switching off at <b id="jig-off-when">-</b></div>
+              <div style="color:var(--sub);margin-top:2px">in <span id="jig-off-left">-</span></div>
+              <button class="sbtn" style="margin-top:6px" onclick="jigOffCancel()">Cancel schedule</button>
+            </div>
+          </div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>HID Connect Only While In Use</div>
@@ -4456,6 +4498,7 @@ async function refreshJigglerStatus(){
       b.textContent='Enable Jiggler';
     }
     b.dataset.enabled=d.enabled?'1':'0';
+    _jigRenderOff(d);
   }catch(e){}
 }
 async function _setJiggler(enabled){
@@ -4489,6 +4532,115 @@ function jigglerStyleChanged(){
   // Only push the style change live if the jiggler is currently on;
   // if it's off, just remember the selection for next time it's enabled.
   if(b.dataset.enabled==='1') _setJiggler(true);
+}
+
+// ---- Jiggler auto switch-off ------------------------------------------------
+// The deadline lives on the DEVICE (absolute epoch, persisted), so it survives a
+// reload, a service restart and a reboot. The page only mirrors it. The countdown
+// ticks locally from that epoch rather than polling, so it stays smooth without a
+// request per second.
+let _jigOffAt = null;          // epoch SECONDS from the device, or null
+let _jigOffTick = null;
+
+function jigOffMode(m){
+  document.querySelectorAll('#jig-off-mode .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
+  const a=document.getElementById('jig-off-after'), t=document.getElementById('jig-off-at');
+  if(a) a.style.display = (m==='after')?'':'none';
+  if(t) t.style.display = (m==='at')?'':'none';
+  if(m==='none' && _jigOffAt) jigOffCancel();
+}
+
+function _jigFmtLeft(sec){
+  sec=Math.max(0,Math.round(sec));
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  if(h) return h+'h '+String(m).padStart(2,'0')+'m';
+  if(m) return m+'m '+String(s).padStart(2,'0')+'s';
+  return s+'s';
+}
+
+// Local countdown. When it reaches zero it re-syncs from the device, so the UI
+// reflects the switch-off the DEVICE performed - the device is the authority.
+function _jigStartTick(){
+  clearInterval(_jigOffTick);
+  if(!_jigOffAt) return;
+  const paint=()=>{
+    const left=_jigOffAt - (Date.now()/1000);
+    const el=document.getElementById('jig-off-left');
+    if(el) el.textContent=_jigFmtLeft(left);
+    if(left<=0){ clearInterval(_jigOffTick); setTimeout(refreshJigglerStatus, 1500); }
+  };
+  paint();
+  _jigOffTick=setInterval(paint,1000);
+}
+
+function _jigRenderOff(d){
+  _jigOffAt = d.off_at || null;
+  const box=document.getElementById('jig-off-active');
+  const pill=document.getElementById('jig-off-pill');
+  const tz=document.getElementById('jig-tz');
+  if(tz && d.tz) tz.textContent=d.tz;
+  if(!box||!pill) return;
+  if(_jigOffAt){
+    box.style.display='';
+    const w=document.getElementById('jig-off-when');
+    if(w) w.textContent=d.off_at_local||'-';
+    pill.textContent='scheduled';
+    pill.style.color='var(--accent)';
+    _jigStartTick();
+  }else{
+    box.style.display='none';
+    pill.textContent='not scheduled';
+    pill.style.color='var(--muted)';
+    clearInterval(_jigOffTick);
+    // Reset the picker so the UI never implies a schedule the device lacks.
+    document.querySelectorAll('#jig-off-mode .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.m==='none'));
+    const a=document.getElementById('jig-off-after'), t=document.getElementById('jig-off-at');
+    if(a) a.style.display='none';
+    if(t) t.style.display='none';
+  }
+}
+
+// Every setter enables the jiggler in the same request: scheduling an off-time
+// for something already off is meaningless, and one call avoids a window where
+// the device holds a deadline but is not running.
+async function _jigPostOff(payload, okMsg){
+  const sel=document.getElementById('jiggler-style');
+  const msg=document.getElementById('jiggler-msg');
+  const show=(text,ok)=>{
+    if(!msg) return;
+    msg.textContent=text;
+    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
+      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+  };
+  try{
+    const body=Object.assign({enabled:true, style:sel?sel.value:undefined}, payload);
+    const r=await fetch('/api/jiggler',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+    const d=await r.json();
+    if(d.ok){ show('✓ '+okMsg+(d.off_at_local?(' ('+d.off_at_local+')'):''), true); toast(okMsg); refreshJigglerStatus(); }
+    else { show(d.error||'Failed', false); }
+  }catch(e){ show('Error: '+e,false); }
+}
+
+function jigOffAfter(mins){ _jigPostOff({off_after_minutes:mins}, 'Jiggler will stop in '+_jigFmtLeft(mins*60)); }
+function jigOffAfterCustom(){
+  const el=document.getElementById('jig-off-mins');
+  const v=parseInt(el&&el.value,10);
+  if(!v || v<1 || v>10080){ toast('Enter 1 to 10080 minutes'); return; }
+  jigOffAfter(v);
+}
+function jigOffAtTime(){
+  const el=document.getElementById('jig-off-clock');
+  const v=el&&el.value;                       // "HH:MM" from <input type=time>
+  if(!v){ toast('Pick a time first'); return; }
+  _jigPostOff({off_at_time:v}, 'Jiggler will stop at '+v);
+}
+function jigOffCancel(){
+  // off_at:null clears the deadline. enabled is deliberately preserved -
+  // cancelling a schedule must not also switch the jiggler off.
+  _jigPostOff({off_at:null, enabled:document.getElementById('jiggler-btn').dataset.enabled==='1'},
+              'Auto switch-off cancelled');
 }
 
 // HID connect-only-during-active-use

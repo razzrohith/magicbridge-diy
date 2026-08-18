@@ -1180,28 +1180,102 @@ class MouseJiggler:
         self.enabled = False
         self.style = JIGGLER_DEFAULT_STYLE
         self._task = None
+        # Auto-off deadline: absolute UNIX time to switch the jiggler off, or
+        # None for "run until told otherwise". Stored absolute (not "N minutes
+        # left") on purpose, so it survives a service restart and a reboot with
+        # its meaning intact - a relative countdown would silently restart.
+        self.off_at = None
+        self._deadline_task = None
+        # Set by the app at startup so the deadline can persist enabled=False
+        # when it fires. Without this an auto-off would be forgotten on the next
+        # restart and the jiggler would come back up enabled.
+        self._persist = None
 
-    def configure(self, enabled: bool, style: str):
+    def configure(self, enabled: bool, style: str, off_at="keep"):
         if style not in JIGGLER_STYLES:
             style = JIGGLER_DEFAULT_STYLE
         self.enabled = bool(enabled)
         self.style = style
+        # "keep" (the default) leaves any existing deadline alone, so a plain
+        # style change does not silently cancel a schedule the operator set.
+        if off_at != "keep":
+            self.off_at = float(off_at) if off_at else None
+        # A deadline is meaningless while disabled, and leaving a stale one set
+        # would fire against a later manual enable.
+        if not self.enabled:
+            self.off_at = None
+
+    def remaining(self):
+        """Seconds until auto-off, or None if no deadline is armed."""
+        if not self.off_at:
+            return None
+        return max(0.0, self.off_at - time.time())
 
     def status(self) -> dict:
+        rem = self.remaining()
+        local = None
+        if self.off_at:
+            try:
+                local = time.strftime("%Y-%m-%d %H:%M:%S %Z",
+                                      time.localtime(self.off_at))
+            except Exception:
+                local = None
         return {
-            "enabled": self.enabled,
-            "style":   self.style,
-            "styles":  {k: v["label"] for k, v in JIGGLER_STYLES.items()},
+            "enabled":   self.enabled,
+            "style":     self.style,
+            "styles":    {k: v["label"] for k, v in JIGGLER_STYLES.items()},
+            "off_at":    self.off_at,            # epoch seconds, or null
+            "off_at_local": local,               # human, in the DEVICE's timezone
+            "remaining": None if rem is None else int(rem),
+            "tz":        time.strftime("%Z"),    # so the UI can say which zone it means
         }
 
     def start(self):
         if self._task is None:
             self._task = asyncio.create_task(self._loop())
+        if self._deadline_task is None:
+            self._deadline_task = asyncio.create_task(self._deadline_loop())
 
     def stop(self):
-        if self._task is not None:
-            self._task.cancel()
-            self._task = None
+        for attr in ("_task", "_deadline_task"):
+            t = getattr(self, attr, None)
+            if t is not None:
+                t.cancel()
+                setattr(self, attr, None)
+
+    async def _deadline_loop(self):
+        """Switches the jiggler off at self.off_at.
+
+        Separate from the jiggle loop on purpose: that one sleeps a RANDOM
+        3-90s (by design, so the cadence is not machine-like), and piggy-backing
+        the deadline on it would make "off at 16:00" land anywhere up to 90s
+        late. This sleeps at most 30s, and exactly the remaining time once
+        inside that window, so the switch-off lands within a second of the
+        requested moment without adding a busy loop.
+        """
+        while True:
+            try:
+                rem = self.remaining()
+                if rem is None:
+                    await asyncio.sleep(5)         # nothing armed; cheap idle
+                    continue
+                if rem > 0:
+                    await asyncio.sleep(min(rem, 30))
+                    continue
+                # Deadline reached.
+                self.enabled = False
+                self.off_at = None
+                log.info("Jiggler auto-off fired (scheduled deadline reached)")
+                if self._persist:
+                    try:
+                        await _call_off_loop(self._persist, False, self.style, None)
+                    except Exception:
+                        log.warning("jiggler auto-off could not be persisted", exc_info=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.debug("jiggler deadline loop error", exc_info=True)
+                await asyncio.sleep(5)
 
     async def _loop(self):
         loop = asyncio.get_running_loop()
@@ -2619,9 +2693,55 @@ async def api_identity(request):
     return web.json_response({"ok": False, "error": "unknown action"}, status=400)
 
 
+def _jiggler_persist(enabled: bool, style: str, off_at):
+    """Write the jiggler's three persisted fields. Blocking (file IO), so call
+    it via _call_off_loop from async code."""
+    cfg = _load_cfg()
+    cfg["jiggler"] = {"enabled": bool(enabled), "style": style, "off_at": off_at}
+    _save_cfg(cfg)
+
+
+def _next_local_time(hhmm: str, now: float = None) -> float:
+    """Resolve 'HH:MM' (24h, the DEVICE's local timezone) to the next absolute
+    UNIX time it occurs.
+
+    If that clock time has already passed today, it means tomorrow - asking for
+    16:00 at 16:30 obviously means tomorrow afternoon, not a deadline 23.5h in
+    the past (which would fire instantly and look like the feature is broken).
+
+    Local time is the right frame, not UTC: the operator says "4 pm" meaning the
+    wall clock where the machine is. It is resolved through time.localtime /
+    time.mktime, so DST is handled by the platform - the answer is correct
+    across a spring-forward or fall-back rather than drifting an hour.
+    """
+    # Validate shape before splitting so a malformed value produces a message an
+    # operator can act on ("expected HH:MM") instead of a leaked Python internal
+    # like "not enough values to unpack".
+    parts = str(hhmm).strip().split(":")
+    if len(parts) != 2 or not all(x.isdigit() for x in parts):
+        raise ValueError("expected HH:MM, got %r" % (hhmm,))
+    hh, mm = int(parts[0]), int(parts[1])
+    if not (0 <= hh <= 23 and 0 <= mm <= 59):
+        raise ValueError("expected HH:MM in 00:00..23:59, got %r" % (hhmm,))
+    now = time.time() if now is None else now
+    lt = time.localtime(now)
+    # mktime re-normalises tm_isdst=-1 by asking the platform what the offset
+    # actually is on that date, which is what keeps this DST-correct.
+    cand = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, hh, mm, 0, 0, 0, -1))
+    if cand <= now:
+        cand = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday + 1, hh, mm, 0, 0, 0, -1))
+    return cand
+
+
 async def api_jiggler(request):
-    """GET /api/jiggler: current enabled/style + available styles.
-    POST /api/jiggler: {"enabled": bool, "style": str} - updates live and persists."""
+    """GET /api/jiggler: enabled/style/styles + auto-off deadline.
+    POST /api/jiggler: {"enabled": bool, "style": str} plus ONE optional
+    auto-off form:
+        {"off_after_minutes": 60}     -> off 60 minutes from now
+        {"off_at_time": "16:00"}      -> off at the next 16:00 device-local
+        {"off_at": 1786988593}        -> off at an absolute epoch second
+        {"off_at": null}              -> cancel any schedule
+    Omitting all of them leaves an existing schedule untouched."""
     if request.method == "GET":
         return web.json_response({"ok": True, **jiggler.status()})
     try:
@@ -2631,11 +2751,35 @@ async def api_jiggler(request):
     style = str(d.get("style", jiggler.style))
     if style not in JIGGLER_STYLES:
         return web.json_response({"ok": False, "error": "unknown style"}, status=400)
+    was_enabled = jiggler.enabled
     enabled = bool(d.get("enabled", jiggler.enabled))
-    jiggler.configure(enabled, style)
-    cfg = _load_cfg()
-    cfg["jiggler"] = {"enabled": enabled, "style": style}
-    _save_cfg(cfg)
+
+    # Resolve the auto-off deadline. "keep" = caller said nothing about it.
+    off_at = "keep"
+    try:
+        if "off_after_minutes" in d and d["off_after_minutes"] is not None:
+            mins = float(d["off_after_minutes"])
+            # 7 days is a sane ceiling: beyond that the absolute timestamp is
+            # more likely a mistake than an intention, and a negative/zero value
+            # would fire immediately, which reads as "the toggle did nothing".
+            if not (0 < mins <= 7 * 24 * 60):
+                return web.json_response({"ok": False, "error": "off_after_minutes must be 1..10080"}, status=400)
+            off_at = time.time() + mins * 60.0
+        elif "off_at_time" in d and d["off_at_time"]:
+            off_at = _next_local_time(str(d["off_at_time"]))
+        elif "off_at" in d:
+            off_at = float(d["off_at"]) if d["off_at"] else None
+    except (ValueError, TypeError) as e:
+        return web.json_response({"ok": False, "error": "bad auto-off value: %s" % e}, status=400)
+
+    # Turning the jiggler ON without naming a schedule clears any leftover one,
+    # so an old deadline from a previous session cannot immediately switch off
+    # the run the operator just started.
+    if enabled and not was_enabled and off_at == "keep":
+        off_at = None
+
+    jiggler.configure(enabled, style, off_at)
+    await _call_off_loop(_jiggler_persist, jiggler.enabled, jiggler.style, jiggler.off_at)
     return web.json_response({"ok": True, **jiggler.status()})
 
 
@@ -3759,9 +3903,28 @@ async def main():
     # task regardless (it's a no-op loop when disabled, so a later live
     # enable via the UI doesn't need a service restart to take effect).
     jc = cfg.get("jiggler", {})
-    jiggler.configure(bool(jc.get("enabled", False)), jc.get("style", JIGGLER_DEFAULT_STYLE))
+    jiggler._persist = _jiggler_persist        # lets an auto-off survive a restart
+    _j_off = jc.get("off_at")
+    try:
+        _j_off = float(_j_off) if _j_off else None
+    except (TypeError, ValueError):
+        _j_off = None
+    _j_enabled = bool(jc.get("enabled", False))
+    # A deadline that expired while the unit was powered off has still expired.
+    # Honour it now rather than resuming a jiggler the operator had scheduled to
+    # stop hours ago - the whole point of storing an absolute time is that a
+    # reboot cannot quietly extend it.
+    if _j_off and _j_off <= time.time():
+        log.info("Jiggler auto-off deadline had already passed while off - starting disabled")
+        _j_enabled, _j_off = False, None
+        try:
+            _jiggler_persist(False, jc.get("style", JIGGLER_DEFAULT_STYLE), None)
+        except Exception:
+            pass
+    jiggler.configure(_j_enabled, jc.get("style", JIGGLER_DEFAULT_STYLE), _j_off)
     jiggler.start()
-    log.info("Jiggler ready (enabled=%s, style=%s)", jiggler.enabled, jiggler.style)
+    log.info("Jiggler ready (enabled=%s, style=%s, auto-off=%s)",
+             jiggler.enabled, jiggler.style, jiggler.status().get("off_at_local") or "none")
 
     # HID connect-only-during-active-use: same load-then-always-start
     # pattern as the jiggler above, off by default.
