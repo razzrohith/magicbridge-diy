@@ -1208,9 +1208,17 @@ body:not(.fs) .fs-hud{display:none!important}
           <div id="jiggler-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
 
           <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
-            <div class="scard-title" style="margin:0 0 7px"><span class="dot-cyn"></span>Auto switch off
+            <div class="scard-title" style="margin:0 0 7px"><span class="dot-cyn"></span>Automation
               <span id="jig-off-pill" style="margin-left:auto;font-size:10px;font-weight:400;text-transform:none;color:var(--muted)">not scheduled</span>
             </div>
+            <!-- What to automate. Grid, never flex-wrap: .cur-opt sits fine in a
+                 grid track, but a wrapping flex row goes ragged at 224px. -->
+            <div id="jig-kind" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:9px">
+              <button class="cur-opt active" data-k="off"   onclick="jigKind('off')"   style="width:100%;padding:0 3px">Stop</button>
+              <button class="cur-opt"        data-k="on"    onclick="jigKind('on')"    style="width:100%;padding:0 3px">Start</button>
+              <button class="cur-opt"        data-k="sched" onclick="jigKind('sched')" style="width:100%;padding:0 3px">Daily</button>
+            </div>
+            <div id="jig-kind-note" class="snote" style="margin:0 0 8px">Switch the jiggler OFF automatically.</div>
 
             <!-- Segmented control as a 3-column GRID, not flex-wrap. .cur-opt in a
                  wrapping flex row wrapped raggedly at narrow widths; equal grid
@@ -1221,6 +1229,7 @@ body:not(.fs) .fs-hud{display:none!important}
               <button class="cur-opt"        data-m="at"    onclick="jigOffMode('at')" style="width:100%;padding:0 4px">At a time</button>
             </div>
 
+            <div id="jig-off-wrap">
             <!-- AFTER: a number + a unit, which is what was actually asked for.
                  Every .sbtn/.sinput here carries width:auto;margin:0 - both classes
                  are hard width:100%, and that is what collapsed the old flex row. -->
@@ -1259,6 +1268,69 @@ body:not(.fs) .fs-hud{display:none!important}
               <select class="ssel" id="jig-off-tz" style="width:100%;margin:0 0 7px"></select>
               <button class="sbtn pri" style="margin:0" onclick="jigOffAtTime()">Set time</button>
               <div class="snote" style="margin:6px 0 0">If it already passed today, it means tomorrow.</div>
+            </div>
+            </div>
+
+            <!-- START: the mirror of Stop, same two shapes. -->
+            <div id="jig-on-wrap" style="display:none">
+              <div id="jig-on-mode" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-bottom:9px">
+                <button class="cur-opt active" data-m="after" onclick="jigOnMode('after')" style="width:100%;padding:0 4px">After</button>
+                <button class="cur-opt"        data-m="at"    onclick="jigOnMode('at')"    style="width:100%;padding:0 4px">At a time</button>
+              </div>
+              <div id="jig-on-after">
+                <div class="snote" style="margin:0 0 6px">Start this long from now.</div>
+                <div style="display:grid;grid-template-columns:minmax(0,1fr) 78px;gap:5px;margin-bottom:6px">
+                  <input class="sinput" type="number" id="jig-on-num" min="1" max="10080" value="1" style="width:auto;margin:0;text-align:center">
+                  <select class="ssel" id="jig-on-unit" style="width:100%;margin:0;padding:0 4px">
+                    <option value="m">minutes</option>
+                    <option value="h" selected>hours</option>
+                  </select>
+                </div>
+                <button class="sbtn pri" style="margin:0" onclick="jigOnAfterCustom()">Set start timer</button>
+              </div>
+              <div id="jig-on-at" style="display:none">
+                <div class="snote" style="margin:0 0 6px">Start at a clock time.</div>
+                <label class="wifi-label" for="jig-on-clock" style="display:block;margin-bottom:3px">Time</label>
+                <input class="sinput" type="time" id="jig-on-clock" style="margin:0 0 7px">
+                <label class="wifi-label" for="jig-on-tz" style="display:block;margin-bottom:3px">Timezone</label>
+                <select class="ssel" id="jig-on-tz" style="width:100%;margin:0 0 7px"></select>
+                <button class="sbtn pri" style="margin:0" onclick="jigOnAtTime()">Set start time</button>
+                <div class="snote" style="margin:6px 0 0">If it already passed today, it means tomorrow.</div>
+              </div>
+            </div>
+
+            <!-- DAILY: a repeating window, runs every chosen day until removed. -->
+            <div id="jig-sched-wrap" style="display:none">
+              <div class="snote" style="margin:0 0 7px">Run every day between two times.</div>
+              <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:5px;margin-bottom:3px">
+                <label class="wifi-label" for="jig-sc-on" style="margin:0">Start</label>
+                <label class="wifi-label" for="jig-sc-off" style="margin:0">Stop</label>
+              </div>
+              <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:5px;margin-bottom:7px">
+                <input class="sinput" type="time" id="jig-sc-on"  value="09:00" style="width:auto;margin:0">
+                <input class="sinput" type="time" id="jig-sc-off" value="17:00" style="width:auto;margin:0">
+              </div>
+              <label class="wifi-label" for="jig-sc-days" style="display:block;margin-bottom:3px">Days</label>
+              <select class="ssel" id="jig-sc-days" style="width:100%;margin:0 0 7px">
+                <option value="*">Every day</option>
+                <option value="1-5" selected>Weekdays (Mon to Fri)</option>
+                <option value="0,6">Weekends</option>
+                <option value="1">Monday</option><option value="2">Tuesday</option>
+                <option value="3">Wednesday</option><option value="4">Thursday</option>
+                <option value="5">Friday</option><option value="6">Saturday</option>
+                <option value="0">Sunday</option>
+              </select>
+              <label class="wifi-label" for="jig-sc-tz" style="display:block;margin-bottom:3px">Timezone</label>
+              <select class="ssel" id="jig-sc-tz" style="width:100%;margin:0 0 7px"></select>
+              <button class="sbtn pri" style="margin:0 0 6px" onclick="jigSchedSave()">Save daily schedule</button>
+              <button class="sbtn" id="jig-sc-clear" style="margin:0;display:none" onclick="jigSchedClear()">Remove schedule</button>
+              <div class="snote" style="margin:6px 0 0">Overnight is fine: 22:00 to 06:00 runs through midnight.</div>
+            </div>
+
+            <div id="jig-sched-active" style="display:none;margin-top:9px;padding:7px 9px;border-radius:var(--r);
+                 background:rgba(34,211,238,.07);border:1px solid var(--border2);font-size:11px">
+              <div style="color:var(--sub);font-size:10px;text-transform:uppercase;letter-spacing:.4px">Daily schedule</div>
+              <div id="jig-sched-text" style="color:#8beefc;margin-top:2px">-</div>
             </div>
 
             <div id="jig-off-active" style="display:none;margin-top:9px;padding:7px 9px;border-radius:var(--r);
@@ -2680,6 +2752,12 @@ function toggleOverlay(on){
   _showOverlay=on;
   const c=document.getElementById('overlay-chk'); if(c) c.checked=on;
   if(!on){ const d=document.getElementById('cur-dot'); if(d) d.style.display='none'; }
+})();
+// Restore which automation tab was last open.
+(function(){
+  let k='off';
+  try{ const v=localStorage.getItem('mb_jigkind'); if(v) k=v; }catch(e){}
+  if(typeof jigKind==='function') jigKind(k);
 })();
 // Restore the saved cursor style (default Arrow). setCursor also re-highlights
 // the right button and syncs the predictive dot's shape.
@@ -4520,6 +4598,7 @@ async function refreshJigglerStatus(){
     }
     b.dataset.enabled=d.enabled?'1':'0';
     _jigRenderOff(d);
+    _jigRenderOn(d);
   }catch(e){}
 }
 async function _setJiggler(enabled){
@@ -4595,24 +4674,39 @@ function _jigStartTick(){
 }
 
 function _jigTzFill(d){
-  const sel=document.getElementById('jig-off-tz');
-  if(!sel || !d.timezones || !d.timezones.length) return;
-  if(sel.dataset.filled==='1') return;          // build once; keeps the selection
-  sel.innerHTML='';
-  d.timezones.forEach(t=>{
-    const o=document.createElement('option');
-    o.value=t.tz; o.textContent=t.label + (t.offset?(' '+t.offset):'');
-    sel.appendChild(o);
-  });
+  if(!d.timezones || !d.timezones.length) return;
   // Default to the zone the DEVICE is in, so the common case is zero clicks.
   const dev=(d.timezones.find(t=>(t.label||'').indexOf('('+d.tz+')')>=0));
-  sel.value = (d.off_tz) || (dev?dev.tz:sel.options[0].value);
-  sel.dataset.filled='1';
+  [['jig-off-tz', d.off_tz], ['jig-on-tz', d.on_tz],
+   ['jig-sc-tz', (d.sched||{}).tz]].forEach(function(pair){
+    const sel=document.getElementById(pair[0]);
+    if(!sel || sel.dataset.filled==='1') return;   // build once; keeps the selection
+    sel.innerHTML='';
+    d.timezones.forEach(t=>{
+      const o=document.createElement('option');
+      o.value=t.tz; o.textContent=t.label + (t.offset?(' '+t.offset):'');
+      sel.appendChild(o);
+    });
+    sel.value = pair[1] || (dev?dev.tz:sel.options[0].value);
+    sel.dataset.filled='1';
+  });
+}
+
+function _jigRenderOn(d){
+  // The auto-start countdown reuses the armed box's pill so the operator sees a
+  // pending start without a second countdown widget competing with it.
+  const pill=document.getElementById('jig-off-pill');
+  if(!pill) return;
+  if(!d.off_at && d.on_at){
+    pill.textContent='starts in '+_jigFmtLeft(d.on_remaining||0);
+    pill.style.color='var(--accent)';
+  }
 }
 
 function _jigRenderOff(d){
   _jigOffAt = d.off_at || null;
   _jigTzFill(d);
+  _jigRenderSched(d);
   const box=document.getElementById('jig-off-active');
   const pill=document.getElementById('jig-off-pill');
   if(!box||!pill) return;
@@ -4693,6 +4787,128 @@ function jigOffCancel(){
   // cancelling a schedule must not also switch the jiggler off.
   _jigPostOff({off_at:null, enabled:document.getElementById('jiggler-btn').dataset.enabled==='1'},
               'Auto switch-off cancelled');
+}
+
+// ---- Automation: Stop / Start / Daily ---------------------------------------
+// Three independent things share one card, so exactly one editor is visible at a
+// time. They are NOT mutually exclusive on the device - a one-shot stop and a
+// daily window can both be armed - this only chooses what you are editing.
+const _JIG_KIND_NOTE = {
+  off:   "Switch the jiggler OFF automatically.",
+  on:    "Switch the jiggler ON automatically.",
+  sched: "Run on a repeating daily timetable."
+};
+function jigKind(k){
+  document.querySelectorAll('#jig-kind .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.k===k));
+  const show=(id,on)=>{const e=document.getElementById(id); if(e) e.style.display=on?'':'none';};
+  show('jig-off-wrap',   k==='off');
+  show('jig-on-wrap',    k==='on');
+  show('jig-sched-wrap', k==='sched');
+  const n=document.getElementById('jig-kind-note');
+  if(n) n.textContent=_JIG_KIND_NOTE[k]||'';
+  try{ localStorage.setItem('mb_jigkind', k); }catch(e){}
+}
+
+function jigOnMode(m){
+  document.querySelectorAll('#jig-on-mode .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
+  const a=document.getElementById('jig-on-after'), t=document.getElementById('jig-on-at');
+  if(a) a.style.display=(m==='after')?'':'none';
+  if(t) t.style.display=(m==='at')?'':'none';
+}
+
+// Auto-START posts enabled:false deliberately. Enabling now would defeat the
+// point - the operator is asking for it to come on LATER, not immediately.
+async function _jigPostOn(payload, okMsg){
+  const sel=document.getElementById('jiggler-style');
+  const msg=document.getElementById('jiggler-msg');
+  const show=(text,ok)=>{
+    if(!msg) return;
+    msg.textContent=text;
+    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
+      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+  };
+  try{
+    const body=Object.assign({enabled:false, style:sel?sel.value:undefined}, payload);
+    const r=await fetch('/api/jiggler',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)});
+    const d=await r.json();
+    if(d.ok){ show('\u2713 '+okMsg+(d.on_at_local?(' ('+d.on_at_local+')'):''), true); toast(okMsg); refreshJigglerStatus(); }
+    else { show(d.error||'Failed', false); }
+  }catch(e){ show('Error: '+e,false); }
+}
+function jigOnAfterCustom(){
+  const n=parseInt((document.getElementById('jig-on-num')||{}).value,10);
+  const u=(document.getElementById('jig-on-unit')||{}).value||'m';
+  if(!n || n<1){ toast('Enter a number first'); return; }
+  const mins=(u==='h')?n*60:n;
+  if(mins>10080){ toast('Maximum is 7 days (168 hours)'); return; }
+  _jigPostOn({on_after_minutes:mins}, 'Jiggler will start in '+_jigFmtLeft(mins*60));
+}
+function jigOnAtTime(){
+  const v=(document.getElementById('jig-on-clock')||{}).value;
+  if(!v){ toast('Pick a time first'); return; }
+  const tz=(document.getElementById('jig-on-tz')||{}).value||'';
+  _jigPostOn({on_at_time:v, on_at_tz:tz||undefined}, 'Jiggler will start at '+v);
+}
+
+// Daily window. Sends enabled unchanged: the window itself decides the state at
+// its edges, so saving one should not force the jiggler on or off right now.
+async function _jigPostSched(sched, okMsg){
+  const sel=document.getElementById('jiggler-style');
+  const msg=document.getElementById('jiggler-msg');
+  const show=(text,ok)=>{
+    if(!msg) return;
+    msg.textContent=text;
+    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
+      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+  };
+  try{
+    const cur=document.getElementById('jiggler-btn').dataset.enabled==='1';
+    const r=await fetch('/api/jiggler',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({enabled:cur, style:sel?sel.value:undefined, sched:sched})});
+    const d=await r.json();
+    if(d.ok){ show('\u2713 '+okMsg, true); toast(okMsg); refreshJigglerStatus(); }
+    else { show(d.error||'Failed', false); }
+  }catch(e){ show('Error: '+e,false); }
+}
+function jigSchedSave(){
+  const on=(document.getElementById('jig-sc-on')||{}).value;
+  const off=(document.getElementById('jig-sc-off')||{}).value;
+  if(!on || !off){ toast('Set both a start and a stop time'); return; }
+  const days=(document.getElementById('jig-sc-days')||{}).value||'*';
+  const tz=(document.getElementById('jig-sc-tz')||{}).value||'';
+  _jigPostSched({enabled:true, on_time:on, off_time:off, days:days, tz:tz||undefined},
+                'Daily schedule saved');
+}
+function jigSchedClear(){ _jigPostSched(null, 'Daily schedule removed'); }
+
+const _JIG_DAYS = {'*':'every day','1-5':'Mon to Fri','0,6':'weekends',
+                   '0':'Sundays','1':'Mondays','2':'Tuesdays','3':'Wednesdays',
+                   '4':'Thursdays','5':'Fridays','6':'Saturdays'};
+function _jigRenderSched(d){
+  const box=document.getElementById('jig-sched-active');
+  const txt=document.getElementById('jig-sched-text');
+  const clr=document.getElementById('jig-sc-clear');
+  const sc=d.sched;
+  if(clr) clr.style.display = sc?'':'none';
+  if(!box||!txt) return;
+  if(sc && sc.enabled){
+    let where='';
+    if(sc.tz){
+      const nice=(d.timezones||[]).find(t=>t.tz===sc.tz);
+      where=' ('+((nice&&nice.label)||sc.tz)+')';
+    }
+    txt.textContent=sc.on_time+' to '+sc.off_time+', '+(_JIG_DAYS[sc.days]||sc.days)+where;
+    box.style.display='';
+    // reflect it back into the editor so it is not blank when reopened
+    const g=(id,v)=>{const e=document.getElementById(id); if(e && v!=null) e.value=v;};
+    g('jig-sc-on',sc.on_time); g('jig-sc-off',sc.off_time); g('jig-sc-days',sc.days);
+    if(sc.tz) g('jig-sc-tz',sc.tz);
+  }else{
+    box.style.display='none';
+  }
 }
 
 // HID connect-only-during-active-use
