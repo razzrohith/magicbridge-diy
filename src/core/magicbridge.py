@@ -1189,13 +1189,24 @@ class MouseJiggler:
         # off_at remains the single source of truth for when to fire.
         self.off_tz = None
         self.off_time = None
+        # Auto-START, the mirror of off_at: an absolute epoch at which to switch
+        # the jiggler ON. Same absolute-time reasoning - a reboot must not
+        # silently postpone it.
+        self.on_at = None
+        self.on_tz = None
+        self.on_time = None
+        # Recurring daily window, e.g. weekdays 09:00-17:00. Independent of the
+        # one-shot timers above; both can be armed at once.
+        self.sched = None
+        self._sched_edge = None      # key of the last edge applied, so a manual
+                                     # toggle sticks until the next transition
         self._deadline_task = None
         # Set by the app at startup so the deadline can persist enabled=False
         # when it fires. Without this an auto-off would be forgotten on the next
         # restart and the jiggler would come back up enabled.
         self._persist = None
 
-    def configure(self, enabled: bool, style: str, off_at="keep"):
+    def configure(self, enabled: bool, style: str, off_at="keep", on_at="keep"):
         if style not in JIGGLER_STYLES:
             style = JIGGLER_DEFAULT_STYLE
         self.enabled = bool(enabled)
@@ -1206,8 +1217,14 @@ class MouseJiggler:
             self.off_at = float(off_at) if off_at else None
             if not self.off_at:
                 self.off_tz = self.off_time = None
-        # A deadline is meaningless while disabled, and leaving a stale one set
-        # would fire against a later manual enable.
+        if on_at != "keep":
+            self.on_at = float(on_at) if on_at else None
+            if not self.on_at:
+                self.on_tz = self.on_time = None
+        # An OFF deadline is meaningless while already disabled, and leaving a
+        # stale one set would fire against a later manual enable. The ON
+        # deadline is the opposite: it only makes sense while disabled, so it is
+        # deliberately NOT cleared here.
         if not self.enabled:
             self.off_at = None
             self.off_tz = self.off_time = None
@@ -1235,6 +1252,14 @@ class MouseJiggler:
             "off_at_local": local,               # human, in the DEVICE's timezone
             "off_tz":    self.off_tz,            # the zone the operator PICKED, if any
             "off_time":  self.off_time,          # the HH:MM they typed, if any
+            "on_at":     self.on_at,             # auto-START epoch, or null
+            "on_at_local": (time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(self.on_at))
+                            if self.on_at else None),
+            "on_tz":     self.on_tz,
+            "on_time":   self.on_time,
+            "on_remaining": (None if not self.on_at
+                             else max(0, int(self.on_at - time.time()))),
+            "sched":     self.sched,             # recurring window, or null
             "remaining": None if rem is None else int(rem),
             "tz":        time.strftime("%Z"),    # the DEVICE's current zone
             "timezones": _tz_choices(),          # what the picker offers
@@ -1254,34 +1279,77 @@ class MouseJiggler:
                 setattr(self, attr, None)
 
     async def _deadline_loop(self):
-        """Switches the jiggler off at self.off_at.
+        """Applies every scheduled transition: the one-shot OFF deadline, the
+        one-shot ON deadline, and the recurring daily window.
 
         Separate from the jiggle loop on purpose: that one sleeps a RANDOM
         3-90s (by design, so the cadence is not machine-like), and piggy-backing
-        the deadline on it would make "off at 16:00" land anywhere up to 90s
-        late. This sleeps at most 30s, and exactly the remaining time once
-        inside that window, so the switch-off lands within a second of the
-        requested moment without adding a busy loop.
+        deadlines on it would make "off at 16:00" land anywhere up to 90s late.
+        This sleeps at most 20s, and exactly the remaining time once inside that
+        window, so a switch lands within a second of the requested moment
+        without a busy loop.
         """
         while True:
             try:
-                rem = self.remaining()
-                if rem is None:
-                    await asyncio.sleep(5)         # nothing armed; cheap idle
-                    continue
-                if rem > 0:
-                    await asyncio.sleep(min(rem, 30))
-                    continue
-                # Deadline reached.
-                self.enabled = False
-                self.off_at = None
-                log.info("Jiggler auto-off fired (scheduled deadline reached)")
-                if self._persist:
+                changed = False
+
+                # --- recurring window ------------------------------------
+                # Apply the most recent edge only ONCE. Between edges the
+                # operator can override by hand and it sticks; a unit that was
+                # powered off across 09:00 still comes up correctly, because the
+                # edge is "most recent", not "exactly now".
+                if self.sched and self.sched.get("enabled"):
                     try:
-                        self.off_tz = self.off_time = None
-                        await _call_off_loop(self._persist, False, self.style, None, None, None)
+                        edge = _sched_recent_edge(self.sched)
                     except Exception:
-                        log.warning("jiggler auto-off could not be persisted", exc_info=True)
+                        edge = None
+                    if edge:
+                        want_on, key = edge
+                        if key != self._sched_edge:
+                            self._sched_edge = key
+                            if bool(self.enabled) != bool(want_on):
+                                self.enabled = bool(want_on)
+                                log.info("Jiggler %s by schedule (%s)",
+                                         "ON" if want_on else "OFF", key)
+                                changed = True
+                            # A recurring window owns the state at its edges, so
+                            # a stale one-shot must not immediately undo it.
+                            if want_on:
+                                self.on_at = self.on_tz = self.on_time = None
+                            else:
+                                self.off_at = self.off_tz = self.off_time = None
+
+                # --- one-shot ON ------------------------------------------
+                if self.on_at and time.time() >= self.on_at:
+                    self.on_at = self.on_tz = self.on_time = None
+                    if not self.enabled:
+                        self.enabled = True
+                        log.info("Jiggler auto-ON fired (scheduled start reached)")
+                    changed = True
+
+                # --- one-shot OFF -----------------------------------------
+                if self.off_at and time.time() >= self.off_at:
+                    self.enabled = False
+                    self.off_at = self.off_tz = self.off_time = None
+                    log.info("Jiggler auto-off fired (scheduled deadline reached)")
+                    changed = True
+
+                if changed and self._persist:
+                    try:
+                        await _call_off_loop(self._persist, self.enabled, self.style,
+                                             self.off_at, self.off_tz, self.off_time,
+                                             self.on_at, self.on_tz, self.on_time,
+                                             self.sched)
+                    except Exception:
+                        log.warning("jiggler schedule change could not be persisted",
+                                    exc_info=True)
+
+                # Sleep until the nearest thing that needs attention.
+                waits = [20.0]
+                for t in (self.off_at, self.on_at):
+                    if t:
+                        waits.append(max(0.0, t - time.time()))
+                await asyncio.sleep(max(0.5, min(waits)))
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -2704,7 +2772,8 @@ async def api_identity(request):
     return web.json_response({"ok": False, "error": "unknown action"}, status=400)
 
 
-def _jiggler_persist(enabled: bool, style: str, off_at, off_tz=None, off_time=None):
+def _jiggler_persist(enabled: bool, style: str, off_at, off_tz=None, off_time=None,
+                     on_at=None, on_tz=None, on_time=None, sched=None):
     """Write the jiggler's persisted fields. Blocking (file IO), so call it via
     _call_off_loop from async code.
 
@@ -2713,8 +2782,10 @@ def _jiggler_persist(enabled: bool, style: str, off_at, off_tz=None, off_time=No
     so the panel can redisplay the choice while a schedule is armed, instead of
     showing a bare timestamp that loses which clock the operator meant."""
     cfg = _load_cfg()
-    cfg["jiggler"] = {"enabled": bool(enabled), "style": style, "off_at": off_at,
-                      "off_tz": off_tz, "off_time": off_time}
+    cfg["jiggler"] = {"enabled": bool(enabled), "style": style,
+                      "off_at": off_at, "off_tz": off_tz, "off_time": off_time,
+                      "on_at": on_at, "on_tz": on_tz, "on_time": on_time,
+                      "sched": sched}
     _save_cfg(cfg)
 
 
@@ -2766,6 +2837,100 @@ def _tz_choices():
         except Exception:
             out.append({"tz": tzname, "label": label})
     return out
+
+
+def _sched_recent_edge(sched, now: float = None):
+    """The most recent ON/OFF transition of a recurring jiggler window.
+
+    sched = {enabled, on_time:'HH:MM', off_time:'HH:MM', days:'*'|'1-5'|'0,6', tz}
+    Returns (want_on, key) for the latest edge at or before `now`, or None.
+
+    EDGE-based rather than "is now inside the window", deliberately:
+      - "inside the window" fights the operator - switch it off by hand at noon
+        and the next tick switches it straight back on.
+      - pure edge-triggering MISSES edges while the unit is powered off.
+    So the caller applies the most recent edge only if it has not applied that
+    edge already: a manual toggle then sticks until the next real transition,
+    and a unit that was off through 09:00 still comes up in the right state.
+
+    The off edge is derived from its own on edge plus the window duration, so a
+    window crossing midnight (22:00-06:00) is handled naturally instead of
+    needing a special case. on_time == off_time means "all day".
+    """
+    import datetime as _dt
+    from zoneinfo import ZoneInfo
+    if not sched or not sched.get("enabled"):
+        return None
+    tz = None
+    want = sched.get("tz")
+    if want:
+        try:
+            tz = ZoneInfo(str(want))
+        except Exception:
+            tz = None
+    if tz is None:
+        # No explicit zone means "this device's clock". Resolve it to a real
+        # IANA zone, NOT time.strftime("%Z") - that returns an ABBREVIATION
+        # ("CDT"), which is not a zone key, so ZoneInfo raised and the old code
+        # silently fell back to UTC. On a US device that is a 5-6 hour error: a
+        # 09:00-17:00 window would have run overnight. /etc/timezone is the
+        # Debian/Pi OS source of truth; astimezone() is the last resort and is
+        # correct for "now" even if it cannot model a future DST change.
+        try:
+            tz = ZoneInfo(Path("/etc/timezone").read_text().strip())
+        except Exception:
+            try:
+                tz = _dt.datetime.now().astimezone().tzinfo
+            except Exception:
+                return None
+    now = time.time() if now is None else now
+    ref = _dt.datetime.fromtimestamp(now, tz)
+    days = str(sched.get("days", "*") or "*")
+
+    def _day_ok(d):
+        if days in ("*", ""):
+            return True
+        wd = (d.weekday() + 1) % 7            # python Mon=0 -> cron Sun=0
+        for part in days.split(","):
+            part = part.strip()
+            if "-" in part:
+                try:
+                    a, b = (int(x) for x in part.split("-", 1))
+                except ValueError:
+                    continue
+                if a <= b and a <= wd <= b:
+                    return True
+                if a > b and (wd >= a or wd <= b):   # wrapping range, e.g. 5-1
+                    return True
+            elif part.isdigit() and int(part) == wd:
+                return True
+        return False
+
+    try:
+        oh, om = (int(x) for x in str(sched["on_time"]).split(":", 1))
+        fh, fm = (int(x) for x in str(sched["off_time"]).split(":", 1))
+    except Exception:
+        return None
+    dur = ((fh * 60 + fm) - (oh * 60 + om)) % (24 * 60) or (24 * 60)
+
+    edges = []
+    for back in range(3, -1, -1):
+        d = (ref - _dt.timedelta(days=back)).date()
+        if not _day_ok(d):
+            continue
+        try:
+            on_local = _dt.datetime.combine(d, _dt.time(oh, om), tz)
+        except Exception:
+            continue
+        on_ep = on_local.timestamp()
+        off_ep = (on_local + _dt.timedelta(minutes=dur)).timestamp()
+        edges.append((on_ep,  True,  "on:%s"  % d.isoformat()))
+        edges.append((off_ep, False, "off:%s" % d.isoformat()))
+    edges = sorted((e for e in edges if e[0] <= now), key=lambda x: x[0])
+    if not edges:
+        return None
+    _ep, want_on, key = edges[-1]
+    return (want_on, key)
 
 
 def _next_time_in_tz(hhmm: str, tzname: str, now: float = None):
@@ -2889,13 +3054,62 @@ async def api_jiggler(request):
     except (ValueError, TypeError) as e:
         return web.json_response({"ok": False, "error": "bad auto-off value: %s" % e}, status=400)
 
+    # Auto-START, same three forms as auto-off.
+    on_at = "keep"
+    try:
+        if "on_after_minutes" in d and d["on_after_minutes"] is not None:
+            mins = float(d["on_after_minutes"])
+            if not (0 < mins <= 7 * 24 * 60):
+                return web.json_response({"ok": False, "error": "on_after_minutes must be 1..10080"}, status=400)
+            on_at = time.time() + mins * 60.0
+        elif "on_at_time" in d and d["on_at_time"]:
+            _tz = d.get("on_at_tz") or ""
+            if _tz:
+                on_at, _sh = _next_time_in_tz(str(d["on_at_time"]), str(_tz))
+            else:
+                on_at = _next_local_time(str(d["on_at_time"]))
+        elif "on_at" in d:
+            on_at = float(d["on_at"]) if d["on_at"] else None
+    except (ValueError, TypeError) as e:
+        return web.json_response({"ok": False, "error": "bad auto-on value: %s" % e}, status=400)
+
+    # Recurring window. Validated here so a malformed one can never reach the
+    # scheduler and silently do nothing.
+    sched = "keep"
+    if "sched" in d:
+        sc = d["sched"]
+        if not sc:
+            sched = None
+        elif isinstance(sc, dict):
+            try:
+                for k in ("on_time", "off_time"):
+                    parts = str(sc.get(k, "")).split(":")
+                    if len(parts) != 2 or not all(x.isdigit() for x in parts):
+                        raise ValueError("%s must be HH:MM" % k)
+                    if not (0 <= int(parts[0]) <= 23 and 0 <= int(parts[1]) <= 59):
+                        raise ValueError("%s out of range" % k)
+                days = str(sc.get("days", "*") or "*")
+                if any(c not in "0123456789,-*" for c in days):
+                    raise ValueError("days must be a cron weekday set like * or 1-5")
+                tzn = str(sc.get("tz") or "")
+                if tzn:
+                    from zoneinfo import ZoneInfo
+                    ZoneInfo(tzn)          # raises if unknown
+                sched = {"enabled": bool(sc.get("enabled", True)),
+                         "on_time": str(sc["on_time"]), "off_time": str(sc["off_time"]),
+                         "days": days, "tz": tzn or None}
+            except Exception as e:
+                return web.json_response({"ok": False, "error": "bad schedule: %s" % e}, status=400)
+        else:
+            return web.json_response({"ok": False, "error": "sched must be an object or null"}, status=400)
+
     # Turning the jiggler ON without naming a schedule clears any leftover one,
     # so an old deadline from a previous session cannot immediately switch off
     # the run the operator just started.
     if enabled and not was_enabled and off_at == "keep":
         off_at = None
 
-    jiggler.configure(enabled, style, off_at)
+    jiggler.configure(enabled, style, off_at, on_at)
     # Remember what the operator actually chose, for redisplay while armed.
     if off_at != "keep":
         if off_at and "off_at_time" in d and d["off_at_time"]:
@@ -2903,8 +3117,18 @@ async def api_jiggler(request):
             jiggler.off_tz   = str(d.get("off_at_tz") or "") or None
         elif off_at and "off_after_minutes" in d:
             jiggler.off_time = jiggler.off_tz = None
+    if on_at != "keep":
+        if on_at and "on_at_time" in d and d["on_at_time"]:
+            jiggler.on_time = str(d["on_at_time"])
+            jiggler.on_tz   = str(d.get("on_at_tz") or "") or None
+        elif on_at and "on_after_minutes" in d:
+            jiggler.on_time = jiggler.on_tz = None
+    if sched != "keep":
+        jiggler.sched = sched
+        jiggler._sched_edge = None      # re-evaluate against the NEW window
     await _call_off_loop(_jiggler_persist, jiggler.enabled, jiggler.style,
-                         jiggler.off_at, jiggler.off_tz, jiggler.off_time)
+                         jiggler.off_at, jiggler.off_tz, jiggler.off_time,
+                         jiggler.on_at, jiggler.on_tz, jiggler.on_time, jiggler.sched)
     return web.json_response({"ok": True, **jiggler.status()})
 
 
@@ -4046,10 +4270,29 @@ async def main():
             _jiggler_persist(False, jc.get("style", JIGGLER_DEFAULT_STYLE), None)
         except Exception:
             pass
-    jiggler.configure(_j_enabled, jc.get("style", JIGGLER_DEFAULT_STYLE), _j_off)
+    # Auto-START restored the same way. Unlike the OFF deadline, one that came
+    # due while the unit was powered off is applied rather than dropped: the
+    # operator asked for it to be running by then, so come up running.
+    _j_on = jc.get("on_at")
+    try:
+        _j_on = float(_j_on) if _j_on else None
+    except (TypeError, ValueError):
+        _j_on = None
+    if _j_on and _j_on <= time.time():
+        log.info("Jiggler auto-start time had already passed while off - starting enabled")
+        _j_enabled, _j_on = True, None
+    jiggler.configure(_j_enabled, jc.get("style", JIGGLER_DEFAULT_STYLE), _j_off, _j_on)
     if jiggler.off_at:
         jiggler.off_tz   = jc.get("off_tz")
         jiggler.off_time = jc.get("off_time")
+    if jiggler.on_at:
+        jiggler.on_tz    = jc.get("on_tz")
+        jiggler.on_time  = jc.get("on_time")
+    # Recurring window. _sched_edge is left None so the loop evaluates the most
+    # recent edge on the first tick - that is what puts a rebooted unit into the
+    # correct state for the time of day it came back up.
+    _sc = jc.get("sched")
+    jiggler.sched = _sc if isinstance(_sc, dict) else None
     jiggler.start()
     log.info("Jiggler ready (enabled=%s, style=%s, auto-off=%s)",
              jiggler.enabled, jiggler.style, jiggler.status().get("off_at_local") or "none")
