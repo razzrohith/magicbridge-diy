@@ -393,6 +393,29 @@ body:not(.fs) .fs-hud{display:none!important}
 .cur-opt{height:26px;padding:0 10px;background:var(--card2);border:1px solid var(--border);
   border-radius:20px;color:var(--muted);font-size:10px;cursor:pointer;transition:all .12s}
 .cur-opt.active{background:#0a2b33;border-color:#22d3ee40;color:#8beefc}
+/* Switch. Used wherever a feature is simply on or off, so the control says what
+   it does at a glance and, for the automation rows below, doubles as the cancel:
+   flipping it off clears that schedule outright. */
+.sw{position:relative;display:inline-block;width:36px;height:20px;flex:none;cursor:pointer}
+.sw input{position:absolute;opacity:0;width:0;height:0}
+.sw i{position:absolute;inset:0;border-radius:20px;background:var(--card2);
+  border:1px solid var(--border);transition:background .15s,border-color .15s}
+.sw i:after{content:"";position:absolute;width:14px;height:14px;left:2px;top:2px;
+  border-radius:50%;background:var(--muted);transition:transform .15s,background .15s}
+.sw input:checked + i{background:#0a2b33;border-color:#22d3ee55}
+.sw input:checked + i:after{transform:translateX(16px);background:var(--accent)}
+.sw input:focus-visible + i{border-color:rgba(99,102,241,.6)}
+.sw input:disabled + i{opacity:.4}
+/* One switch + its label on a row. */
+.swrow{display:flex;align-items:center;gap:9px;min-height:28px}
+.swrow .swlab{font-size:11px;color:var(--text);flex:1;min-width:0}
+.swrow .swsub{font-size:10px;color:var(--muted);display:block;margin-top:1px}
+/* The controls a switch reveals: indented under it, visually attached. */
+.swbody{margin:5px 0 9px 45px;padding-left:9px;border-left:1px solid var(--border)}
+.swbody:last-child{margin-bottom:0}
+/* Live state line for an armed automation. */
+.jstate{font-size:10px;color:#8beefc;margin-top:5px;line-height:1.4}
+.jstate.off{color:var(--muted)}
 .id-table{width:100%;border-collapse:collapse;font-size:11px}
 .id-table th{color:var(--muted);font-weight:600;text-align:left;
   padding:4px 6px;border-bottom:1px solid var(--border);font-size:10px;letter-spacing:.3px;text-transform:uppercase}
@@ -1196,122 +1219,89 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>Mouse Jiggler</div>
           <div class="snote" style="margin-bottom:8px">Keeps the target awake. Pauses while you're using it.</div>
-          <div class="srow"><span class="sk">Status</span><span class="sv" id="jiggler-status">-</span></div>
-          <label class="wifi-label" for="jiggler-style" style="margin-top:8px">Style</label>
-          <select class="sinput wifi-field" id="jiggler-style" onchange="jigglerStyleChanged()" style="margin-bottom:8px">
-            <option value="minimal">Minimal - stays usable while enabled</option>
-            <option value="slow">Slow &amp; subtle</option>
-            <option value="moderate" selected>Moderate</option>
-            <option value="fast">Fast &amp; obvious</option>
-          </select>
-          <button class="sbtn" id="jiggler-btn" onclick="toggleJiggler()">Enable Jiggler</button>
-          <div id="jiggler-msg" style="display:none;margin-top:8px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+          <div class="swrow" style="margin-bottom:9px">
+            <label class="sw"><input type="checkbox" id="jiggler-sw" onchange="toggleJiggler(this.checked)"><i></i></label>
+            <span class="swlab">Jiggler
+              <span class="swsub" id="jiggler-status">-</span>
+            </span>
+          </div>
+          <label class="wifi-label" for="jiggler-style" style="display:block;margin-bottom:3px">Style</label>
+          <select class="ssel" id="jiggler-style" onchange="jigglerStyleChanged()" style="width:100%;margin:0 0 4px"></select>
+          <div id="jiggler-msg" style="display:none;margin-top:7px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
 
           <div style="border-top:1px solid var(--border);margin-top:12px;padding-top:10px">
-            <div class="scard-title" style="margin:0 0 7px"><span class="dot-cyn"></span>Automation
-              <span id="jig-off-pill" style="margin-left:auto;font-size:10px;font-weight:400;text-transform:none;color:var(--muted)">not scheduled</span>
-            </div>
-            <!-- What to automate. Grid, never flex-wrap: .cur-opt sits fine in a
-                 grid track, but a wrapping flex row goes ragged at 224px. -->
-            <div id="jig-kind" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:9px">
-              <button class="cur-opt active" data-k="off"   onclick="jigKind('off')"   style="width:100%;padding:0 3px">Stop</button>
-              <button class="cur-opt"        data-k="on"    onclick="jigKind('on')"    style="width:100%;padding:0 3px">Start</button>
-              <button class="cur-opt"        data-k="sched" onclick="jigKind('sched')" style="width:100%;padding:0 3px">Daily</button>
-            </div>
-            <div id="jig-kind-note" class="snote" style="margin:0 0 8px">Switch the jiggler OFF automatically.</div>
-
-            <!-- Segmented control as a 3-column GRID, not flex-wrap. .cur-opt in a
-                 wrapping flex row wrapped raggedly at narrow widths; equal grid
-                 columns always fit on one line and never leave an orphan. -->
-            <div id="jig-off-mode" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin-bottom:9px">
-              <button class="cur-opt active" data-m="none"  onclick="jigOffMode('none')" style="width:100%;padding:0 4px">Never</button>
-              <button class="cur-opt"        data-m="after" onclick="jigOffMode('after')" style="width:100%;padding:0 4px">After</button>
-              <button class="cur-opt"        data-m="at"    onclick="jigOffMode('at')" style="width:100%;padding:0 4px">At a time</button>
+            <div class="scard-title" style="margin:0 0 9px"><span class="dot-cyn"></span>Automation
+              <span id="jig-auto-pill" style="margin-left:auto;font-size:10px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">none set</span>
             </div>
 
-            <div id="jig-off-wrap">
-            <!-- AFTER: a number + a unit, which is what was actually asked for.
-                 Every .sbtn/.sinput here carries width:auto;margin:0 - both classes
-                 are hard width:100%, and that is what collapsed the old flex row. -->
-            <div id="jig-off-after" style="display:none">
-              <div class="snote" style="margin:0 0 6px">Stop this long from now.</div>
-              <div style="display:grid;grid-template-columns:minmax(0,1fr) 78px;gap:5px;margin-bottom:6px">
-                <input class="sinput" type="number" id="jig-off-num" min="1" max="10080" value="1"
-                       style="width:auto;margin:0;text-align:center">
-                <select class="ssel" id="jig-off-unit" style="width:100%;margin:0;padding:0 4px">
-                  <option value="m">minutes</option>
+            <!-- Each automation is a switch. Turning it OFF is the cancel - the
+                 old layout had a Cancel button for Stop, a Remove for Daily and
+                 nothing at all for Start, so a pending start could not be called
+                 off once armed. One consistent control removes that whole class
+                 of gap, and removes ~10 buttons from the card. -->
+
+            <!-- START ------------------------------------------------------->
+            <div class="swrow">
+              <label class="sw"><input type="checkbox" id="jig-on-sw" onchange="jigOnSwitch(this.checked)"><i></i></label>
+              <span class="swlab">Start automatically</span>
+            </div>
+            <div class="swbody" id="jig-on-body" style="display:none">
+              <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-bottom:6px" id="jig-on-mode">
+                <button class="cur-opt active" data-m="after" onclick="jigOnMode('after')" style="width:100%;padding:0 3px">After</button>
+                <button class="cur-opt"        data-m="at"    onclick="jigOnMode('at')"    style="width:100%;padding:0 3px">At a time</button>
+              </div>
+              <div id="jig-on-after" style="display:grid;grid-template-columns:minmax(0,1fr) 74px;gap:5px">
+                <input class="sinput" type="number" id="jig-on-num" min="1" max="10080" value="1"
+                       onchange="jigOnApply()" style="width:auto;margin:0;text-align:center">
+                <select class="ssel" id="jig-on-unit" onchange="jigOnApply()" style="width:100%;margin:0;padding:0 4px">
+                  <option value="m">min</option>
                   <option value="h" selected>hours</option>
                 </select>
               </div>
-              <button class="sbtn pri" style="margin:0 0 8px" onclick="jigOffAfterCustom()">Set timer</button>
-              <div class="snote" style="margin:0 0 5px">Or pick a common one</div>
-              <!-- SIX presets in a 3-col grid = two full rows, so nothing is ever
-                   stretched alone across its own row like the old 5-item flex. -->
-              <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px">
-                <button class="sbtn" style="margin:0" onclick="jigOffAfter(15)">15m</button>
-                <button class="sbtn" style="margin:0" onclick="jigOffAfter(30)">30m</button>
-                <button class="sbtn" style="margin:0" onclick="jigOffAfter(60)">1h</button>
-                <button class="sbtn" style="margin:0" onclick="jigOffAfter(120)">2h</button>
-                <button class="sbtn" style="margin:0" onclick="jigOffAfter(240)">4h</button>
-                <button class="sbtn" style="margin:0" onclick="jigOffAfter(480)">8h</button>
-              </div>
-            </div>
-
-            <!-- AT A TIME: stacked full-width controls. A time field, a timezone
-                 select and a button do not fit on one 300px row without squeezing
-                 the timezone name to nothing, so they get their own lines. -->
-            <div id="jig-off-at" style="display:none">
-              <div class="snote" style="margin:0 0 6px">Stop at a clock time.</div>
-              <label class="wifi-label" for="jig-off-clock" style="display:block;margin-bottom:3px">Time</label>
-              <input class="sinput" type="time" id="jig-off-clock" style="margin:0 0 7px">
-              <label class="wifi-label" for="jig-off-tz" style="display:block;margin-bottom:3px">Timezone</label>
-              <select class="ssel" id="jig-off-tz" style="width:100%;margin:0 0 7px"></select>
-              <button class="sbtn pri" style="margin:0" onclick="jigOffAtTime()">Set time</button>
-              <div class="snote" style="margin:6px 0 0">If it already passed today, it means tomorrow.</div>
-            </div>
-            </div>
-
-            <!-- START: the mirror of Stop, same two shapes. -->
-            <div id="jig-on-wrap" style="display:none">
-              <div id="jig-on-mode" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-bottom:9px">
-                <button class="cur-opt active" data-m="after" onclick="jigOnMode('after')" style="width:100%;padding:0 4px">After</button>
-                <button class="cur-opt"        data-m="at"    onclick="jigOnMode('at')"    style="width:100%;padding:0 4px">At a time</button>
-              </div>
-              <div id="jig-on-after">
-                <div class="snote" style="margin:0 0 6px">Start this long from now.</div>
-                <div style="display:grid;grid-template-columns:minmax(0,1fr) 78px;gap:5px;margin-bottom:6px">
-                  <input class="sinput" type="number" id="jig-on-num" min="1" max="10080" value="1" style="width:auto;margin:0;text-align:center">
-                  <select class="ssel" id="jig-on-unit" style="width:100%;margin:0;padding:0 4px">
-                    <option value="m">minutes</option>
-                    <option value="h" selected>hours</option>
-                  </select>
-                </div>
-                <button class="sbtn pri" style="margin:0" onclick="jigOnAfterCustom()">Set start timer</button>
-              </div>
               <div id="jig-on-at" style="display:none">
-                <div class="snote" style="margin:0 0 6px">Start at a clock time.</div>
-                <label class="wifi-label" for="jig-on-clock" style="display:block;margin-bottom:3px">Time</label>
-                <input class="sinput" type="time" id="jig-on-clock" style="margin:0 0 7px">
-                <label class="wifi-label" for="jig-on-tz" style="display:block;margin-bottom:3px">Timezone</label>
-                <select class="ssel" id="jig-on-tz" style="width:100%;margin:0 0 7px"></select>
-                <button class="sbtn pri" style="margin:0" onclick="jigOnAtTime()">Set start time</button>
-                <div class="snote" style="margin:6px 0 0">If it already passed today, it means tomorrow.</div>
+                <input class="sinput" type="time" id="jig-on-clock" onchange="jigOnApply()" style="margin:0 0 5px">
+                <select class="ssel" id="jig-on-tz" onchange="jigOnApply()" style="width:100%;margin:0"></select>
               </div>
+              <div class="jstate" id="jig-on-state"></div>
             </div>
 
-            <!-- DAILY: a repeating window, runs every chosen day until removed. -->
-            <div id="jig-sched-wrap" style="display:none">
-              <div class="snote" style="margin:0 0 7px">Run every day between two times.</div>
-              <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:5px;margin-bottom:3px">
-                <label class="wifi-label" for="jig-sc-on" style="margin:0">Start</label>
-                <label class="wifi-label" for="jig-sc-off" style="margin:0">Stop</label>
+            <!-- STOP -------------------------------------------------------->
+            <div class="swrow">
+              <label class="sw"><input type="checkbox" id="jig-off-sw" onchange="jigOffSwitch(this.checked)"><i></i></label>
+              <span class="swlab">Stop automatically</span>
+            </div>
+            <div class="swbody" id="jig-off-body" style="display:none">
+              <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px;margin-bottom:6px" id="jig-off-mode">
+                <button class="cur-opt active" data-m="after" onclick="jigOffMode('after')" style="width:100%;padding:0 3px">After</button>
+                <button class="cur-opt"        data-m="at"    onclick="jigOffMode('at')"    style="width:100%;padding:0 3px">At a time</button>
               </div>
-              <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:5px;margin-bottom:7px">
-                <input class="sinput" type="time" id="jig-sc-on"  value="09:00" style="width:auto;margin:0">
-                <input class="sinput" type="time" id="jig-sc-off" value="17:00" style="width:auto;margin:0">
+              <div id="jig-off-after" style="display:grid;grid-template-columns:minmax(0,1fr) 74px;gap:5px">
+                <input class="sinput" type="number" id="jig-off-num" min="1" max="10080" value="1"
+                       onchange="jigOffApply()" style="width:auto;margin:0;text-align:center">
+                <select class="ssel" id="jig-off-unit" onchange="jigOffApply()" style="width:100%;margin:0;padding:0 4px">
+                  <option value="m">min</option>
+                  <option value="h" selected>hours</option>
+                </select>
               </div>
-              <label class="wifi-label" for="jig-sc-days" style="display:block;margin-bottom:3px">Days</label>
-              <select class="ssel" id="jig-sc-days" style="width:100%;margin:0 0 7px">
+              <div id="jig-off-at" style="display:none">
+                <input class="sinput" type="time" id="jig-off-clock" onchange="jigOffApply()" style="margin:0 0 5px">
+                <select class="ssel" id="jig-off-tz" onchange="jigOffApply()" style="width:100%;margin:0"></select>
+              </div>
+              <div class="jstate" id="jig-off-state"></div>
+            </div>
+
+            <!-- DAILY ------------------------------------------------------->
+            <div class="swrow">
+              <label class="sw"><input type="checkbox" id="jig-sc-sw" onchange="jigSchedSwitch(this.checked)"><i></i></label>
+              <span class="swlab">Daily schedule</span>
+            </div>
+            <div class="swbody" id="jig-sc-body" style="display:none">
+              <div style="display:grid;grid-template-columns:minmax(0,1fr) 14px minmax(0,1fr);gap:4px;align-items:center;margin-bottom:6px">
+                <input class="sinput" type="time" id="jig-sc-on"  value="09:00" onchange="jigSchedApply()" style="width:auto;margin:0">
+                <span style="text-align:center;font-size:10px;color:var(--muted)">to</span>
+                <input class="sinput" type="time" id="jig-sc-off" value="17:00" onchange="jigSchedApply()" style="width:auto;margin:0">
+              </div>
+              <select class="ssel" id="jig-sc-days" onchange="jigSchedApply()" style="width:100%;margin:0 0 5px">
                 <option value="*">Every day</option>
                 <option value="1-5" selected>Weekdays (Mon to Fri)</option>
                 <option value="0,6">Weekends</option>
@@ -1320,25 +1310,8 @@ body:not(.fs) .fs-hud{display:none!important}
                 <option value="5">Friday</option><option value="6">Saturday</option>
                 <option value="0">Sunday</option>
               </select>
-              <label class="wifi-label" for="jig-sc-tz" style="display:block;margin-bottom:3px">Timezone</label>
-              <select class="ssel" id="jig-sc-tz" style="width:100%;margin:0 0 7px"></select>
-              <button class="sbtn pri" style="margin:0 0 6px" onclick="jigSchedSave()">Save daily schedule</button>
-              <button class="sbtn" id="jig-sc-clear" style="margin:0;display:none" onclick="jigSchedClear()">Remove schedule</button>
-              <div class="snote" style="margin:6px 0 0">Overnight is fine: 22:00 to 06:00 runs through midnight.</div>
-            </div>
-
-            <div id="jig-sched-active" style="display:none;margin-top:9px;padding:7px 9px;border-radius:var(--r);
-                 background:rgba(34,211,238,.07);border:1px solid var(--border2);font-size:11px">
-              <div style="color:var(--sub);font-size:10px;text-transform:uppercase;letter-spacing:.4px">Daily schedule</div>
-              <div id="jig-sched-text" style="color:#8beefc;margin-top:2px">-</div>
-            </div>
-
-            <div id="jig-off-active" style="display:none;margin-top:9px;padding:7px 9px;border-radius:var(--r);
-                 background:rgba(34,211,238,.10);border:1px solid #22d3ee40;font-size:11px">
-              <div style="color:var(--sub);font-size:10px;text-transform:uppercase;letter-spacing:.4px">Stopping in</div>
-              <div id="jig-off-left" style="font-size:17px;font-weight:600;color:#8beefc;margin:1px 0 3px">-</div>
-              <div id="jig-off-when" style="color:var(--sub);line-height:1.45">-</div>
-              <button class="sbtn" style="margin:7px 0 0" onclick="jigOffCancel()">Cancel</button>
+              <select class="ssel" id="jig-sc-tz" onchange="jigSchedApply()" style="width:100%;margin:0"></select>
+              <div class="jstate" id="jig-sc-state"></div>
             </div>
           </div>
         </div>
@@ -4582,110 +4555,75 @@ async function toggleLockdown(){
 }
 
 // Mouse jiggler
+// ---------------------------------------------------------------------------
+// The card is switch-driven. Each automation (start / stop / daily) is one
+// switch: flipping it ON reveals its inputs and arms it, flipping it OFF cancels
+// it outright. That replaced ~18 buttons and, more importantly, closed a real
+// gap - Stop had a Cancel button and Daily had Remove, but a pending START had
+// no way to be called off at all once armed.
+//
+// Inputs apply on 'change' (fires on blur/Enter/commit, not per keystroke), so
+// there is no separate Set button to forget to press.
+// ---------------------------------------------------------------------------
+let _jigEnabled = false;      // device truth, mirrored from every status poll
+let _jigApplying = false;     // suppresses the echo while we are writing
+
+const JIG_STYLE_LABELS = {minimal:'Minimal', slow:'Slow & subtle', moderate:'Moderate', fast:'Fast & obvious'};
+
 async function refreshJigglerStatus(){
   try{
     const r=await fetch('/api/jiggler');
     const d=await r.json();
-    const s=document.getElementById('jiggler-status');
-    const b=document.getElementById('jiggler-btn');
+    if(_jigApplying) return;              // our own write is in flight; don't fight it
+    _jigEnabled = !!d.enabled;
+
+    // style dropdown, built from whatever the device actually offers
     const sel=document.getElementById('jiggler-style');
-    if(d.style) sel.value=d.style;
-    if(d.enabled){
-      s.textContent='ON ('+(sel.options[sel.selectedIndex]?.text||d.style)+')'; s.className='sv ok';
-      b.textContent='Disable Jiggler';
-    }else{
-      s.textContent='OFF'; s.className='sv';
-      b.textContent='Enable Jiggler';
+    if(sel && d.styles && !sel.dataset.filled){
+      sel.innerHTML='';
+      Object.keys(d.styles).forEach(k=>{
+        const o=document.createElement('option');
+        o.value=k; o.textContent=d.styles[k]||JIG_STYLE_LABELS[k]||k;
+        sel.appendChild(o);
+      });
+      sel.dataset.filled='1';
     }
-    b.dataset.enabled=d.enabled?'1':'0';
-    _jigRenderOff(d);
-    _jigRenderOn(d);
+    if(sel && d.style) sel.value=d.style;
+
+    const sw=document.getElementById('jiggler-sw');
+    if(sw) sw.checked=_jigEnabled;
+    const st=document.getElementById('jiggler-status');
+    if(st){
+      const lbl=(d.styles&&d.styles[d.style])||JIG_STYLE_LABELS[d.style]||d.style||'';
+      st.textContent = _jigEnabled ? ('Running · '+lbl) : 'Off';
+      st.style.color = _jigEnabled ? 'var(--green)' : 'var(--muted)';
+    }
+    _jigTzFill(d);
+    _jigRenderAutomation(d);
   }catch(e){}
-}
-async function _setJiggler(enabled){
-  const sel=document.getElementById('jiggler-style');
-  const msg=document.getElementById('jiggler-msg');
-  const show=(text,ok)=>{
-    msg.textContent=text;
-    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
-      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
-          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
-  };
-  try{
-    const r=await fetch('/api/jiggler',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({enabled:enabled,style:sel.value})});
-    const d=await r.json();
-    if(d.ok){
-      show(enabled?'✓ Jiggler enabled ('+sel.value+')':'✓ Jiggler disabled', true);
-      toast(enabled?'Jiggler enabled ✓':'Jiggler disabled ✓');
-      refreshJigglerStatus();
-    }else{
-      show(d.error||'Failed', false);
-    }
-  }catch(e){show('Error: '+e,false);}
-}
-function toggleJiggler(){
-  const b=document.getElementById('jiggler-btn');
-  _setJiggler(b.dataset.enabled!=='1');
-}
-function jigglerStyleChanged(){
-  const b=document.getElementById('jiggler-btn');
-  // Only push the style change live if the jiggler is currently on;
-  // if it's off, just remember the selection for next time it's enabled.
-  if(b.dataset.enabled==='1') _setJiggler(true);
-}
-
-// ---- Jiggler auto switch-off ------------------------------------------------
-// The deadline lives on the DEVICE (absolute epoch, persisted), so it survives a
-// reload, a service restart and a reboot. The page only mirrors it. The countdown
-// ticks locally from that epoch rather than polling, so it stays smooth without a
-// request per second.
-let _jigOffAt = null;          // epoch SECONDS from the device, or null
-let _jigOffTick = null;
-
-function jigOffMode(m){
-  document.querySelectorAll('#jig-off-mode .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
-  const a=document.getElementById('jig-off-after'), t=document.getElementById('jig-off-at');
-  if(a) a.style.display = (m==='after')?'':'none';
-  if(t) t.style.display = (m==='at')?'':'none';
-  if(m==='none' && _jigOffAt) jigOffCancel();
 }
 
 function _jigFmtLeft(sec){
   sec=Math.max(0,Math.round(sec));
-  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), s=sec%60;
+  const h=Math.floor(sec/3600), m=Math.floor((sec%3600)/60), x=sec%60;
   if(h) return h+'h '+String(m).padStart(2,'0')+'m';
-  if(m) return m+'m '+String(s).padStart(2,'0')+'s';
-  return s+'s';
+  if(m) return m+'m '+String(x).padStart(2,'0')+'s';
+  return x+'s';
 }
 
-// Local countdown. When it reaches zero it re-syncs from the device, so the UI
-// reflects the switch-off the DEVICE performed - the device is the authority.
-function _jigStartTick(){
-  clearInterval(_jigOffTick);
-  if(!_jigOffAt) return;
-  const paint=()=>{
-    const left=_jigOffAt - (Date.now()/1000);
-    const el=document.getElementById('jig-off-left');
-    if(el) el.textContent=_jigFmtLeft(left);
-    if(left<=0){ clearInterval(_jigOffTick); setTimeout(refreshJigglerStatus, 1500); }
-  };
-  paint();
-  _jigOffTick=setInterval(paint,1000);
-}
-
+// One place fills all three timezone pickers, defaulting to the device's own
+// zone so the common case needs no interaction.
 function _jigTzFill(d){
   if(!d.timezones || !d.timezones.length) return;
-  // Default to the zone the DEVICE is in, so the common case is zero clicks.
-  const dev=(d.timezones.find(t=>(t.label||'').indexOf('('+d.tz+')')>=0));
-  [['jig-off-tz', d.off_tz], ['jig-on-tz', d.on_tz],
-   ['jig-sc-tz', (d.sched||{}).tz]].forEach(function(pair){
+  const dev=d.timezones.find(t=>(t.label||'').indexOf('('+d.tz+')')>=0);
+  [['jig-off-tz', d.off_tz], ['jig-on-tz', d.on_tz], ['jig-sc-tz', (d.sched||{}).tz]]
+  .forEach(function(pair){
     const sel=document.getElementById(pair[0]);
-    if(!sel || sel.dataset.filled==='1') return;   // build once; keeps the selection
+    if(!sel || sel.dataset.filled==='1') return;
     sel.innerHTML='';
     d.timezones.forEach(t=>{
       const o=document.createElement('option');
-      o.value=t.tz; o.textContent=t.label + (t.offset?(' '+t.offset):'');
+      o.value=t.tz; o.textContent=t.label+(t.offset?(' '+t.offset):'');
       sel.appendChild(o);
     });
     sel.value = pair[1] || (dev?dev.tz:sel.options[0].value);
@@ -4693,250 +4631,222 @@ function _jigTzFill(d){
   });
 }
 
-let _jigOnAt = null, _jigOnTick = null;
-function _jigRenderOn(d){
-  // The auto-start countdown reuses the armed box's pill so the operator sees a
-  // pending start without a second countdown widget competing with it.
-  const pill=document.getElementById('jig-off-pill');
-  if(!pill) return;
-  clearInterval(_jigOnTick); _jigOnTick=null;
-  _jigOnAt = (!d.off_at && d.on_at) ? d.on_at : null;
-  if(!_jigOnAt) return;
-  // Tick locally rather than showing a number frozen until the next poll, and
-  // re-sync from the DEVICE when it reaches zero - the device is the authority
-  // on whether the jiggler actually came on.
-  const paint=()=>{
-    const left=_jigOnAt-(Date.now()/1000);
-    pill.textContent='starts in '+_jigFmtLeft(Math.max(0,left));
-    pill.style.color='var(--accent)';
-    if(left<=0){ clearInterval(_jigOnTick); _jigOnTick=null; setTimeout(refreshJigglerStatus,1200); }
-  };
-  paint();
-  _jigOnTick=setInterval(paint,1000);
-}
-
-function _jigRenderOff(d){
-  _jigOffAt = d.off_at || null;
-  _jigTzFill(d);
-  _jigRenderSched(d);
-  const box=document.getElementById('jig-off-active');
-  const pill=document.getElementById('jig-off-pill');
-  if(!box||!pill) return;
-  if(_jigOffAt){
-    box.style.display='';
-    const w=document.getElementById('jig-off-when');
-    if(w){
-      // Always show the DEVICE's clock, because that is when it will really
-      // happen. If the operator picked a DIFFERENT zone, show their wording too,
-      // so a schedule set in another timezone is never ambiguous.
-      let html='at <b>'+(d.off_at_local||'-')+'</b>';
-      if(d.off_time && d.off_tz){
-        const nice=(d.timezones||[]).find(t=>t.tz===d.off_tz);
-        html+='<br>you set '+d.off_time+' '+((nice&&nice.label)||d.off_tz);
-      }
-      w.innerHTML=html;
-    }
-    pill.textContent='scheduled';
-    pill.style.color='var(--accent)';
-    _jigStartTick();
-  }else{
-    box.style.display='none';
-    pill.textContent='not scheduled';
-    pill.style.color='var(--muted)';
-    clearInterval(_jigOffTick);
-    document.querySelectorAll('#jig-off-mode .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.m==='none'));
-    const a=document.getElementById('jig-off-after'), t=document.getElementById('jig-off-at');
-    if(a) a.style.display='none';
-    if(t) t.style.display='none';
-  }
-}
-
-// Every setter enables the jiggler in the same request: scheduling an off-time
-// for something already off is meaningless, and one call avoids a window where
-// the device holds a deadline but is not running.
-async function _jigPostOff(payload, okMsg){
-  const sel=document.getElementById('jiggler-style');
-  const msg=document.getElementById('jiggler-msg');
-  const show=(text,ok)=>{
-    if(!msg) return;
-    msg.textContent=text;
-    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
-      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
-          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
-  };
-  try{
-    const body=Object.assign({enabled:true, style:sel?sel.value:undefined}, payload);
-    const r=await fetch('/api/jiggler',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(body)});
-    const d=await r.json();
-    if(d.ok){ show('✓ '+okMsg+(d.off_at_local?(' ('+d.off_at_local+')'):''), true); toast(okMsg); refreshJigglerStatus(); }
-    else { show(d.error||'Failed', false); }
-  }catch(e){ show('Error: '+e,false); }
-}
-
-function jigOffAfter(mins){ _jigPostOff({off_after_minutes:mins}, 'Jiggler will stop in '+_jigFmtLeft(mins*60)); }
-
-// Number + unit, which is what was actually asked for. Converted to minutes here
-// so the API contract stays a single unit and the existing tests keep passing.
-function jigOffAfterCustom(){
-  const n=parseInt((document.getElementById('jig-off-num')||{}).value,10);
-  const u=(document.getElementById('jig-off-unit')||{}).value||'m';
-  if(!n || n<1){ toast('Enter a number first'); return; }
-  const mins = (u==='h') ? n*60 : n;
-  if(mins>10080){ toast('Maximum is 7 days (168 hours)'); return; }
-  jigOffAfter(mins);
-}
-
-function jigOffAtTime(){
-  const el=document.getElementById('jig-off-clock');
-  const v=el&&el.value;                       // "HH:MM" (24h) from <input type=time>
-  if(!v){ toast('Pick a time first'); return; }
-  const tz=(document.getElementById('jig-off-tz')||{}).value||'';
-  _jigPostOff({off_at_time:v, off_at_tz:tz||undefined}, 'Jiggler will stop at '+v);
-}
-function jigOffCancel(){
-  // off_at:null clears the deadline. enabled is deliberately preserved -
-  // cancelling a schedule must not also switch the jiggler off.
-  _jigPostOff({off_at:null, enabled:document.getElementById('jiggler-btn').dataset.enabled==='1'},
-              'Auto switch-off cancelled');
-}
-
-// ---- Automation: Stop / Start / Daily ---------------------------------------
-// Three independent things share one card, so exactly one editor is visible at a
-// time. They are NOT mutually exclusive on the device - a one-shot stop and a
-// daily window can both be armed - this only chooses what you are editing.
-const _JIG_KIND_NOTE = {
-  off:   "Switch the jiggler OFF automatically.",
-  on:    "Switch the jiggler ON automatically.",
-  sched: "Run on a repeating daily timetable."
-};
-function jigKind(k){
-  document.querySelectorAll('#jig-kind .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.k===k));
-  const show=(id,on)=>{const e=document.getElementById(id); if(e) e.style.display=on?'':'none';};
-  show('jig-off-wrap',   k==='off');
-  show('jig-on-wrap',    k==='on');
-  show('jig-sched-wrap', k==='sched');
-  const n=document.getElementById('jig-kind-note');
-  if(n) n.textContent=_JIG_KIND_NOTE[k]||'';
-  try{ localStorage.setItem('mb_jigkind', k); }catch(e){}
-}
-
-function jigOnMode(m){
-  document.querySelectorAll('#jig-on-mode .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
-  const a=document.getElementById('jig-on-after'), t=document.getElementById('jig-on-at');
-  if(a) a.style.display=(m==='after')?'':'none';
-  if(t) t.style.display=(m==='at')?'':'none';
-}
-
-// Auto-START posts enabled:false deliberately. Enabling now would defeat the
-// point - the operator is asking for it to come on LATER, not immediately.
-async function _jigPostOn(payload, okMsg){
-  const sel=document.getElementById('jiggler-style');
-  const msg=document.getElementById('jiggler-msg');
-  const show=(text,ok)=>{
-    if(!msg) return;
-    msg.textContent=text;
-    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
-      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
-          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
-  };
-  try{
-    const body=Object.assign({enabled:false, style:sel?sel.value:undefined}, payload);
-    const r=await fetch('/api/jiggler',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(body)});
-    const d=await r.json();
-    if(d.ok){ show('\u2713 '+okMsg+(d.on_at_local?(' ('+d.on_at_local+')'):''), true); toast(okMsg); refreshJigglerStatus(); }
-    else { show(d.error||'Failed', false); }
-  }catch(e){ show('Error: '+e,false); }
-}
-function jigOnAfterCustom(){
-  const n=parseInt((document.getElementById('jig-on-num')||{}).value,10);
-  const u=(document.getElementById('jig-on-unit')||{}).value||'m';
-  if(!n || n<1){ toast('Enter a number first'); return; }
-  const mins=(u==='h')?n*60:n;
-  if(mins>10080){ toast('Maximum is 7 days (168 hours)'); return; }
-  _jigPostOn({on_after_minutes:mins}, 'Jiggler will start in '+_jigFmtLeft(mins*60));
-}
-function jigOnAtTime(){
-  const v=(document.getElementById('jig-on-clock')||{}).value;
-  if(!v){ toast('Pick a time first'); return; }
-  const tz=(document.getElementById('jig-on-tz')||{}).value||'';
-  _jigPostOn({on_at_time:v, on_at_tz:tz||undefined}, 'Jiggler will start at '+v);
-}
-
-// Daily window. Sends enabled unchanged: the window itself decides the state at
-// its edges, so saving one should not force the jiggler on or off right now.
-async function _jigPostSched(sched, okMsg){
-  const sel=document.getElementById('jiggler-style');
-  const msg=document.getElementById('jiggler-msg');
-  const show=(text,ok)=>{
-    if(!msg) return;
-    msg.textContent=text;
-    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
-      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
-          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
-  };
-  try{
-    const cur=document.getElementById('jiggler-btn').dataset.enabled==='1';
-    const r=await fetch('/api/jiggler',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({enabled:cur, style:sel?sel.value:undefined, sched:sched})});
-    const d=await r.json();
-    if(d.ok){ show('\u2713 '+okMsg, true); toast(okMsg); refreshJigglerStatus(); }
-    else { show(d.error||'Failed', false); }
-  }catch(e){ show('Error: '+e,false); }
-}
-function jigSchedSave(){
-  const on=(document.getElementById('jig-sc-on')||{}).value;
-  const off=(document.getElementById('jig-sc-off')||{}).value;
-  if(!on || !off){ toast('Set both a start and a stop time'); return; }
-  const days=(document.getElementById('jig-sc-days')||{}).value||'*';
-  const tz=(document.getElementById('jig-sc-tz')||{}).value||'';
-  _jigPostSched({enabled:true, on_time:on, off_time:off, days:days, tz:tz||undefined},
-                'Daily schedule saved');
-}
-function jigSchedClear(){ _jigPostSched(null, 'Daily schedule removed'); }
-
 const _JIG_DAYS = {'*':'every day','1-5':'Mon to Fri','0,6':'weekends',
                    '0':'Sundays','1':'Mondays','2':'Tuesdays','3':'Wednesdays',
                    '4':'Thursdays','5':'Fridays','6':'Saturdays'};
-function _jigRenderSched(d){
-  const box=document.getElementById('jig-sched-active');
-  const txt=document.getElementById('jig-sched-text');
-  const clr=document.getElementById('jig-sc-clear');
-  const sc=d.sched;
-  if(clr) clr.style.display = sc?'':'none';
-  if(!box||!txt) return;
-  if(sc && sc.enabled){
-    let where='';
-    if(sc.tz){
-      const nice=(d.timezones||[]).find(t=>t.tz===sc.tz);
-      where=' ('+((nice&&nice.label)||sc.tz)+')';
+
+// Local countdowns, so an armed timer counts down smoothly instead of jumping
+// once per poll, and re-syncs from the DEVICE the moment it reaches zero - the
+// device decides what actually happened, not this page.
+let _jigTick=null, _jigOnAt=null, _jigOffAt=null;
+function _jigStartTicking(){
+  clearInterval(_jigTick); _jigTick=null;
+  if(!_jigOnAt && !_jigOffAt) return;
+  const paint=()=>{
+    let due=false;
+    const on=document.getElementById('jig-on-state');
+    if(_jigOnAt && on){
+      const left=_jigOnAt-(Date.now()/1000);
+      on.textContent='Starts in '+_jigFmtLeft(left);
+      if(left<=0) due=true;
     }
-    txt.textContent=sc.on_time+' to '+sc.off_time+', '+(_JIG_DAYS[sc.days]||sc.days)+where;
-    box.style.display='';
-    // reflect it back into the editor so it is not blank when reopened
-    const g=(id,v)=>{const e=document.getElementById(id); if(e && v!=null) e.value=v;};
-    g('jig-sc-on',sc.on_time); g('jig-sc-off',sc.off_time); g('jig-sc-days',sc.days);
-    if(sc.tz) g('jig-sc-tz',sc.tz);
-  }else{
-    box.style.display='none';
-  }
+    const off=document.getElementById('jig-off-state');
+    if(_jigOffAt && off){
+      const left=_jigOffAt-(Date.now()/1000);
+      off.textContent='Stops in '+_jigFmtLeft(left);
+      if(left<=0) due=true;
+    }
+    const pill=document.getElementById('jig-auto-pill');
+    if(pill){
+      const parts=[];
+      if(_jigOnAt)  parts.push('starts in '+_jigFmtLeft(_jigOnAt-(Date.now()/1000)));
+      if(_jigOffAt) parts.push('stops in '+_jigFmtLeft(_jigOffAt-(Date.now()/1000)));
+      if(parts.length){ pill.textContent=parts.join(' · '); pill.style.color='var(--accent)'; }
+    }
+    if(due){ clearInterval(_jigTick); _jigTick=null; setTimeout(refreshJigglerStatus,1200); }
+  };
+  paint();
+  _jigTick=setInterval(paint,1000);
 }
 
-// Restore which automation tab was last open.
-//
-// MUST live here, after jigKind and the const it reads. It used to sit ~2000
-// lines earlier, next to the cursor-style restore. `function jigKind` hoists so
-// the CALL resolved, but the const _JIG_KIND_NOTE it dereferences does not - it
-// was still in the temporal dead zone, so this threw
-// "Cannot access '_JIG_KIND_NOTE' before initialization" and killed the rest of
-// the script: no WebSocket, no status pills, no settings panel. The page looked
-// like the backend was down when the backend was perfectly healthy.
-(function(){
-  let k='off';
-  try{ const v=localStorage.getItem('mb_jigkind'); if(v) k=v; }catch(e){}
-  try{ jigKind(k); }catch(e){ /* never let a restore break page init */ }
-})();
+function _jigRenderAutomation(d){
+  const show=(id,on)=>{const e=document.getElementById(id); if(e) e.style.display=on?'':'none';};
+  const set=(id,v)=>{const e=document.getElementById(id); if(e) e.checked=!!v;};
+  const txt=(id,t,dim)=>{const e=document.getElementById(id); if(e){e.textContent=t||''; e.className='jstate'+(dim?' off':'');}};
+
+  _jigOnAt  = d.on_at  || null;
+  _jigOffAt = d.off_at || null;
+
+  // START
+  set('jig-on-sw', !!d.on_at);
+  show('jig-on-body', !!d.on_at);
+  if(d.on_at){
+    let extra='';
+    if(d.on_time && d.on_tz){
+      const n=(d.timezones||[]).find(t=>t.tz===d.on_tz);
+      extra=' · you set '+d.on_time+' '+((n&&n.label)||d.on_tz);
+    }
+    txt('jig-on-state','Starts in '+_jigFmtLeft(d.on_remaining||0)+extra);
+  } else txt('jig-on-state','');
+
+  // STOP
+  set('jig-off-sw', !!d.off_at);
+  show('jig-off-body', !!d.off_at);
+  if(d.off_at){
+    let extra='';
+    if(d.off_time && d.off_tz){
+      const n=(d.timezones||[]).find(t=>t.tz===d.off_tz);
+      extra=' · you set '+d.off_time+' '+((n&&n.label)||d.off_tz);
+    }
+    txt('jig-off-state','Stops in '+_jigFmtLeft(d.remaining||0)+extra);
+  } else txt('jig-off-state','');
+
+  // DAILY
+  const sc=d.sched && d.sched.enabled ? d.sched : null;
+  set('jig-sc-sw', !!sc);
+  show('jig-sc-body', !!sc);
+  if(sc){
+    const g=(id,v)=>{const e=document.getElementById(id); if(e&&v!=null) e.value=v;};
+    g('jig-sc-on',sc.on_time); g('jig-sc-off',sc.off_time); g('jig-sc-days',sc.days);
+    if(sc.tz) g('jig-sc-tz',sc.tz);
+    let where='';
+    if(sc.tz){ const n=(d.timezones||[]).find(t=>t.tz===sc.tz); where=' ('+((n&&n.label)||sc.tz)+')'; }
+    txt('jig-sc-state','Runs '+sc.on_time+' to '+sc.off_time+', '+(_JIG_DAYS[sc.days]||sc.days)+where);
+  } else txt('jig-sc-state','');
+
+  // header pill
+  const pill=document.getElementById('jig-auto-pill');
+  if(pill && !d.on_at && !d.off_at){
+    if(sc){ pill.textContent='daily '+sc.on_time+'-'+sc.off_time; pill.style.color='var(--accent)'; }
+    else  { pill.textContent='none set'; pill.style.color='var(--muted)'; }
+  }
+  _jigStartTicking();
+}
+
+// ---- one POST helper for everything on this card ---------------------------
+async function _jigPost(body, okMsg){
+  const msg=document.getElementById('jiggler-msg');
+  const show=(t,ok)=>{
+    if(!msg) return;
+    msg.textContent=t;
+    msg.style.cssText='display:block;padding:5px 8px;border-radius:4px;'+
+      (ok?'background:rgba(16,185,129,.12);color:var(--green);border:1px solid var(--green)':
+          'background:rgba(244,63,94,.12);color:var(--red);border:1px solid var(--red)');
+    if(ok) setTimeout(()=>{ if(msg.textContent===t) msg.style.display='none'; }, 4000);
+  };
+  const sel=document.getElementById('jiggler-style');
+  _jigApplying=true;
+  try{
+    const r=await fetch('/api/jiggler',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(Object.assign({style:sel?sel.value:undefined}, body))});
+    const d=await r.json();
+    _jigApplying=false;
+    if(d.ok){ if(okMsg) show('\u2713 '+okMsg, true); refreshJigglerStatus(); return true; }
+    show(d.error||'Failed', false); refreshJigglerStatus(); return false;
+  }catch(e){ _jigApplying=false; show('Error: '+e,false); return false; }
+}
+
+function toggleJiggler(on){ _jigPost({enabled:!!on}, on?'Jiggler on':'Jiggler off'); }
+function jigglerStyleChanged(){ if(_jigEnabled) _jigPost({enabled:true}, 'Style updated'); }
+
+// ---- START -----------------------------------------------------------------
+function jigOnMode(m){
+  document.querySelectorAll('#jig-on-mode .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
+  const a=document.getElementById('jig-on-after'), t=document.getElementById('jig-on-at');
+  if(a) a.style.display=(m==='after')?'grid':'none';
+  if(t) t.style.display=(m==='at')?'':'none';
+  jigOnApply();
+}
+function _jigOnPayload(){
+  const at=document.querySelector('#jig-on-mode .cur-opt.active');
+  if(at && at.dataset.m==='at'){
+    const v=(document.getElementById('jig-on-clock')||{}).value;
+    if(!v) return null;
+    return {on_at_time:v, on_at_tz:(document.getElementById('jig-on-tz')||{}).value||undefined};
+  }
+  const n=parseInt((document.getElementById('jig-on-num')||{}).value,10);
+  const u=(document.getElementById('jig-on-unit')||{}).value||'m';
+  if(!n||n<1) return null;
+  const mins=(u==='h')?n*60:n;
+  if(mins>10080){ toast('Maximum is 7 days'); return null; }
+  return {on_after_minutes:mins};
+}
+function jigOnSwitch(on){
+  const body=document.getElementById('jig-on-body');
+  if(body) body.style.display=on?'':'none';
+  if(!on){ _jigPost({on_at:null, enabled:_jigEnabled}, 'Auto start cancelled'); return; }
+  const p=_jigOnPayload();
+  if(p) _jigPost(Object.assign({enabled:false}, p), 'Auto start set');
+}
+function jigOnApply(){
+  const sw=document.getElementById('jig-on-sw');
+  if(!sw || !sw.checked) return;                 // only writes while armed
+  const p=_jigOnPayload();
+  if(p) _jigPost(Object.assign({enabled:false}, p), 'Auto start updated');
+}
+
+// ---- STOP ------------------------------------------------------------------
+function jigOffMode(m){
+  document.querySelectorAll('#jig-off-mode .cur-opt').forEach(b=>b.classList.toggle('active', b.dataset.m===m));
+  const a=document.getElementById('jig-off-after'), t=document.getElementById('jig-off-at');
+  if(a) a.style.display=(m==='after')?'grid':'none';
+  if(t) t.style.display=(m==='at')?'':'none';
+  jigOffApply();
+}
+function _jigOffPayload(){
+  const at=document.querySelector('#jig-off-mode .cur-opt.active');
+  if(at && at.dataset.m==='at'){
+    const v=(document.getElementById('jig-off-clock')||{}).value;
+    if(!v) return null;
+    return {off_at_time:v, off_at_tz:(document.getElementById('jig-off-tz')||{}).value||undefined};
+  }
+  const n=parseInt((document.getElementById('jig-off-num')||{}).value,10);
+  const u=(document.getElementById('jig-off-unit')||{}).value||'m';
+  if(!n||n<1) return null;
+  const mins=(u==='h')?n*60:n;
+  if(mins>10080){ toast('Maximum is 7 days'); return null; }
+  return {off_after_minutes:mins};
+}
+function jigOffSwitch(on){
+  const body=document.getElementById('jig-off-body');
+  if(body) body.style.display=on?'':'none';
+  if(!on){ _jigPost({off_at:null, enabled:_jigEnabled}, 'Auto stop cancelled'); return; }
+  const p=_jigOffPayload();
+  // Stopping implies the jiggler should be running, otherwise there is nothing
+  // to stop - so arming this turns it on.
+  if(p) _jigPost(Object.assign({enabled:true}, p), 'Auto stop set');
+}
+function jigOffApply(){
+  const sw=document.getElementById('jig-off-sw');
+  if(!sw || !sw.checked) return;
+  const p=_jigOffPayload();
+  if(p) _jigPost(Object.assign({enabled:true}, p), 'Auto stop updated');
+}
+
+// ---- DAILY -----------------------------------------------------------------
+function _jigSchedPayload(){
+  const on=(document.getElementById('jig-sc-on')||{}).value;
+  const off=(document.getElementById('jig-sc-off')||{}).value;
+  if(!on||!off) return null;
+  return {enabled:true, on_time:on, off_time:off,
+          days:(document.getElementById('jig-sc-days')||{}).value||'*',
+          tz:(document.getElementById('jig-sc-tz')||{}).value||undefined};
+}
+function jigSchedSwitch(on){
+  const body=document.getElementById('jig-sc-body');
+  if(body) body.style.display=on?'':'none';
+  if(!on){ _jigPost({sched:null, enabled:_jigEnabled}, 'Daily schedule removed'); return; }
+  const p=_jigSchedPayload();
+  // The window decides the state at its own edges, so arming it must not force
+  // the jiggler on or off right now - send the current state unchanged.
+  if(p) _jigPost({sched:p, enabled:_jigEnabled}, 'Daily schedule saved');
+}
+function jigSchedApply(){
+  const sw=document.getElementById('jig-sc-sw');
+  if(!sw || !sw.checked) return;
+  const p=_jigSchedPayload();
+  if(p) _jigPost({sched:p, enabled:_jigEnabled}, 'Daily schedule updated');
+}
 
 // HID connect-only-during-active-use
 async function refreshHidAutoDcStatus(){
