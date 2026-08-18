@@ -4443,7 +4443,14 @@ async function sysCheckVer(userInitiated){
     }
     const _bEl=document.getElementById('sys-build');
     if(_bEl) _bEl.textContent = d.build_id || '-';
-    if(d.branch)document.getElementById('sys-branch').textContent=d.branch;
+    // Guarded. The Branch row was removed from this card in 0b8b7d3 (the update
+    // panel now shows release versions, not git detail) but this line kept
+    // dereferencing it, so getElementById returned null and .textContent threw
+    // a TypeError. It sits inside sysCheckVer's try/catch, so the whole check
+    // died silently and the operator just got "Check failed" - with a perfectly
+    // healthy backend and working GitHub connectivity behind it.
+    const _brEl=document.getElementById('sys-branch');
+    if(_brEl && d.branch) _brEl.textContent=d.branch;
     const avail=document.getElementById('sys-avail');
     const btn=document.getElementById('sys-update-btn');
     if(d.update_available){
@@ -4481,7 +4488,7 @@ async function sysCheckVer(userInitiated){
       }
     }
     const out=document.getElementById('sys-update-out');
-    out.textContent=d.out||'';out.style.display=d.out?'block':'none';
+    if(out){ out.textContent=d.out||''; out.style.display=d.out?'block':'none'; }
   }catch(e){
     if(userInitiated) toast('Check failed');
     // Silent otherwise: an automatic check that could not reach GitHub is not an
