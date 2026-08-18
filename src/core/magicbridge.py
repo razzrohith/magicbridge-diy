@@ -2047,6 +2047,10 @@ async def api_status(request: web.Request) -> web.Response:
         # mode keeps sending absolute coords a relative gadget silently discards,
         # which looks exactly like "the mouse stopped working".
         "mouse_mode": (_load_cfg().get("usb", {}) or {}).get("mouse_mode", "relative"),
+        # Operator label (see _device_name): drawn in the title bar and topbar so
+        # someone running several units can tell their tabs apart. NOT the
+        # hostname - it never reaches the target.
+        "device_name": _device_name(),
         "uptime":     uptime,
         "temp_c":     temp,
         "local_ip":     local_ip,
@@ -2929,6 +2933,62 @@ def _gen_serial(profile_idx):
         return "CN0" + "".join(rng.choices(ch, k=13))
     else:
         return "".join(rng.choices("0123456789ABCDEF", k=12))
+
+def _device_name() -> str:
+    """The operator's own label for THIS unit, e.g. "Office tower" or "Rack 2".
+
+    STEALTH BOUNDARY - read this before touching it. This name is for the person
+    OPERATING the device. It exists so someone with more than one MagicBridge can
+    tell their tabs, bookmarks and (future) fleet rows apart. It is the OPPOSITE
+    of the target-facing identity in api_identity():
+
+        api_identity()  -> what the TARGET computer sees (spoofed Logitech USB).
+                           MUST stay realistic. Never show the operator's label.
+        _device_name()  -> what the OPERATOR sees. Never reaches the target.
+
+    So this value must NEVER be written to any of: the USB gadget strings
+    (_usb_w / configfs), the network hostname (which is spoofed to look like an
+    ordinary desktop), the EDID the monitor advertises, or the MAC. Doing so
+    would paint "MagicBridge" onto the exact surfaces the whole product hides.
+    It lives only in config and is only ever returned by this auth-gated API and
+    drawn in the operator web UI.
+    """
+    try:
+        return str((_load_cfg().get("device", {}) or {}).get("name", "") or "")
+    except Exception:
+        return ""
+
+
+async def api_device(request):
+    """GET  /api/device  - operator-facing metadata for this unit.
+    POST /api/device  {"name":"..."} - set the operator's label.
+
+    Kept separate from /api/identity on purpose: that endpoint is the TARGET's
+    view (spoofed USB) and must never carry the operator's label. See
+    _device_name() for the full stealth boundary.
+    """
+    if request.method == "GET":
+        return web.json_response({
+            "ok": True,
+            "name": _device_name(),
+            "version": VERSION,
+            "hostname_note": "operator label only - not the network hostname",
+        })
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+    name = str(d.get("name", ""))
+    # A label, not a hostname: printable, trimmed, bounded. No control chars that
+    # could break the OLED render or the title bar, but otherwise let the
+    # operator write whatever reads well to them ("Raj's tower", "Rack 2 - dev").
+    name = "".join(ch for ch in name if ch.isprintable()).strip()[:40]
+    cfg = _load_cfg()
+    cfg.setdefault("device", {})["name"] = name
+    _save_cfg(cfg)
+    log.info("Operator device label set to %r", name)
+    return web.json_response({"ok": True, "name": name})
+
 
 async def api_identity(request):
     import time as _t
@@ -4386,6 +4446,8 @@ def build_app() -> web.Application:
     app.router.add_get("/api/keyboard/settings",  api_keyboard_settings)
     app.router.add_post("/api/keyboard/settings", api_keyboard_settings)
     app.router.add_post("/api/power",     api_power)
+    app.router.add_get("/api/device",   api_device)
+    app.router.add_post("/api/device",  api_device)
     app.router.add_get("/api/identity",  api_identity)
     app.router.add_post("/api/identity", api_identity)
     app.router.add_get("/api/stream/adapt",  api_stream_adapt)

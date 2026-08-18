@@ -1241,6 +1241,16 @@ body:not(.fs) .fs-hud{display:none!important}
 
         <div class="sys-cat" data-cat="peripherals">
         <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>Name This Device</div>
+          <div class="snote" style="margin-bottom:8px">Your own name for this unit. It shows in the title bar and the top of this page, so if you run more than one MagicBridge you can tell their tabs apart. It is only for you: the target computer never sees it.</div>
+          <div class="srow"><span class="sk">Name</span>
+            <input class="sinput" id="dev-name" maxlength="40" placeholder="e.g. Office tower"
+              style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')saveDeviceName()">
+          </div>
+          <button class="sbtn pri" style="margin-top:6px" onclick="saveDeviceName()">Save name</button>
+          <div class="srow" style="margin-top:8px"><span class="sk">Firmware</span><span class="sv" id="dev-version">-</span></div>
+        </div>
+        <div class="scard">
           <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>Mouse Jiggler</div>
           <div class="snote" style="margin-bottom:8px">Keeps the target awake. Pauses while you're using it.</div>
           <div class="swrow" style="margin-bottom:9px">
@@ -3043,7 +3053,7 @@ function showTab(name){
   // now that Monitor/Devices/Security/Power are each their own rail button,
   // leaving it here would hit the network on every one of those clicks. It runs
   // from sysNavShow when the Update section is actually opened.
-  if(name==='system'){adaptSync();refreshStatus();refreshJigglerStatus();refreshHidAutoDcStatus();refreshOledSettings();identityRefresh();}
+  if(name==='system'){adaptSync();refreshStatus();refreshJigglerStatus();refreshHidAutoDcStatus();refreshOledSettings();identityRefresh();deviceRefresh();}
   if(name==='network'){wifiRefresh();tsRefresh();}
 }
 // Rail click. Same collapse-on-second-click behaviour as before, but a section
@@ -4020,6 +4030,7 @@ function applyStatus(d){
     _applyMouseModeUI(d.mouse_mode);
     toast('Mouse mode is now '+d.mouse_mode+' (changed on the device)');
   }
+  if(d.device_name!==undefined && d.device_name!==_deviceName) _applyDeviceName(d.device_name);
   if(d.local_ip) document.getElementById('ss-ip').textContent=d.local_ip;
   if(d.hid_kb!=null) document.getElementById('ss-hkb').textContent=d.hid_kb?'✓ /dev/hidg0':'✗';
   if(d.hid_ms!=null) document.getElementById('ss-hms').textContent=d.hid_ms?'✓ /dev/hidg1':'✗';
@@ -4377,6 +4388,49 @@ async function tsAuthKey(){const k=document.getElementById('ts-authkey').value.t
 async function tsDisconnect(){const r=await fetch('/api/tailscale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'down'})});const d=await r.json();toast(d.ok?'Disconnected':'Failed');if(d.ok)setTimeout(tsRefresh,2000);}
 async function tsReconnect(){toast('Connecting…',8000);const r=await fetch('/api/tailscale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'up'})});const d=await r.json();toast(d.ok?'Connected ✓':'Failed: '+(d.out||''));if(d.ok)setTimeout(tsRefresh,2000);}
 async function tsLogout(){if(!confirm('Log out from Tailscale? You will need to re-authenticate next time.'))return;const r=await fetch('/api/tailscale',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'logout'})});const d=await r.json();toast(d.ok?'Logged out':'Failed');setTimeout(tsRefresh,1500);}
+
+// ---- This device: the operator's own label for the unit ---------------------
+// Purely operator-facing. This is NOT the hostname (that is spoofed to look like
+// an ordinary desktop and is what the target could see) and it never touches the
+// USB/EDID/MAC identity. It only distinguishes one operator's units from another
+// in the title bar, the topbar and (later) a fleet list.
+let _deviceName = '';
+function _applyDeviceName(name){
+  _deviceName = name || '';
+  const base = 'MagicBridge';
+  document.title = _deviceName ? (_deviceName + ' - ' + base) : base;
+  const logo = document.getElementById('logo');
+  if(logo) logo.textContent = _deviceName ? (base + ' - ' + _deviceName) : base;
+}
+async function deviceRefresh(){
+  try{
+    const r = await fetch('/api/device');
+    const d = await r.json();
+    _applyDeviceName(d.name);
+    const inp = document.getElementById('dev-name');
+    // Do not stomp what the operator is currently typing.
+    if(inp && document.activeElement !== inp) inp.value = d.name || '';
+    const ver = document.getElementById('dev-version');
+    if(ver) ver.textContent = d.version ? ('v' + d.version) : '-';
+  }catch(e){}
+}
+async function saveDeviceName(){
+  const inp = document.getElementById('dev-name');
+  if(!inp) return;
+  const name = inp.value.trim();
+  try{
+    const r = await fetch('/api/device',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:name})});
+    const d = await r.json();
+    if(d.ok){
+      _applyDeviceName(d.name);
+      inp.value = d.name || '';
+      toast(d.name ? ('Named this device "' + d.name + '"') : 'Cleared the device name');
+    }else{
+      toast(d.error || 'Could not save the name');
+    }
+  }catch(e){ toast('Could not save the name'); }
+}
 
 // Identity (read-only)
 const _ORIG={prod:'USB Receiver',mfr:'Logitech',vid:'0x046d',pid:'0xc52b'};
@@ -5664,6 +5718,7 @@ try{ setVKStyle(localStorage.getItem('mb_vk_theme')||'blue'); }catch(e){}
 connect();
 refreshStatus();
 identityRefresh();
+deviceRefresh();
 tsRefresh();
 wifiRefresh();
 renderClips();

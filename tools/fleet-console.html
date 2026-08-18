@@ -1,0 +1,248 @@
+<!doctype html>
+<!--
+  MagicBridge Fleet Console  -  a LOCAL launcher for several MagicBridge units.
+
+  WHAT THIS IS, AND WHY IT IS SHAPED THIS WAY.
+  This page runs entirely in the operator's own browser. You add the units you
+  own (a friendly name plus the address you already reach each one at), and it
+  keeps that list so you can jump to any of them from one place. The list is
+  stored in this browser's localStorage and NOWHERE ELSE.
+
+  It does NOT do two things on purpose, both for the reason MagicBridge exists -
+  staying invisible on a machine you own:
+
+    1. No unit ever "checks in" to a central server. A device that phones home is
+       a beacon: a fixed list, somewhere on the internet, of "these are all KVM
+       devices" - the exact opposite of a stealth product. So this page holds the
+       list locally and the devices never announce themselves anywhere.
+
+    2. It does not pull each unit's live health into one combined view. Reading
+       another origin's status from the browser needs that device to send CORS
+       headers and accept a cross-site credentialed request, which widens the web
+       surface of a device whose whole job is to be unremarkable. Until you
+       decide that trade is worth it, this stays a launcher: it opens each unit
+       in its own tab, where the normal signed-in dashboard shows the real status.
+
+  It is a single self-contained file. Copy it anywhere and open it; there is no
+  server, no build step, and no external request.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MagicBridge Fleet Console</title>
+<style>
+  :root{
+    --bg:#040911; --surf:#070d18; --card:#0d1728; --card2:#111f34;
+    --line:#16263c; --accent:#22d3ee; --accent2:#0ea5c4; --green:#10b981;
+    --red:#f43f5e; --yellow:#f59e0b; --text:#f1fbff; --sub:#a9cfe0; --muted:#88a8bd;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    padding:24px;max-width:820px;margin:0 auto}
+  a{color:var(--accent)}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .mark{width:34px;height:34px;flex:none}
+  h1{font-size:19px;margin:0;font-weight:650;letter-spacing:.2px}
+  .lead{color:var(--sub);font-size:12.5px;margin:2px 0 20px}
+  .note{color:var(--muted);font-size:12px;background:var(--surf);
+    border:1px solid var(--line);border-radius:10px;padding:11px 13px;margin:16px 0}
+  .note b{color:var(--sub)}
+  .add{display:flex;gap:8px;flex-wrap:wrap;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;padding:12px}
+  .add input{flex:1;min-width:120px;background:var(--surf);border:1px solid var(--line);
+    color:var(--text);border-radius:8px;padding:8px 10px;font:inherit;font-size:13px}
+  .add input:focus{outline:none;border-color:var(--accent2)}
+  button{background:var(--card2);border:1px solid var(--line);color:var(--text);
+    border-radius:8px;padding:8px 13px;font:inherit;font-size:13px;cursor:pointer}
+  button:hover{border-color:var(--accent2)}
+  button.pri{background:linear-gradient(180deg,var(--accent),var(--accent2));
+    color:#04222b;border:none;font-weight:640}
+  button.ghost{background:transparent}
+  button.danger:hover{border-color:var(--red);color:var(--red)}
+  .list{margin-top:18px;display:flex;flex-direction:column;gap:10px}
+  .unit{display:flex;align-items:center;gap:12px;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;padding:13px 15px}
+  .unit .id{flex:1;min-width:0}
+  .unit .nm{font-weight:620;font-size:14.5px;white-space:nowrap;overflow:hidden;
+    text-overflow:ellipsis}
+  .unit .ad{color:var(--muted);font-size:12px;font-family:ui-monospace,monospace;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .unit .acts{display:flex;gap:7px;flex:none}
+  .empty{color:var(--muted);text-align:center;padding:34px 10px;
+    border:1px dashed var(--line);border-radius:12px;margin-top:18px}
+  footer{color:var(--muted);font-size:11.5px;margin-top:26px;
+    border-top:1px solid var(--line);padding-top:14px}
+  .drag{cursor:grab;color:var(--muted);font-size:16px;flex:none;user-select:none}
+</style>
+</head>
+<body>
+<header>
+  <svg class="mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="100" y2="100" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#8beefc"/><stop offset="100%" stop-color="#0b7a94"/></linearGradient></defs>
+    <path d="M15 40 C15 25 30 20 50 20 C70 20 85 25 85 40 C85 55 72 58 50 58 C28 58 15 55 15 40 Z" fill="none" stroke="url(#g)" stroke-width="5"/>
+    <circle cx="32" cy="40" r="3.4" fill="url(#g)"/><circle cx="68" cy="40" r="3.4" fill="url(#g)"/>
+    <path d="M22 66 Q50 78 78 66" stroke="url(#g)" stroke-width="4.2" fill="none" opacity=".5"/>
+  </svg>
+  <div>
+    <h1>Fleet Console</h1>
+  </div>
+</header>
+<div class="lead">One place to reach every MagicBridge you run. The list lives only in this browser.</div>
+
+<div class="add">
+  <input id="f-name" maxlength="40" placeholder="Name (e.g. Office tower)">
+  <input id="f-url"  placeholder="Address (e.g. https://100.x.x.x  or  https://host.local)">
+  <button class="pri" onclick="addUnit()">Add unit</button>
+</div>
+
+<div id="list" class="list"></div>
+<div id="empty" class="empty" style="display:none">
+  No units yet. Add one above with the name you gave it on its own dashboard
+  (Devices &rarr; Name This Device) and the address you use to reach it.
+</div>
+
+<div class="note">
+  <b>Why no live status here?</b> This page keeps each unit invisible: nothing
+  checks in to a server, and it does not read one unit's dashboard from another.
+  Click <b>Open</b> to jump into a unit, where its signed-in dashboard shows the
+  real status. Turning this into a single combined health view is possible but
+  changes what the devices expose, so it is a deliberate choice left to you, not
+  a default.
+</div>
+
+<footer>
+  Stored locally in <code>localStorage</code> on this browser only. Clearing site
+  data removes the list; the units themselves are untouched. Use
+  <b>Export</b> / <b>Import</b> to move the list to another browser.
+  <div style="margin-top:10px;display:flex;gap:8px">
+    <button class="ghost" onclick="exportUnits()">Export list</button>
+    <button class="ghost" onclick="document.getElementById('imp').click()">Import list</button>
+    <input id="imp" type="file" accept="application/json" style="display:none" onchange="importUnits(this)">
+  </div>
+</footer>
+
+<script>
+// The whole model: an ordered list of {name, url}. Persisted to localStorage,
+// never sent anywhere. localStorage is per-origin (or per file path on file://),
+// which is exactly the privacy we want - the list does not follow the page onto
+// the network.
+const KEY = 'mb_fleet_units';
+let units = load();
+
+function load(){
+  try{ const v = JSON.parse(localStorage.getItem(KEY) || '[]'); return Array.isArray(v) ? v : []; }
+  catch(e){ return []; }
+}
+function save(){ try{ localStorage.setItem(KEY, JSON.stringify(units)); }catch(e){} }
+
+// Normalise what the operator types into something safe to put in an href.
+// Only http/https are allowed: a javascript: or data: URL in an href would be a
+// self-inflicted script-injection, so anything that does not parse to http(s)
+// is rejected rather than trusted.
+function cleanUrl(raw){
+  let u = (raw || '').trim();
+  if(!u) return null;
+  if(!/^https?:\/\//i.test(u)) u = 'https://' + u;   // bare host -> https
+  try{
+    const parsed = new URL(u);
+    if(parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.href.replace(/\/$/, '');
+  }catch(e){ return null; }
+}
+function esc(s){ return String(s).replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function addUnit(){
+  const name = document.getElementById('f-name').value.trim().slice(0, 40);
+  const url  = cleanUrl(document.getElementById('f-url').value);
+  if(!url){ alert('Enter a valid address, e.g. https://100.100.200.96 or https://host.local'); return; }
+  units.push({ name: name || url.replace(/^https?:\/\//, ''), url });
+  save(); render();
+  document.getElementById('f-name').value = '';
+  document.getElementById('f-url').value = '';
+  document.getElementById('f-name').focus();
+}
+function removeUnit(i){
+  if(!confirm('Remove "' + (units[i] && units[i].name) + '" from this list? The device itself is not affected.')) return;
+  units.splice(i, 1); save(); render();
+}
+function renameUnit(i){
+  const cur = units[i].name || '';
+  const nm = prompt('Name for this unit:', cur);
+  if(nm === null) return;
+  units[i].name = nm.trim().slice(0, 40) || units[i].url.replace(/^https?:\/\//, '');
+  save(); render();
+}
+function move(i, d){
+  const j = i + d;
+  if(j < 0 || j >= units.length) return;
+  const t = units[i]; units[i] = units[j]; units[j] = t;
+  save(); render();
+}
+
+function render(){
+  const list = document.getElementById('list');
+  const empty = document.getElementById('empty');
+  list.innerHTML = '';
+  empty.style.display = units.length ? 'none' : 'block';
+  units.forEach((u, i) => {
+    const row = document.createElement('div');
+    row.className = 'unit';
+    row.innerHTML =
+      '<span class="drag" title="Reorder" onclick="move(' + i + ',-1)">&#8942;</span>' +
+      '<div class="id">' +
+        '<div class="nm">' + esc(u.name) + '</div>' +
+        '<div class="ad">' + esc(u.url) + '</div>' +
+      '</div>' +
+      '<div class="acts">' +
+        '<button class="pri" onclick="open_(' + i + ')">Open</button>' +
+        '<button class="ghost" onclick="renameUnit(' + i + ')">Rename</button>' +
+        '<button class="ghost danger" onclick="removeUnit(' + i + ')">Remove</button>' +
+      '</div>';
+    list.appendChild(row);
+  });
+}
+// Open in a new tab, severing the opener so the device's page cannot script this
+// console back through window.opener.
+function open_(i){
+  const w = window.open(units[i].url, '_blank', 'noopener,noreferrer');
+  if(w) w.opener = null;
+}
+
+function exportUnits(){
+  const blob = new Blob([JSON.stringify(units, null, 2)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'magicbridge-fleet.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function importUnits(input){
+  const file = input.files && input.files[0];
+  if(!file) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try{
+      const v = JSON.parse(r.result);
+      if(!Array.isArray(v)) throw new Error('not a list');
+      // Re-clean every imported row: the file may have come from anywhere, so
+      // its URLs go through the same http(s)-only filter as typed input.
+      const clean = v.map(x => ({ name: String(x.name || '').slice(0, 40),
+                                  url: cleanUrl(x.url) }))
+                     .filter(x => x.url);
+      if(!clean.length) throw new Error('no valid units');
+      if(units.length && !confirm('Replace the current ' + units.length + ' unit(s) with ' + clean.length + ' from the file?')) return;
+      units = clean; save(); render();
+    }catch(e){ alert('Could not import: ' + e.message); }
+    input.value = '';
+  };
+  r.readAsText(file);
+}
+
+render();
+</script>
+</body>
+</html>
