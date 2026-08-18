@@ -2092,6 +2092,110 @@ def _ua_short(ua: str) -> str:
     return (browser + (" on " + osname if osname else "")).strip()
 
 
+# ── Adapting quality to the link ─────────────────────────────────────────────
+# MEASURED FIRST, then designed around the measurement: changing min_qp restarts
+# ustreamer, and on this unit that costs 1.5-1.8s with no picture at all. So this
+# is deliberately NOT a fast rate controller. A reactive one would step on every
+# burst of loss and hand the operator a slideshow of freezes, which is worse than
+# the loss it was reacting to.
+#
+# The rules that fall out of that cost:
+#   * only sustained trouble counts (the client requires ~12s of bad samples),
+#   * at most one step per ADAPT_COOLDOWN, enforced HERE and not in the browser,
+#     so two viewers on different links cannot thrash a shared encoder,
+#   * the operator's own setting is a CEILING - adapting never makes the picture
+#     sharper than what they asked for, only coarser,
+#   * the adapted value is never written to config, so a reboot comes back at the
+#     operator's setting rather than silently keeping a degraded one.
+ADAPT_LADDER   = [20, 26, 30, 34, 40]   # sharp -> coarse, matches the UI options
+ADAPT_COOLDOWN = 45                     # seconds between steps (>= 25x the freeze)
+_adapt = {"ceiling": None, "at": 0.0, "reason": "", "dir": "", "steps": 0}
+
+
+def _adapt_ceiling() -> int:
+    """The sharpest the adapter is allowed to go: whatever the operator picked."""
+    if _adapt["ceiling"] is not None:
+        return _adapt["ceiling"]
+    try:
+        v = int((_load_cfg().get("video", {}) or {}).get("min_qp") or 30)
+    except Exception:
+        v = 30
+    _adapt["ceiling"] = v
+    return v
+
+
+def _adapt_note() -> dict:
+    """What the adapter last did, for the panel to show. Empty until it acts."""
+    cur = int(getattr(video, "min_qp", 30) or 30)
+    ceil_ = _adapt_ceiling()
+    return {
+        "min_qp": cur, "ceiling": ceil_, "adapted": cur != ceil_,
+        "reason": _adapt["reason"], "dir": _adapt["dir"],
+        "at": _adapt["at"], "steps": _adapt["steps"],
+        "cooldown": max(0, int(ADAPT_COOLDOWN - (time.time() - _adapt["at"]))),
+    }
+
+
+async def api_stream_adapt(request: web.Request) -> web.Response:
+    """POST /api/stream/adapt  {"dir":"down"|"up","reason":"..."}
+
+    GET returns the current adaptation state without changing anything.
+    """
+    if request.method == "GET":
+        return web.json_response({"ok": True, "adapt": _adapt_note()})
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "bad json"}, status=400)
+
+    direction = str(d.get("dir") or "")
+    if direction not in ("up", "down"):
+        return web.json_response({"ok": False, "error": "dir must be up or down"}, status=400)
+    # Only the H.264/WebRTC path has an encoder to retune. On MJPEG the browser
+    # already drops frames it cannot keep up with, and a restart there would buy
+    # nothing while still costing the freeze.
+    if str(getattr(video, "mode", "") or "") != "h264":
+        return web.json_response({"ok": False, "error": "not the h264 transport",
+                                  "adapt": _adapt_note()})
+
+    left = ADAPT_COOLDOWN - (time.time() - _adapt["at"])
+    if left > 0:
+        # Not an error: with two viewers both may ask at once, and the second one
+        # simply loses. It gets told how long to wait rather than a failure.
+        return web.json_response({"ok": True, "applied": False, "cooldown": int(left),
+                                  "adapt": _adapt_note()})
+
+    ceil_ = _adapt_ceiling()
+    cur = int(getattr(video, "min_qp", ceil_) or ceil_)
+    # Snap onto the ladder: cur may be a hand-set value from the API that is not
+    # one of the five rungs, and stepping from an off-ladder value must still land
+    # somewhere sane rather than jumping to the end.
+    idx = min(range(len(ADAPT_LADDER)), key=lambda i: abs(ADAPT_LADDER[i] - cur))
+    floor_i = len(ADAPT_LADDER) - 1
+    ceil_i = min(range(len(ADAPT_LADDER)), key=lambda i: abs(ADAPT_LADDER[i] - ceil_))
+    new_i = min(idx + 1, floor_i) if direction == "down" else max(idx - 1, ceil_i)
+    if new_i == idx:
+        edge = "already at the coarsest step" if direction == "down" else "already at your setting"
+        return web.json_response({"ok": True, "applied": False, "at_limit": True,
+                                  "error": edge, "adapt": _adapt_note()})
+
+    target = ADAPT_LADDER[new_i]
+    loop = asyncio.get_running_loop()
+    # video.start() and NOT api_stream_settings: this must not be written to
+    # config. The operator's setting is the thing that persists.
+    ok = await loop.run_in_executor(None, lambda: video.start(min_qp=target))
+    if not ok:
+        return web.json_response({"ok": False, "error": "could not restart the encoder",
+                                  "adapt": _adapt_note()}, status=500)
+    _adapt["at"] = time.time()
+    _adapt["reason"] = str(d.get("reason") or "")[:120]
+    _adapt["dir"] = direction
+    _adapt["steps"] += 1
+    log.info("Video adapted %s to min_qp=%d (ceiling %d): %s",
+             direction, target, ceil_, _adapt["reason"] or "no reason given")
+    return web.json_response({"ok": True, "applied": True, "adapt": _adapt_note()})
+
+
 async def api_sessions(request: web.Request) -> web.Response:
     """GET  /api/sessions  - who is connected right now.
     POST /api/sessions  {"action":"kick","sid":"..."} - disconnect one.
@@ -2170,6 +2274,17 @@ async def api_stream_settings(request: web.Request) -> web.Response:
     # compatibility but the Pi's H.264 encoder ignores it; min_qp is what
     # actually bounds the peak. See video.py's _start_ustreamer_h264.
     min_qp     = d.get("min_qp")
+
+    if min_qp is not None:
+        # A manual pick is a new intent: it becomes the ceiling the adapter may
+        # never go sharper than, and it wipes the "adapted because ..." note so
+        # the panel doesn't keep explaining a decision that no longer applies.
+        try:
+            _adapt["ceiling"] = int(min_qp)
+            _adapt["reason"] = ""
+            _adapt["dir"] = ""
+        except (TypeError, ValueError):
+            pass
 
     loop = asyncio.get_running_loop()
     ok = await loop.run_in_executor(None, lambda: video.start(
@@ -4273,6 +4388,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/power",     api_power)
     app.router.add_get("/api/identity",  api_identity)
     app.router.add_post("/api/identity", api_identity)
+    app.router.add_get("/api/stream/adapt",  api_stream_adapt)
+    app.router.add_post("/api/stream/adapt", api_stream_adapt)
     app.router.add_get("/api/sessions",  api_sessions)
     app.router.add_post("/api/sessions", api_sessions)
     app.router.add_get("/api/jiggler",  api_jiggler)

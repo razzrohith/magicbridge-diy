@@ -846,6 +846,13 @@ body:not(.fs) .fs-hud{display:none!important}
             </select>
           </div>
           <div class="snote" style="margin:5px 0 0">Lower quality means a slightly coarser picture and a much steadier connection. This is the control that actually changes bandwidth on this hardware.</div>
+          <div class="swrow" style="margin-top:8px">
+            <label class="sw"><input type="checkbox" id="adapt-sw" checked onchange="adaptToggle(this.checked)"><i></i></label>
+            <span class="swlab">Ease off on a bad connection
+              <span class="swsub" id="adapt-status">Watching the link</span>
+            </span>
+          </div>
+          <div class="snote" style="margin:5px 0 0">Drops the picture quality one step when the link stays bad for a while, and puts it back when it recovers. It never goes sharper than the setting above. Each change reloads the video for about two seconds, so it waits for a real problem instead of reacting to every blip.</div>
           <div class="srow" style="margin-top:6px"><span class="sk">Presets</span>
             <span style="display:flex;gap:4px">
               <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidthAuto('640x360',15,'low')" title="Slow or remote links">Low</button>
@@ -3036,7 +3043,7 @@ function showTab(name){
   // now that Monitor/Devices/Security/Power are each their own rail button,
   // leaving it here would hit the network on every one of those clicks. It runs
   // from sysNavShow when the Update section is actually opened.
-  if(name==='system'){refreshStatus();refreshJigglerStatus();refreshHidAutoDcStatus();refreshOledSettings();identityRefresh();}
+  if(name==='system'){adaptSync();refreshStatus();refreshJigglerStatus();refreshHidAutoDcStatus();refreshOledSettings();identityRefresh();}
   if(name==='network'){wifiRefresh();tsRefresh();}
 }
 // Rail click. Same collapse-on-second-click behaviour as before, but a section
@@ -3642,7 +3649,13 @@ function startWebRTC(){
                     pc0.getStats(null).then(function(stats){
                       if(gen !== _webrtcGen) return;   // promise resolved after teardown
                       stats.forEach(function(r){
+                        // Round trip comes from the transport, not the track.
+                        if(r.type==='candidate-pair' && r.nominated
+                           && r.currentRoundTripTime!=null){
+                          _adaptRtt = r.currentRoundTripTime * 1000;
+                        }
                         if(r.type==='inbound-rtp' && r.kind==='video'){
+                          try{ _adaptFeed(r); }catch(e){}
                           if(r.framesPerSecond!=null){
                             const el=document.getElementById('s-vfps');
                             if(el) el.textContent=Math.round(r.framesPerSecond)+' fps';
@@ -4653,6 +4666,120 @@ async function toggleLockdown(){
     }
   }catch(e){show('Error: '+e,false);}
 }
+
+// ---- Easing off on a bad connection ----------------------------------------
+// Deliberately slow. Changing the encoder quality restarts ustreamer, MEASURED
+// at 1.5-1.8s with no picture at all on this unit. A conventional fast rate
+// controller would step on every burst of loss and hand the operator a slideshow
+// of freezes, which is worse than the loss it was reacting to. So:
+//   * a step DOWN needs ADAPT_BAD_N consecutive bad samples (~12s of trouble),
+//   * a step UP needs ADAPT_GOOD_N clean ones (~40s), so it does not oscillate,
+//   * nothing at all for ADAPT_SETTLE after a (re)connect, because the first
+//     seconds of a stream always look bad while it fills,
+//   * the device enforces its own cooldown too, so two viewers on different
+//     links cannot take turns thrashing one shared encoder.
+// It reads the SAME getStats poll the stall watchdog already runs. A second
+// timer would double the stats cost for nothing.
+const ADAPT_LOSS_PCT = 2;      // per-sample packet loss that counts as trouble
+const ADAPT_RTT_MS   = 250;    // round trip that counts as trouble
+const ADAPT_BAD_N    = 6;      // consecutive bad samples before easing off
+const ADAPT_GOOD_N   = 20;     // consecutive good samples before going back
+const ADAPT_SETTLE   = 20000;  // ms of grace after the stream (re)starts
+let _adaptOn = true, _adaptBad = 0, _adaptGood = 0, _adaptBusy = false;
+let _adaptLastLost = -1, _adaptLastRecv = -1, _adaptRtt = -1, _adaptSince = 0;
+
+function adaptNote(t){
+  const el = document.getElementById('adapt-status');
+  if(el) el.textContent = t;
+}
+function adaptReset(){   // whenever the stream restarts, every counter is stale
+  _adaptBad = 0; _adaptGood = 0;
+  _adaptLastLost = -1; _adaptLastRecv = -1;
+  _adaptSince = Date.now();
+}
+async function adaptRefresh(){
+  try{
+    const r = await fetch('/api/stream/adapt');
+    const d = await r.json();
+    const a = d.adapt || {};
+    if(!_adaptOn) return;
+    adaptNote(a.adapted
+      ? ('Eased off' + (a.reason ? ' (' + a.reason + ')' : ''))
+      : 'Watching the link');
+  }catch(e){}
+}
+function adaptSync(){
+  const el = document.getElementById('adapt-sw');
+  if(el) el.checked = _adaptOn;
+  if(_adaptOn) adaptRefresh(); else adaptNote('Off');
+}
+function adaptToggle(on){
+  _adaptOn = !!on;
+  _adaptBad = 0; _adaptGood = 0;
+  try{ localStorage.setItem('mb_adapt', on ? '1' : '0'); }catch(e){}
+  adaptNote(on ? 'Watching the link' : 'Off');
+  if(on) adaptRefresh();
+}
+// Fed one inbound-rtp video report per poll from the existing stats loop.
+function _adaptFeed(r){
+  if(!_adaptOn || _adaptBusy) return;
+  if(_activeTransport !== 'h264') return;
+  if(!_adaptSince) _adaptSince = Date.now();
+  if(Date.now() - _adaptSince < ADAPT_SETTLE) return;
+
+  // Loss is only meaningful as a DELTA. packetsLost is cumulative for the whole
+  // session, so testing it directly would latch bad forever after one rough
+  // patch early on.
+  let lossPct = 0;
+  if(r.packetsLost != null && r.packetsReceived != null){
+    if(_adaptLastLost >= 0 && _adaptLastRecv >= 0){
+      const dl = r.packetsLost - _adaptLastLost;
+      const dr = r.packetsReceived - _adaptLastRecv;
+      // A quiet link genuinely sends almost nothing while the target screen is
+      // static, and 1 lost out of 3 packets is not a 33% problem. Require a
+      // meaningful sample before believing the ratio.
+      if(dr + dl >= 50 && dl >= 0) lossPct = (dl * 100) / (dr + dl);
+    }
+    _adaptLastLost = r.packetsLost; _adaptLastRecv = r.packetsReceived;
+  }
+  const bad = (lossPct > ADAPT_LOSS_PCT) || (_adaptRtt > ADAPT_RTT_MS);
+  if(bad){ _adaptBad++; _adaptGood = 0; } else { _adaptGood++; _adaptBad = 0; }
+
+  if(_adaptBad >= ADAPT_BAD_N){
+    const why = lossPct > ADAPT_LOSS_PCT
+      ? ('losing ' + lossPct.toFixed(1) + '% of packets')
+      : ('round trip ' + Math.round(_adaptRtt) + 'ms');
+    _adaptStep('down', why);
+  } else if(_adaptGood >= ADAPT_GOOD_N){
+    _adaptStep('up', 'link looks clean again');
+  }
+}
+async function _adaptStep(dir, why){
+  if(_adaptBusy) return;
+  _adaptBusy = true; _adaptBad = 0; _adaptGood = 0;
+  try{
+    const r = await fetch('/api/stream/adapt',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dir:dir, reason:why})});
+    const d = await r.json();
+    if(d.applied){
+      adaptReset();   // the encoder restarted; the settling window starts over
+      adaptNote(dir === 'down' ? ('Eased off: ' + why) : 'Going back up a step');
+      toast(dir === 'down'
+        ? ('Lowered the picture quality: ' + why)
+        : 'Connection recovered, raising the picture quality');
+    } else if(d.cooldown){
+      adaptNote('Waiting ' + d.cooldown + 's before the next change');
+    } else if(d.at_limit && dir === 'down'){
+      adaptNote('Link is bad and quality is already at its lowest');
+    }
+  }catch(e){
+    /* offline: the reconnect logic owns that, nothing useful to say here */
+  }finally{
+    _adaptBusy = false;
+  }
+}
+try{ if(localStorage.getItem('mb_adapt') === '0') _adaptOn = false; }catch(e){}
 
 // Mouse jiggler
 // ---------------------------------------------------------------------------
