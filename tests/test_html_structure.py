@@ -13,6 +13,21 @@ the right edge, because the browser's error recovery re-parented it.
 So syntax checking the JavaScript is NOT enough to catch a broken layout, and
 counting tags is not enough either - the counts can balance while the NESTING is
 wrong. This walks the tree and asserts the real parent/child relationships.
+
+RELATED, and NOT covered here: a temporal-dead-zone error once killed the whole
+inline script (an IIFE ran at load and called a function that dereferenced a
+`const` declared 2000 lines later, so everything below it never defined - no
+WebSocket, no status, no settings panel). That is a RUNTIME fault: it is valid
+syntax, so `node --check` passes, and it is not a markup problem, so this test
+passes too. A static heuristic for it was tried and produced false positives on
+correct code, so it was dropped rather than shipped. The only reliable check is
+to LOAD THE PAGE and confirm the script ran to completion, e.g. that the
+last-defined functions actually exist:
+
+    ['jigKind','jigSchedSave','refreshJigglerStatus','connect','ping']
+        .filter(n => typeof window[n] !== 'function')      // must be []
+
+Do that in a browser after any edit that moves or adds top-level init code.
 """
 import re
 import sys
