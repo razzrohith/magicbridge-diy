@@ -4693,15 +4693,26 @@ function _jigTzFill(d){
   });
 }
 
+let _jigOnAt = null, _jigOnTick = null;
 function _jigRenderOn(d){
   // The auto-start countdown reuses the armed box's pill so the operator sees a
   // pending start without a second countdown widget competing with it.
   const pill=document.getElementById('jig-off-pill');
   if(!pill) return;
-  if(!d.off_at && d.on_at){
-    pill.textContent='starts in '+_jigFmtLeft(d.on_remaining||0);
+  clearInterval(_jigOnTick); _jigOnTick=null;
+  _jigOnAt = (!d.off_at && d.on_at) ? d.on_at : null;
+  if(!_jigOnAt) return;
+  // Tick locally rather than showing a number frozen until the next poll, and
+  // re-sync from the DEVICE when it reaches zero - the device is the authority
+  // on whether the jiggler actually came on.
+  const paint=()=>{
+    const left=_jigOnAt-(Date.now()/1000);
+    pill.textContent='starts in '+_jigFmtLeft(Math.max(0,left));
     pill.style.color='var(--accent)';
-  }
+    if(left<=0){ clearInterval(_jigOnTick); _jigOnTick=null; setTimeout(refreshJigglerStatus,1200); }
+  };
+  paint();
+  _jigOnTick=setInterval(paint,1000);
 }
 
 function _jigRenderOff(d){
@@ -5523,6 +5534,42 @@ setInterval(()=>{
   _pollTick++;
   if(!captured) refreshStatus();
   else if(_pollTick % 3 === 0) refreshStatus();   // ~15s while capturing
+}, 5000);
+
+// ---- Live panel refresh -----------------------------------------------------
+// Every panel refresher used to run ONCE, from showTab(). That is fine for
+// values only the operator changes (identity, OLED, saved WiFi) but wrong for
+// anything the DEVICE changes by itself: a jiggler timer or daily window firing,
+// HID auto-disconnect unplugging the gadget after an idle period, Tailscale
+// coming up after boot. Those went stale on screen and only a page reload fixed
+// it, which is exactly the "it freezes until I refresh" report.
+//
+// Only the volatile ones are polled, and only while their panel is actually on
+// screen, so this costs nothing when the sidebar is closed or the tab is in the
+// background. Deliberately NOT polled:
+//   sysCheckVer  - it fetches from GitHub; polling it would hammer the network
+//                  and re-create the "Check failed" toast storm on a bad link.
+//   identity / OLED / WiFi / lockdown - operator-driven, they cannot change
+//                  underneath you.
+const _LIVE_PANEL = {
+  system:  { every: 1, fns: ['refreshJigglerStatus', 'refreshHidAutoDcStatus'] },
+  network: { every: 3, fns: ['tsRefresh'] },     // ~15s: tailnet state moves slowly
+};
+let _panelTick = 0;
+setInterval(()=>{
+  if(document.visibilityState!=='visible') return;
+  if(typeof _sideOpen !== 'undefined' && !_sideOpen) return;   // panel collapsed
+  // showTab() marks BOTH #tab-<name> and #panel-<name> active, and both carry
+  // the .tab class, so a bare '.tab.active' can return either one. Strip either
+  // prefix rather than assuming which matched first - assuming 'tab-' silently
+  // produced the key 'panel-system', matched nothing, and polled nothing.
+  const act=document.querySelector('.tab.active');
+  if(!act || !act.id) return;
+  const spec=_LIVE_PANEL[act.id.replace(/^(?:tab|panel)-/,'')];
+  if(!spec) return;
+  _panelTick++;
+  if(_panelTick % spec.every) return;
+  spec.fns.forEach(n=>{ try{ if(typeof window[n]==='function') window[n](); }catch(e){} });
 }, 5000);
 </script>
 </body>
