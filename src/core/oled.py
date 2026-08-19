@@ -195,6 +195,9 @@ def _draw_phase_anim(draw, frame, font, mk, lines):
 DEFAULT_CFG = {
     "enabled": True,               # master on/off - mirrors magicbridge.py's
                                     # OLED_DEFAULTS; False blanks the panel
+    "rotate": 2,                   # 0 = as wired, 2 = 180. Default 2 because the
+                                    # panel sits upside down in the case, so an
+                                    # unrotated screen reads bottom-to-top.
     "line1_mode": "app",          # app | hostname | custom
     "line1_custom": "",
     "line2_mode": "ip",           # ip | tailscale | custom | blank
@@ -215,6 +218,7 @@ DEFAULT_CFG = {
 
 _cfg = dict(DEFAULT_CFG)
 _cfg_mtime = None
+_rotate_dirty = False   # set when rotation changes; makes main() reopen the panel
 
 
 def _load_config():
@@ -237,9 +241,18 @@ def _maybe_reload_config():
     except Exception:
         mtime = None
     if mtime != _cfg_mtime:
+        prev_rot = _cfg_rotate()
         _cfg = _load_config()
         _cfg_mtime = mtime
         log.info("OLED config (re)loaded: %s", _cfg)
+        # Rotation is set on the CONTROLLER when the device is opened, so unlike
+        # the text options it cannot take effect on the next frame. Signal the
+        # main loop to reopen the panel; without this the owner would flip the
+        # setting, see nothing change, and reasonably conclude it is broken.
+        if _cfg_rotate() != prev_rot:
+            global _rotate_dirty
+            _rotate_dirty = True
+            log.info("OLED rotation changed -> reopening the panel")
 
 
 def _read_temp():
@@ -357,6 +370,21 @@ def _build_line3(cfg, temp, uptime, mb_ok, stream_ok):
     return " ".join(parts)
 
 
+def _cfg_rotate() -> int:
+    """Screen rotation from config: 0 = as wired, 2 = 180 degrees.
+
+    Lives in config so a differently-mounted panel can be corrected without
+    editing code, and so the panel can be fixed from the web UI on a unit the
+    owner cannot easily open. Applied by the SSD1306 controller itself, so the
+    rendering code never has to think about it.
+    """
+    try:
+        v = int((_cfg.get("oled", {}) or {}).get("rotate", 2))
+    except Exception:
+        v = 2
+    return 2 if v == 2 else 0
+
+
 def _init_display():
     # Imports live here (not at module level) deliberately: if luma.oled/
     # Pillow aren't installed yet (pip install luma.oled), that's treated
@@ -368,11 +396,17 @@ def _init_display():
     # so a failure here == "panel not at this address" and we fall through to
     # the next one. The last error propagates if none respond (handled by the
     # caller's retry-and-log-once path).
+    # 0 = as wired, 2 = upside down (180). luma takes quarter turns, but only 0
+    # and 2 are meaningful here: a 90 degree turn on a 128x32 panel would give a
+    # 32px-wide column that fits nothing. Anything else is coerced to 0 so a bad
+    # config value cannot leave the owner with an unreadable screen.
+    _rot = _cfg_rotate()
     last_err = None
     for addr in OLED_I2C_ADDRS:
         try:
             serial = i2c(port=OLED_I2C_PORT, address=addr)
-            device = ssd1306(serial, width=OLED_WIDTH, height=OLED_HEIGHT)
+            device = ssd1306(serial, width=OLED_WIDTH, height=OLED_HEIGHT,
+                             rotate=_rot)
             if addr != OLED_I2C_ADDRS[0]:
                 log.info("OLED found at alternate I2C address 0x%02X", addr)
             return device
@@ -395,6 +429,15 @@ def main():
 
     while True:
         _maybe_reload_config()
+
+        global _rotate_dirty
+        if _rotate_dirty and device is not None:
+            try:
+                device.cleanup()
+            except Exception:
+                pass
+            device = None          # reopened below with the new rotation
+            _rotate_dirty = False
 
         if device is None:
             now = time.time()

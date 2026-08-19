@@ -2701,6 +2701,10 @@ async def api_stream_settings(request: web.Request) -> web.Response:
 # same file directly and hot-reloads on mtime change - no restart needed
 # for changes made here to take effect on the physical panel.
 OLED_DEFAULTS = {
+    "rotate": 2,                  # 0 = as wired, 2 = upside down (180). The
+                                   # panel is mounted inverted in the case, so 2
+                                   # is what reads correctly; kept configurable
+                                   # for a differently-mounted build.
     "enabled": True,              # master on/off - False blanks the panel and
                                    # stops rendering, without touching the rest
                                    # of the saved layout config

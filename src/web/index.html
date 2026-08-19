@@ -1395,6 +1395,12 @@ body:not(.fs) .fs-hud{display:none!important}
             OLED panel enabled
           </label>
 
+          <label style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--sub);cursor:pointer;margin-bottom:10px">
+            <input type="checkbox" id="oled-rotate" checked onchange="oledFormChanged()" style="accent-color:var(--accent)">
+            Flip the screen 180&deg;
+          </label>
+          <div class="snote" style="margin:-4px 0 10px">Turn this off only if your screen reads upside down. The panel is mounted inverted in the case, so flipped is normal.</div>
+
           <div id="oled-body-wrap">
           <div style="display:flex;justify-content:center;margin-bottom:10px">
             <div style="background:#2b2b28;border-radius:10px;padding:10px 12px;display:inline-flex;flex-direction:column;align-items:center;gap:6px">
@@ -5346,6 +5352,9 @@ const OLED_DEFAULTS = {
 function _oledFormToConfig(){
   return {
     enabled: document.getElementById('oled-enabled').checked,
+    // 2 = 180 degrees, 0 = as wired. The panel applies this in its controller,
+    // so the service reopens the display when it changes (see oled.py).
+    rotate: document.getElementById('oled-rotate').checked ? 2 : 0,
     line1_mode: document.getElementById('oled-l1-mode').value,
     line1_custom: document.getElementById('oled-l1-custom').value,
     line2_mode: document.getElementById('oled-l2-mode').value,
@@ -5365,6 +5374,7 @@ function _oledFormToConfig(){
 function _oledConfigToForm(cfg){
   const c = Object.assign({}, OLED_DEFAULTS, cfg||{});
   document.getElementById('oled-enabled').checked = c.enabled !== false;
+  document.getElementById('oled-rotate').checked = (c.rotate === undefined ? 2 : c.rotate) === 2;
   document.getElementById('oled-l1-mode').value = c.line1_mode;
   document.getElementById('oled-l1-custom').value = c.line1_custom;
   document.getElementById('oled-l2-mode').value = c.line2_mode;
