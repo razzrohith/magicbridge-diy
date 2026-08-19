@@ -169,6 +169,14 @@ info "clearing Tailscale state"
 tailscale logout 2>/dev/null || true
 systemctl stop tailscaled 2>/dev/null || true
 rm -f /var/lib/tailscale/tailscaled.state 2>/dev/null || true
+# START IT AGAIN. The stop above exists only so the state file can be deleted
+# without tailscaled rewriting it. Leaving it stopped broke every Tailscale
+# feature in the panel for the whole first session: "Get Login Link" and the
+# auth-key Connect both answered "failed to connect to local tailscaled; it
+# doesn't appear to be running". The unit is `enabled`, so a REBOOT hid this -
+# which is exactly why it survived: the first boot, the one the buyer actually
+# sees, is the only boot where it is broken.
+systemctl start tailscaled 2>/dev/null || true
 
 # 7. DuckDNS cron + MAC-persist unit (baked from the builder).
 rm -f /etc/cron.d/mb-duckdns 2>/dev/null || true

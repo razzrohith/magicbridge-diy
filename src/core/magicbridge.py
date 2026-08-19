@@ -270,6 +270,61 @@ def _check_pw(pw: str, stored: str) -> bool:
 
 _defpw_cache = (None, False)   # (hash we judged, verdict)
 
+def _auth_generation() -> tuple:
+    """Identifies the current credential generation for the main panel.
+
+    Changes whenever the password is changed, first-run completes, or someone
+    logs out - i.e. exactly when previously-issued sessions are supposed to stop
+    being valid. Compared against the value stamped on each live WebSocket so a
+    revoked session cannot keep typing on the target (see ws_handler).
+    """
+    try:
+        a = _auth_cfg()
+        return (a.get("main_secret_key", ""), int(a.get("session_epoch", 0) or 0))
+    except Exception:
+        return ("", 0)
+
+
+async def _revoke_sweeper():
+    """Close WebSockets whose credentials have been revoked.
+
+    The in-loop check in ws_handler only runs when a message ARRIVES, so an idle
+    attacker socket would never be examined - and idle is exactly how a socket
+    waits for its moment. This sweeps every live socket on a timer instead, so
+    revocation does not depend on the attacker being chatty.
+
+    The socket is the channel that carries keydown/paste/mouse into the target's
+    HID gadget, so this is what makes "log out" and "change the password"
+    actually take control away rather than only blocking future HTTP requests.
+    """
+    while True:
+        try:
+            await asyncio.sleep(10)
+            gen = _auth_generation()
+            for ws, info in list(_ws_info.items()):
+                if info.get("authgen") is not None and info.get("authgen") != gen:
+                    log.warning("WS %s dropped by sweeper: credentials revoked",
+                                info.get("sid"))
+                    try:
+                        await ws.send_json({"type": "kicked", "reason": "revoked"})
+                    except Exception:
+                        pass
+                    try:
+                        await ws.close(code=4001, message=b"credentials revoked")
+                    except Exception:
+                        pass
+                    # Do not leave a key this session was holding latched on the
+                    # target after cutting it off.
+                    try:
+                        hidq.release_all()
+                    except Exception:
+                        pass
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            log.debug("revoke sweeper: %s", e)
+
+
 def _using_default_pw() -> bool:
     """True while this device still accepts the password published in the repo.
 
@@ -823,6 +878,8 @@ color:#ffb3c0;border-radius:9px;padding:10px 12px;font-size:13px;margin-bottom:1
 <p class="lead">This device is still using its published default password, so anyone
 on this network could take control of the connected computer. Set your own password
 to continue. Nothing else works until you do.</p>
+<p class="lead">This sets the password for <b>both</b> this page and the admin
+panel, so neither is left on a default.</p>
 __ERROR__
 <form method="POST" action="/first-run">
   <label for="p1">New password</label>
@@ -868,9 +925,22 @@ async def first_run_handler(request: web.Request) -> web.Response:
                 cfg = {}
             auth = cfg.setdefault("auth", {})
             if _HAS_BCRYPT:
-                auth["main_password_hash"] = _bcrypt.hashpw(p1.encode(), _bcrypt.gensalt()).decode()
+                _new_hash = _bcrypt.hashpw(p1.encode(), _bcrypt.gensalt()).decode()
             else:
-                auth["main_password_hash"] = "sha256:" + hashlib.sha256(p1.encode()).hexdigest()
+                _new_hash = "sha256:" + hashlib.sha256(p1.encode()).hexdigest()
+            auth["main_password_hash"] = _new_hash
+            # SET THE ADMIN PANEL TOO, and rotate its secret.
+            # The stealth panel has its own identical lock, but that lock only
+            # fires once somebody signs in to /stealth/ - and the owner's normal
+            # flow (open the device, get forced here, use the KVM) never goes
+            # there. So on a unit set up exactly as documented, "stealthbridge"
+            # stayed valid on the LAN forever, on the panel that can read saved
+            # WiFi PSKs in cleartext and rotate the USB/MAC/EDID identity the
+            # target sees. The first person to browse /stealth/ owned it.
+            # Both hashes live in the same auth dict, so one form closes both
+            # windows. The panels keep INDEPENDENT session secrets.
+            auth["password_hash"] = _new_hash
+            auth["secret_key"] = _sec.token_hex(32)
             # Rotate the session secret: any cookie minted while the default was
             # live (possibly by someone else who knew it) must stop validating.
             new_secret = _sec.token_hex(32)
@@ -1732,7 +1802,11 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     # sid is stored so a session can be ADDRESSED later (listed, kicked). It is
     # already generated for the session log; reusing it means the id an operator
     # sees in the panel is the same one that appears in the log.
-    _ws_info[ws] = {"ip": ip, "since": t0, "ua": ua, "sid": sid}
+    # Stamp the auth generation this socket was admitted under. If the secret or
+    # the epoch changes later (logout, password change, first-run), this socket
+    # was authorised by credentials that no longer exist and must be dropped.
+    _ws_info[ws] = {"ip": ip, "since": t0, "ua": ua, "sid": sid,
+                    "authgen": _auth_generation()}
     # Tell the client its own id, so the panel can label one row "this browser"
     # and refuse to offer a Kick button that would disconnect the operator.
     try:
@@ -1754,8 +1828,26 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     # closes. Each entry is a threading.Event the worker checks between chars.
     _bulk_cancels = []
 
+    _authchk = time.time()
     try:
         async for msg in ws:
+            # Re-check authorisation periodically, not per message: _auth_cfg()
+            # reads config.json, and a KVM sends a message per mouse move. Ten
+            # seconds bounds how long a revoked session can keep typing, while
+            # costing at most one small read every ten seconds per client.
+            if time.time() - _authchk >= 10:
+                _authchk = time.time()
+                if _ws_info.get(ws, {}).get("authgen") != _auth_generation():
+                    log.warning("WS %s dropped: credentials were revoked", sid)
+                    try:
+                        await ws.send_json({"type": "kicked", "reason": "revoked"})
+                    except Exception:
+                        pass
+                    # Whatever this session was holding down must not stay held
+                    # on the target after we cut it off.
+                    hidq.release_all()
+                    await ws.close(code=4001, message=b"credentials revoked")
+                    break
             if msg.type == WSMsgType.TEXT:
                 try:
                     d = json.loads(msg.data)
@@ -4711,6 +4803,9 @@ def build_app() -> web.Application:
 
 async def main():
     log.info("MagicBridge v%s starting…", VERSION)
+    # Enforces session revocation on sockets that are already open (see the
+    # function's docstring for why the per-message check is not enough).
+    asyncio.create_task(_revoke_sweeper())
 
     _ensure_auth_defaults()
     _ensure_usb_defaults()
