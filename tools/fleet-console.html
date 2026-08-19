@@ -236,8 +236,14 @@ function importUnits(input){
       if(!clean.length) throw new Error('no valid units');
       if(units.length && !confirm('Replace the current ' + units.length + ' unit(s) with ' + clean.length + ' from the file?')) return;
       units = clean; save(); render();
-    }catch(e){ alert('Could not import: ' + e.message); }
-    input.value = '';
+    }catch(e){ alert('Could not import: ' + e.message);
+    }finally{
+      // MUST be in a finally. Cancelling the confirm above returns straight out
+      // of this handler, and a file input only fires `change` when the selection
+      // actually changes - so leaving the old value set made re-picking the SAME
+      // file a silent no-op and the Import button looked broken.
+      input.value = '';
+    }
   };
   r.readAsText(file);
 }

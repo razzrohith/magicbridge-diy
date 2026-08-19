@@ -2113,7 +2113,53 @@ def _ua_short(ua: str) -> str:
 #     operator's setting rather than silently keeping a degraded one.
 ADAPT_LADDER   = [20, 26, 30, 34, 40]   # sharp -> coarse, matches the UI options
 ADAPT_COOLDOWN = 45                     # seconds between steps (>= 25x the freeze)
-_adapt = {"ceiling": None, "at": 0.0, "reason": "", "dir": "", "steps": 0}
+# After ANY client asks to ease off, refuse "recovered" requests for this long.
+# With two viewers on different links the clean one would otherwise undo the step
+# the struggling one just made, and the shared encoder would ping-pong forever.
+# The worst link in the room has to win, because there is only one encoder.
+ADAPT_HOLD_DOWN = 90
+_adapt = {"ceiling": None, "at": 0.0, "reason": "", "dir": "", "steps": 0,
+          "last_down_req": 0.0}
+# Serialises the whole check-restart-stamp sequence. Without it the cooldown was
+# a check-then-act across a ~1.7s await: two viewers could both pass the gate and
+# both restart the encoder, producing exactly the back-to-back freezes the
+# cooldown exists to prevent.
+_adapt_lock = asyncio.Lock()
+
+
+def _rung_coarser(cur: int):
+    """Next step DOWN in quality (higher qp). None if already at the coarsest."""
+    for v in ADAPT_LADDER:
+        if v > cur:
+            return v
+    return None
+
+
+def _rung_sharper(cur: int, sharpest: int):
+    """Next step UP in quality (lower qp), never sharper than `sharpest`."""
+    for v in reversed(ADAPT_LADDER):
+        if v < cur and v >= sharpest:
+            return v
+    return None
+
+
+def _ceiling_rung(ceil_: int) -> int:
+    """The sharpest rung the adapter may use for a given operator setting.
+
+    The FIRST rung at or coarser than the setting, deliberately not the nearest
+    one. Nearest-rung rounding let an operator who asked for min_qp 31 be pushed
+    to 30 by a recovery step - sharper than they asked for, i.e. more bandwidth
+    than they budgeted. Rounding toward "coarser" can only ever under-spend.
+    """
+    for v in ADAPT_LADDER:
+        if v >= ceil_:
+            return v
+    # Asked for something coarser than the whole ladder (min_qp > 40, only
+    # reachable via the raw API). Return the request itself, not the last rung:
+    # returning 40 would let a recovery step land SHARPER than they asked for.
+    # With this, both rung helpers return None and the adapter simply never moves,
+    # which is right - they already asked for maximum compression.
+    return ceil_
 
 
 def _adapt_ceiling() -> int:
@@ -2162,42 +2208,67 @@ async def api_stream_adapt(request: web.Request) -> web.Response:
         return web.json_response({"ok": False, "error": "not the h264 transport",
                                   "adapt": _adapt_note()})
 
-    left = ADAPT_COOLDOWN - (time.time() - _adapt["at"])
-    if left > 0:
-        # Not an error: with two viewers both may ask at once, and the second one
-        # simply loses. It gets told how long to wait rather than a failure.
-        return web.json_response({"ok": True, "applied": False, "cooldown": int(left),
-                                  "adapt": _adapt_note()})
+    # Record the REQUEST (not just applied steps) so a struggling viewer holds off
+    # a clean viewer's recovery even when its own step was refused by the cooldown.
+    if direction == "down":
+        _adapt["last_down_req"] = time.time()
 
-    ceil_ = _adapt_ceiling()
-    cur = int(getattr(video, "min_qp", ceil_) or ceil_)
-    # Snap onto the ladder: cur may be a hand-set value from the API that is not
-    # one of the five rungs, and stepping from an off-ladder value must still land
-    # somewhere sane rather than jumping to the end.
-    idx = min(range(len(ADAPT_LADDER)), key=lambda i: abs(ADAPT_LADDER[i] - cur))
-    floor_i = len(ADAPT_LADDER) - 1
-    ceil_i = min(range(len(ADAPT_LADDER)), key=lambda i: abs(ADAPT_LADDER[i] - ceil_))
-    new_i = min(idx + 1, floor_i) if direction == "down" else max(idx - 1, ceil_i)
-    if new_i == idx:
-        edge = "already at the coarsest step" if direction == "down" else "already at your setting"
-        return web.json_response({"ok": True, "applied": False, "at_limit": True,
-                                  "error": edge, "adapt": _adapt_note()})
+    # One decision at a time. The gate, the 1.7s restart and the timestamp must be
+    # atomic with respect to other requests, or the gate means nothing.
+    async with _adapt_lock:
+        now = time.time()
+        left = ADAPT_COOLDOWN - (now - _adapt["at"])
+        if left > 0:
+            # Not an error: with two viewers both may ask at once, and the second
+            # one simply loses. It is told how long to wait rather than failing.
+            return web.json_response({"ok": True, "applied": False, "cooldown": int(left),
+                                      "adapt": _adapt_note()})
 
-    target = ADAPT_LADDER[new_i]
-    loop = asyncio.get_running_loop()
-    # video.start() and NOT api_stream_settings: this must not be written to
-    # config. The operator's setting is the thing that persists.
-    ok = await loop.run_in_executor(None, lambda: video.start(min_qp=target))
-    if not ok:
-        return web.json_response({"ok": False, "error": "could not restart the encoder",
-                                  "adapt": _adapt_note()}, status=500)
-    _adapt["at"] = time.time()
-    _adapt["reason"] = str(d.get("reason") or "")[:120]
-    _adapt["dir"] = direction
-    _adapt["steps"] += 1
-    log.info("Video adapted %s to min_qp=%d (ceiling %d): %s",
-             direction, target, ceil_, _adapt["reason"] or "no reason given")
-    return web.json_response({"ok": True, "applied": True, "adapt": _adapt_note()})
+        if direction == "up":
+            hold = ADAPT_HOLD_DOWN - (now - _adapt["last_down_req"])
+            if hold > 0:
+                # Someone still thinks the link is bad. One encoder, worst link wins.
+                return web.json_response({"ok": True, "applied": False, "cooldown": int(hold),
+                                          "held_by_other": True, "adapt": _adapt_note()})
+
+        ceil_ = _adapt_ceiling()
+        cur = int(getattr(video, "min_qp", ceil_) or ceil_)
+        sharpest = _ceiling_rung(ceil_)
+        target = _rung_coarser(cur) if direction == "down" else _rung_sharper(cur, sharpest)
+        if target is None or target == cur:
+            edge = ("already at the coarsest step" if direction == "down"
+                    else "already at your setting")
+            return web.json_response({"ok": True, "applied": False, "at_limit": True,
+                                      "error": edge, "adapt": _adapt_note()})
+
+        # CLAIM the cooldown slot before the slow part, not after. video.start()
+        # blocks ~1.7s; stamping afterwards left the gate wide open for that whole
+        # window. Rolled back below if the restart fails, so a failure does not
+        # silently eat the next 45 seconds of legitimate adaptation.
+        prev_at = _adapt["at"]
+        _adapt["at"] = now
+
+        loop = asyncio.get_running_loop()
+        try:
+            # video.start() and NOT api_stream_settings: this must not be written
+            # to config. The operator's setting is the thing that persists.
+            ok = await loop.run_in_executor(None, lambda: video.start(min_qp=target))
+        except Exception as e:
+            _adapt["at"] = prev_at
+            log.warning("adapt %s failed: %s", direction, e)
+            return web.json_response({"ok": False, "error": str(e),
+                                      "adapt": _adapt_note()}, status=500)
+        if not ok:
+            _adapt["at"] = prev_at
+            return web.json_response({"ok": False, "error": "could not restart the encoder",
+                                      "adapt": _adapt_note()}, status=500)
+
+        _adapt["reason"] = str(d.get("reason") or "")[:120]
+        _adapt["dir"] = direction
+        _adapt["steps"] += 1
+        log.info("Video adapted %s to min_qp=%d (ceiling %d): %s",
+                 direction, target, ceil_, _adapt["reason"] or "no reason given")
+        return web.json_response({"ok": True, "applied": True, "adapt": _adapt_note()})
 
 
 async def api_sessions(request: web.Request) -> web.Response:
@@ -2232,6 +2303,13 @@ async def api_sessions(request: web.Request) -> web.Response:
     sid = str(d.get("sid") or "")
     if not sid:
         return web.json_response({"ok": False, "error": "sid required"}, status=400)
+    # Defence in depth against self-lockout. The panel already hides the button on
+    # our own row, but that guard is render-time and fails open if the client has
+    # not learned its own id yet, so refuse the request here too. self_sid is
+    # client-supplied and therefore not a security control - it is a second latch
+    # on "the operator must never be able to disconnect themselves".
+    if sid and str(d.get("self_sid") or "") == sid:
+        return web.json_response({"ok": False, "error": "that is this browser"}, status=400)
 
     target = None
     for ws, info in list(_ws_info.items()):
@@ -2251,7 +2329,17 @@ async def api_sessions(request: web.Request) -> web.Response:
         except Exception:
             pass
         await target.close(code=4000, message=b"disconnected by operator")
-        log.info("WS session %s kicked by operator", sid)
+        # Clear any key or button the kicked session was holding. Nothing else
+        # will: ws_handler's finally only releases when the LAST client goes, and
+        # a kick happens precisely while the operator is still connected, so a key
+        # the kicked browser had down would stay latched in the HID gadget and
+        # AUTO-REPEAT on the target. That is both unusable and a loud tell on a
+        # machine that is supposed to look untouched. The kicked client cannot fix
+        # it either - its own keyups are written to an already-closed socket.
+        # Safe for the remaining operator: they just clicked a button in the panel,
+        # so they are not holding a key on the target at this instant.
+        hidq.release_all()
+        log.info("WS session %s kicked by operator (held input released)", sid)
     except Exception as e:
         return web.json_response({"ok": False, "error": str(e)}, status=500)
     return web.json_response({"ok": True, "kicked": sid})

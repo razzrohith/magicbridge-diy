@@ -1793,7 +1793,10 @@ function connect(){
   ws.onclose=(ev)=>{
     if(_kicked){
       dot('err','Disconnected');
-      if(typeof captured!=='undefined' && captured){ _intentional=true; _setCaptured(false); }
+      // releaseAll(), not just _setCaptured(false): it is the only path that
+      // exits pointer lock and fullscreen. Without it the kicked browser stayed
+      // pointer-locked with the mouse captured over a dead session.
+      if(typeof captured!=='undefined' && captured){ _intentional=true; releaseAll(); _setCaptured(false); }
       toast('This session was disconnected from the panel. Reload the page to reconnect.');
       return;
     }
@@ -1875,7 +1878,16 @@ function onMsg(d){
   if(d.type==='hello'){ _mySid=d.sid||null; return; }
   // Dropped on purpose by whoever holds the panel. Do NOT reconnect: coming
   // back two seconds later would make Disconnect meaningless.
-  if(d.type==='kicked'){ _kicked=true; return; }
+  if(d.type==='kicked'){
+    _kicked=true;
+    // Release NOW, while the socket is still open. Waiting for onclose is too
+    // late: send() drops everything once readyState leaves 1, so any key this
+    // browser was holding would stay latched in the target's HID gadget and
+    // auto-repeat. The device also releases on its side; this is the half that
+    // clears OUR tracked state so a later reload does not think keys are down.
+    try{ releaseAll(); }catch(e){}
+    return;
+  }
   if(d.type==='pong'){
     const _sent = (typeof d.t === 'number' && d.t > 0) ? d.t : _pt;
     const ms=Date.now()-_sent;
@@ -3975,7 +3987,7 @@ async function sessKick(sid){
   if(!confirm('Disconnect this session?\n\nIt loses keyboard and mouse straight away and will not reconnect on its own. Whoever is on it can still reload the page and come back, so change the password if you want them out for good.')) return;
   try{
     const r=await fetch('/api/sessions',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'kick', sid:sid})});
+      body:JSON.stringify({action:'kick', sid:sid, self_sid:_mySid})});
     const d=await r.json();
     toast(d.ok?'Session disconnected':(d.error||'Could not disconnect'));
     refreshStatus();
@@ -3999,9 +4011,16 @@ function applyStatus(d){
     if(list){
       list.innerHTML = d.viewers.length
         ? d.viewers.map(v=>{
-            const me = v.sid && v.sid===_mySid;
+            // Fails CLOSED. _mySid arrives on the WebSocket 'hello' frame, but
+            // this list is also rendered by the HTTP status poll, which does not
+            // wait for it. Comparing against a null _mySid made every row - our
+            // own included - look like someone else's, handing the operator a
+            // button that would disconnect themselves. Until the id is known,
+            // nobody gets a button.
+            const me = !_mySid || (v.sid && v.sid===_mySid);
             return '<div class="vw"><span class="vw-ip">'+_escHtml(v.ip)+'</span>'
-              +'<span class="vw-dev">'+_escHtml(uaShort(v.ua))+(me?' (this browser)':'')+'</span>'
+              +'<span class="vw-dev">'+_escHtml(uaShort(v.ua))
+                +((_mySid && v.sid===_mySid)?' (this browser)':'')+'</span>'
               +'<span class="vw-dur">'+durShort(v.secs)+'</span>'
               +(me||!v.sid ? ''
                            : '<button class="vw-kick" title="Disconnect this session"'
@@ -4210,6 +4229,18 @@ async function refreshStatus(){
       }
       if(r && d.stream.resolution && Array.prototype.some.call(r.options,o=>o.value===d.stream.resolution))
         r.value=d.stream.resolution;
+      // Quality belongs here for exactly the reason in the comment above. Left
+      // out, the select showed its markup default (30) after every reload, so an
+      // Apply or preset click POSTed 30 over whatever the operator had actually
+      // saved - and because a manual min_qp also becomes the adapter's ceiling,
+      // it silently reset that too. Seed from the CEILING when the adapter has
+      // eased off, so the box shows the operator's own setting rather than the
+      // temporary degraded one.
+      const q=document.getElementById('sel-quality');
+      if(q && d.stream.min_qp){
+        const want=String(_adaptCeiling || d.stream.min_qp);
+        if(Array.prototype.some.call(q.options,o=>o.value===want)) q.value=want;
+      }
     }
     maybeShowPwWarn(!!d.default_pw);
   }catch(e){}
@@ -4741,6 +4772,16 @@ const ADAPT_GOOD_N   = 20;     // consecutive good samples before going back
 const ADAPT_SETTLE   = 20000;  // ms of grace after the stream (re)starts
 let _adaptOn = true, _adaptBad = 0, _adaptGood = 0, _adaptBusy = false;
 let _adaptLastLost = -1, _adaptLastRecv = -1, _adaptRtt = -1, _adaptSince = 0;
+// Hysteresis. "Bad" and "good" are the same predicate, so on a marginal link the
+// conditions that forced a step down come straight back the moment a step up
+// restores the bitrate - and the pair would cycle forever, burning ~1.7s of
+// frozen picture every time. Each time a recovery is undone soon after it was
+// made, demand a longer clean stretch before trying again (doubling, capped).
+// A genuinely healed link clears the penalty by staying clean.
+const ADAPT_REGRET_MS  = 240000;  // an "up" undone within 4 min counts as a mistake
+const ADAPT_GOOD_MAX   = 16;      // ceiling on the multiplier (~10 min of clean)
+let _adaptGoodNeed = ADAPT_GOOD_N, _adaptLastUpAt = 0, _adaptCeiling = 0;
+let _adaptGen = -1;   // the _webrtcGen the counters belong to
 
 function adaptNote(t){
   const el = document.getElementById('adapt-status');
@@ -4756,6 +4797,7 @@ async function adaptRefresh(){
     const r = await fetch('/api/stream/adapt');
     const d = await r.json();
     const a = d.adapt || {};
+    if(a.ceiling) _adaptCeiling = a.ceiling;
     if(!_adaptOn) return;
     adaptNote(a.adapted
       ? ('Eased off' + (a.reason ? ' (' + a.reason + ')' : ''))
@@ -4778,6 +4820,10 @@ function adaptToggle(on){
 function _adaptFeed(r){
   if(!_adaptOn || _adaptBusy) return;
   if(_activeTransport !== 'h264') return;
+  // Re-armed by adaptReset() on every stream (re)start. _webrtcGen changes on
+  // each new peer connection, so tracking it here catches reconnects and
+  // transport switches that do not go through _adaptStep.
+  if(_adaptGen !== _webrtcGen){ _adaptGen = _webrtcGen; adaptReset(); return; }
   if(!_adaptSince) _adaptSince = Date.now();
   if(Date.now() - _adaptSince < ADAPT_SETTLE) return;
 
@@ -4798,13 +4844,18 @@ function _adaptFeed(r){
   }
   const bad = (lossPct > ADAPT_LOSS_PCT) || (_adaptRtt > ADAPT_RTT_MS);
   if(bad){ _adaptBad++; _adaptGood = 0; } else { _adaptGood++; _adaptBad = 0; }
+  // Earn the penalty back: twice the required clean stretch with no trouble at
+  // all means the link really did heal, so stop being pessimistic about it.
+  if(!bad && _adaptGoodNeed > ADAPT_GOOD_N && _adaptGood >= _adaptGoodNeed * 2){
+    _adaptGoodNeed = ADAPT_GOOD_N;
+  }
 
   if(_adaptBad >= ADAPT_BAD_N){
     const why = lossPct > ADAPT_LOSS_PCT
       ? ('losing ' + lossPct.toFixed(1) + '% of packets')
       : ('round trip ' + Math.round(_adaptRtt) + 'ms');
     _adaptStep('down', why);
-  } else if(_adaptGood >= ADAPT_GOOD_N){
+  } else if(_adaptGood >= _adaptGoodNeed){
     _adaptStep('up', 'link looks clean again');
   }
 }
@@ -4817,6 +4868,15 @@ async function _adaptStep(dir, why){
       body:JSON.stringify({dir:dir, reason:why})});
     const d = await r.json();
     if(d.applied){
+      if(dir === 'up'){
+        _adaptLastUpAt = Date.now();
+      }else if(_adaptLastUpAt && (Date.now() - _adaptLastUpAt) < ADAPT_REGRET_MS){
+        // We raised quality and the link could not hold it. Wait longer next time
+        // instead of trying again on the same schedule and freezing the picture
+        // for another 1.7s to learn the same thing.
+        _adaptGoodNeed = Math.min(_adaptGoodNeed * 2, ADAPT_GOOD_N * ADAPT_GOOD_MAX);
+      }
+      if(d.adapt && d.adapt.ceiling) _adaptCeiling = d.adapt.ceiling;
       adaptReset();   // the encoder restarted; the settling window starts over
       adaptNote(dir === 'down' ? ('Eased off: ' + why) : 'Going back up a step');
       toast(dir === 'down'
@@ -5719,6 +5779,7 @@ connect();
 refreshStatus();
 identityRefresh();
 deviceRefresh();
+adaptSync();   // the switch lives in the DEFAULT tab, so sync it at load
 tsRefresh();
 wifiRefresh();
 renderClips();

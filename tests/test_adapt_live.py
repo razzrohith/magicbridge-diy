@@ -49,10 +49,19 @@ d2 = api("/api/stream/adapt", {"dir": "down", "reason": "again"})
 print("4. down again immediately: applied=%s cooldown=%ss" % (d2.get("applied"), d2.get("cooldown")))
 assert d2.get("applied") is False and d2.get("cooldown", 0) > 0
 
-# cannot go sharper than the ceiling: an UP from 34 should reach 30 and stop
-# (bypass cooldown by reading state; we must actually wait it out to test up)
-print("5. waiting out the cooldown to test UP + ceiling clamp ...")
+# An "up" is deliberately HELD OFF for ADAPT_HOLD_DOWN (90s) after anyone asks
+# to ease off, even once the 45s step cooldown has passed. With two viewers on
+# different links, the clean one must not undo the step the struggling one just
+# made - there is only one encoder, so the worst link has to win.
+print("5. waiting out the step cooldown; UP must still be held off ...")
 time.sleep(d2["cooldown"] + 2)
+held = api("/api/stream/adapt", {"dir": "up", "reason": "recovered"})
+print("   up during the hold: applied=%s held_by_other=%s cooldown=%ss"
+      % (held.get("applied"), held.get("held_by_other"), held.get("cooldown")))
+assert held.get("applied") is False and held.get("held_by_other"),     "a clean viewer must not undo a struggling viewer's step"
+
+print("5b. waiting out the down-hold, then UP must work and clamp at the ceiling ...")
+time.sleep(held["cooldown"] + 2)
 u = api("/api/stream/adapt", {"dir": "up", "reason": "recovered"})
 print("   up:", u.get("applied"), "min_qp ->", u["adapt"]["min_qp"])
 assert u["applied"] and u["adapt"]["min_qp"] == 30, "should return to ceiling 30"
