@@ -270,19 +270,30 @@ def _check_pw(pw: str, stored: str) -> bool:
 
 _defpw_cache = (None, False)   # (hash we judged, verdict)
 
-def _auth_generation() -> tuple:
+def _auth_generation():
     """Identifies the current credential generation for the main panel.
 
     Changes whenever the password is changed, first-run completes, or someone
     logs out - i.e. exactly when previously-issued sessions are supposed to stop
     being valid. Compared against the value stamped on each live WebSocket so a
     revoked session cannot keep typing on the target (see ws_handler).
+
+    Returns None when the answer is UNKNOWN, which callers must treat as "do not
+    touch anything". It used to return ("", 0) on any read failure - a
+    well-formed tuple matching no live socket, so a single unreadable moment
+    disconnected every operator at once. And that moment is routine: the stealth
+    panel writes this same file with a truncate-then-write from nineteen call
+    sites, so saving any admin setting leaves config.json briefly empty. A
+    failure to READ credentials is not evidence that they CHANGED.
     """
     try:
         a = _auth_cfg()
-        return (a.get("main_secret_key", ""), int(a.get("session_epoch", 0) or 0))
+        k = a.get("main_secret_key", "")
+        if not k:
+            return None
+        return (k, int(a.get("session_epoch", 0) or 0))
     except Exception:
-        return ("", 0)
+        return None
 
 
 async def _revoke_sweeper():
@@ -301,6 +312,8 @@ async def _revoke_sweeper():
         try:
             await asyncio.sleep(10)
             gen = _auth_generation()
+            if gen is None:
+                continue          # unknown != revoked; never disconnect on a bad read
             for ws, info in list(_ws_info.items()):
                 if info.get("authgen") is not None and info.get("authgen") != gen:
                     log.warning("WS %s dropped by sweeper: credentials revoked",
@@ -1213,12 +1226,31 @@ async def api_change_password(request: web.Request) -> web.Response:
     import secrets as _secrets
     new_secret = _secrets.token_hex(32)
     auth["main_secret_key"] = new_secret
+    # Re-stamp the caller's OWN socket below, after the write. Without it the
+    # owner doing the single most encouraged security action - changing the
+    # shipped default password - had their own live KVM session cut within 10s
+    # by the revocation sweeper, with a toast blaming a Disconnect nobody
+    # pressed, and no reconnect. Re-stamping only the sid the caller names is
+    # safe: reaching this endpoint already required their CURRENT password.
+    _self_sid = str(d.get("sid") or "")
 
     try:
         Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
         _write_config(cfg)
     except Exception as e:
         return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
+
+    # Keep the caller's own live socket alive across the rotation. Everything
+    # else still gets swept, which is the point; this only spares the session
+    # that just proved it knows the current password.
+    if _self_sid:
+        _gen = _auth_generation()
+        if _gen is not None:
+            for _w, _i in list(_ws_info.items()):
+                if _i.get("sid") == _self_sid:
+                    _i["authgen"] = _gen
+                    log.info("kept the caller's own session %s across the change", _self_sid)
+                    break
 
     log.info("Main-page password changed, other sessions invalidated")
     resp = web.json_response({"ok": True})
@@ -1837,7 +1869,8 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
             # costing at most one small read every ten seconds per client.
             if time.time() - _authchk >= 10:
                 _authchk = time.time()
-                if _ws_info.get(ws, {}).get("authgen") != _auth_generation():
+                _gen_now = _auth_generation()
+                if _gen_now is not None and _ws_info.get(ws, {}).get("authgen") != _gen_now:
                     log.warning("WS %s dropped: credentials were revoked", sid)
                     try:
                         await ws.send_json({"type": "kicked", "reason": "revoked"})
@@ -2335,59 +2368,65 @@ _adapt = {"ceiling": None, "at": 0.0, "reason": "", "dir": "", "steps": 0,
 _adapt_lock = asyncio.Lock()
 
 
-def _rung_coarser(cur: int):
-    """Next step DOWN in quality (higher qp). None if already at the coarsest."""
-    for v in ADAPT_LADDER:
-        if v > cur:
-            return v
-    return None
+# MJPEG's lever is --quality, where HIGHER is better - the inverse of min_qp.
+# Both ladders are written sharpest-first, so all the stepping below is index
+# arithmetic and works for either transport without caring which way the numbers
+# run. Values are <= 30 because video.py clamps quality to 30 at high
+# resolution, so a coarser step must go below that to change anything at all.
+MJPEG_LADDER = [30, 26, 22, 18, 14]     # sharp -> coarse
 
 
-def _rung_sharper(cur: int, sharpest: int):
-    """Next step UP in quality (lower qp), never sharper than `sharpest`."""
-    for v in reversed(ADAPT_LADDER):
-        if v < cur and v >= sharpest:
-            return v
-    return None
+def _adapt_ctx():
+    """(ladder, field, current_value, coarser_is_higher) for the LIVE transport.
 
-
-def _ceiling_rung(ceil_: int) -> int:
-    """The sharpest rung the adapter may use for a given operator setting.
-
-    The FIRST rung at or coarser than the setting, deliberately not the nearest
-    one. Nearest-rung rounding let an operator who asked for min_qp 31 be pushed
-    to 30 by a recovery step - sharper than they asked for, i.e. more bandwidth
-    than they budgeted. Rounding toward "coarser" can only ever under-spend.
+    Picked from what video is actually running, not from what was configured,
+    because "auto" resolves to one or the other at start time.
     """
-    for v in ADAPT_LADDER:
-        if v >= ceil_:
-            return v
-    # Asked for something coarser than the whole ladder (min_qp > 40, only
-    # reachable via the raw API). Return the request itself, not the last rung:
-    # returning 40 would let a recovery step land SHARPER than they asked for.
-    # With this, both rung helpers return None and the adapter simply never moves,
-    # which is right - they already asked for maximum compression.
-    return ceil_
+    if str(getattr(video, "mode", "") or "") == "mjpeg":
+        return MJPEG_LADDER, "quality", int(getattr(video, "quality", 22) or 22), False
+    return ADAPT_LADDER, "min_qp", int(getattr(video, "min_qp", 30) or 30), True
+
+
+def _rung_idx(ladder, val: int) -> int:
+    """Nearest rung to an arbitrary value (the API accepts off-ladder numbers)."""
+    return min(range(len(ladder)), key=lambda i: abs(ladder[i] - val))
+
+
+def _ceiling_idx(ladder, ceil_: int, coarser_is_higher: bool) -> int:
+    """First rung at or COARSER than the operator's setting.
+
+    Rounding toward coarser can only ever under-spend bandwidth; rounding to the
+    nearest could hand back a step SHARPER than the operator asked for.
+    """
+    for i, v in enumerate(ladder):
+        if (v >= ceil_) if coarser_is_higher else (v <= ceil_):
+            return i
+    return len(ladder) - 1
 
 
 def _adapt_ceiling() -> int:
-    """The sharpest the adapter is allowed to go: whatever the operator picked."""
-    if _adapt["ceiling"] is not None:
+    """The sharpest the adapter may go: whatever the operator picked, for the
+    transport that is actually running (min_qp on H.264, quality on MJPEG)."""
+    _, field, cur, _ = _adapt_ctx()
+    if _adapt.get("ceiling") is not None and _adapt.get("ceiling_field") == field:
         return _adapt["ceiling"]
     try:
-        v = int((_load_cfg().get("video", {}) or {}).get("min_qp") or 30)
+        v = int((_load_cfg().get("video", {}) or {}).get(field) or cur)
     except Exception:
-        v = 30
+        v = cur
     _adapt["ceiling"] = v
+    _adapt["ceiling_field"] = field
     return v
 
 
 def _adapt_note() -> dict:
     """What the adapter last did, for the panel to show. Empty until it acts."""
-    cur = int(getattr(video, "min_qp", 30) or 30)
+    _, field, cur, _ = _adapt_ctx()
     ceil_ = _adapt_ceiling()
     return {
-        "min_qp": cur, "ceiling": ceil_, "adapted": cur != ceil_,
+        # min_qp is kept as the key for compatibility with the existing panel;
+        # "field" says which lever it actually refers to on this transport.
+        "min_qp": cur, "field": field, "ceiling": ceil_, "adapted": cur != ceil_,
         "reason": _adapt["reason"], "dir": _adapt["dir"],
         "at": _adapt["at"], "steps": _adapt["steps"],
         "cooldown": max(0, int(ADAPT_COOLDOWN - (time.time() - _adapt["at"]))),
@@ -2409,11 +2448,15 @@ async def api_stream_adapt(request: web.Request) -> web.Response:
     direction = str(d.get("dir") or "")
     if direction not in ("up", "down"):
         return web.json_response({"ok": False, "error": "dir must be up or down"}, status=400)
-    # Only the H.264/WebRTC path has an encoder to retune. On MJPEG the browser
-    # already drops frames it cannot keep up with, and a restart there would buy
-    # nothing while still costing the freeze.
-    if str(getattr(video, "mode", "") or "") != "h264":
-        return web.json_response({"ok": False, "error": "not the h264 transport",
+    # BOTH transports adapt. This used to bail unless mode == "h264", which made
+    # the whole feature inert on every shipped unit: build-image.sh pins
+    # video.mode to "mjpeg" because the Pi4 H.264 encoder corrupts high-contrast
+    # text. MJPEG has no inter-frame compression, so --quality is the only thing
+    # that moves its bitrate - and it moves it a lot, which is exactly what a
+    # struggling link needs.
+    _live_mode = str(getattr(video, "mode", "") or "")
+    if _live_mode not in ("mjpeg", "h264"):
+        return web.json_response({"ok": False, "error": "no stream to adapt",
                                   "adapt": _adapt_note()})
 
     # Record the REQUEST (not just applied steps) so a struggling viewer holds off
@@ -2439,10 +2482,14 @@ async def api_stream_adapt(request: web.Request) -> web.Response:
                 return web.json_response({"ok": True, "applied": False, "cooldown": int(hold),
                                           "held_by_other": True, "adapt": _adapt_note()})
 
+        ladder, field, cur, coarser_hi = _adapt_ctx()
         ceil_ = _adapt_ceiling()
-        cur = int(getattr(video, "min_qp", ceil_) or ceil_)
-        sharpest = _ceiling_rung(ceil_)
-        target = _rung_coarser(cur) if direction == "down" else _rung_sharper(cur, sharpest)
+        idx = _rung_idx(ladder, cur)
+        cidx = _ceiling_idx(ladder, ceil_, coarser_hi)
+        # Ladders run sharpest-first, so "coarser" is always the next index up
+        # regardless of which way that transport's numbers happen to run.
+        nidx = min(idx + 1, len(ladder) - 1) if direction == "down" else max(idx - 1, cidx)
+        target = ladder[nidx] if nidx != idx else None
         if target is None or target == cur:
             edge = ("already at the coarsest step" if direction == "down"
                     else "already at your setting")
@@ -2460,7 +2507,7 @@ async def api_stream_adapt(request: web.Request) -> web.Response:
         try:
             # video.start() and NOT api_stream_settings: this must not be written
             # to config. The operator's setting is the thing that persists.
-            ok = await loop.run_in_executor(None, lambda: video.start(min_qp=target))
+            ok = await loop.run_in_executor(None, lambda: video.start(**{field: target}))
         except Exception as e:
             _adapt["at"] = prev_at
             log.warning("adapt %s failed: %s", direction, e)
@@ -2474,8 +2521,9 @@ async def api_stream_adapt(request: web.Request) -> web.Response:
         _adapt["reason"] = str(d.get("reason") or "")[:120]
         _adapt["dir"] = direction
         _adapt["steps"] += 1
-        log.info("Video adapted %s to min_qp=%d (ceiling %d): %s",
-                 direction, target, ceil_, _adapt["reason"] or "no reason given")
+        log.info("Video adapted %s to %s=%d (ceiling %d, %s): %s",
+                 direction, field, target, ceil_, _live_mode,
+                 _adapt["reason"] or "no reason given")
         return web.json_response({"ok": True, "applied": True, "adapt": _adapt_note()})
 
 
@@ -2574,6 +2622,17 @@ async def api_stream_settings(request: web.Request) -> web.Response:
     # compatibility but the Pi's H.264 encoder ignores it; min_qp is what
     # actually bounds the peak. See video.py's _start_ustreamer_h264.
     min_qp     = d.get("min_qp")
+
+    if quality is not None and min_qp is None:
+        # Same intent-reset as min_qp below: on MJPEG this IS the operator's
+        # picture-quality choice, so it becomes the adapter's new ceiling.
+        try:
+            _adapt["ceiling"] = int(quality)
+            _adapt["ceiling_field"] = "quality"
+            _adapt["reason"] = ""
+            _adapt["dir"] = ""
+        except (TypeError, ValueError):
+            pass
 
     if min_qp is not None:
         # A manual pick is a new intent: it becomes the ceiling the adapter may

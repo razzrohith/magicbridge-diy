@@ -1736,7 +1736,7 @@ async function changeMainPassword(){
   if(nw!==cf){show('New passwords do not match',false);return;}
   try{
     const r=await fetch('/api/auth/change-password',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({current:cur,new:nw})});
+      body:JSON.stringify({current:cur,new:nw,sid:_mySid})});
     const d=await r.json();
     if(d.ok){
       show('✓ Password changed',true);
@@ -1879,6 +1879,12 @@ function onMsg(d){
   // Dropped on purpose by whoever holds the panel. Do NOT reconnect: coming
   // back two seconds later would make Disconnect meaningless.
   if(d.type==='kicked'){
+    // A revocation is not the same as an operator pressing Disconnect. It fires
+    // on a credential change, where our cookie has usually just been re-issued,
+    // so reconnecting is the right move: it succeeds silently if we are still
+    // authorised and lands on /login if we are not. Only a deliberate kick is
+    // terminal.
+    if(d.reason === 'revoked'){ return; }
     _kicked=true;
     // Release NOW, while the socket is still open. Waiting for onclose is too
     // late: send() drops everything once readyState leaves 1, so any key this

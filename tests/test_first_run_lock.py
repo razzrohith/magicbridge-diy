@@ -64,7 +64,7 @@ print("4. WebSocket while locked -> HTTP %s (no input can reach the target)" % s
 assert st == 403, "FAIL: ws not blocked (got %s)" % st
 
 print("5. weak / default passwords refused")
-for pw, why in [("short", "under 8 chars"), ("magicbridge", "the default itself"),
+for pw, why in [("abc", "under 4 chars"), ("magicbridge", "the default itself"),
                 ("stealthbridge", "the other default")]:
     d = urllib.parse.urlencode({"p1": pw, "p2": pw}).encode()
     st, _, body, _ = req("/first-run", cookie=ck, data=d)

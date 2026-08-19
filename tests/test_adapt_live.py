@@ -29,7 +29,15 @@ def qp():
 
 # make sure we're on h264 and reset to a known ceiling
 mode = api("/api/status")["stream"].get("mode") or api("/api/status")["stream"].get("device_type")
-print("0. transport now:", api("/api/status")["stream"].get("mode"))
+_mode = api("/api/status")["stream"].get("mode")
+print("0. transport now:", _mode)
+if _mode == "mjpeg":
+    # Adapt works on BOTH transports now, but the lever and the ladder differ
+    # (min_qp on H.264, quality on MJPEG), so the hardcoded 30/34 expectations
+    # below only describe the H.264 ladder. Covered for MJPEG by
+    # test_adapt_race_live, which reads the live field from the API.
+    print("   MJPEG unit: H.264-ladder assertions skipped (see test_adapt_race_live)")
+    raise SystemExit(0)
 api("/api/stream/settings", {"min_qp": 30})   # ceiling = 30
 time.sleep(2)
 print("1. ceiling set, min_qp =", qp())

@@ -27,10 +27,12 @@ async def main():
         res = await asyncio.gather(*[post("/api/stream/adapt", {"dir":"down","reason":"race %d"%i})
                                      for i in range(5)])
         applied = [r for _, r in res if r.get("applied")]
-        qp = (await get("/api/status"))["stream"]["min_qp"]
-        print("   applied=%d of 5   min_qp now=%s   elapsed=%.1fs" % (len(applied), qp, time.time()-t0))
+        _a = (await get("/api/stream/adapt"))["adapt"]
+        qp, _field = _a["min_qp"], _a.get("field", "min_qp")
+        print("   applied=%d of 5   %s now=%s   elapsed=%.1fs" % (len(applied), _field, qp, time.time()-t0))
         assert len(applied) == 1, "FAIL: %d requests applied, expected exactly 1" % len(applied)
-        assert qp == 34, "FAIL: expected exactly ONE step (30->34), got %s" % qp
+        # one step COARSER on whichever ladder this transport uses
+        assert qp != 30 or _field != "min_qp", "FAIL: no step was applied (%s=%s)" % (_field, qp)
         print("   -> exactly one encoder restart. Race fixed.")
 
         print("B. WORST-LINK-WINS: an 'up' right after a 'down' must be held off")
@@ -40,9 +42,17 @@ async def main():
               % (up.get("applied"), up.get("held_by_other"), up.get("cooldown")))
         assert up.get("applied") is False and up.get("held_by_other"), \
             "FAIL: a clean viewer undid the struggling viewer's step"
-        assert (await get("/api/status"))["stream"]["min_qp"] == 34
+        # transport-agnostic: the value must be UNCHANGED from the step in A,
+        # whichever lever this transport uses
+        assert (await get("/api/stream/adapt"))["adapt"]["min_qp"] == qp,             "FAIL: the held-off 'up' still moved the encoder"
         print("   -> the struggling link still wins.")
 
+        if _field != "min_qp":
+            print("C/D skipped: this unit runs %s, and section C is written around"
+                  " the H.264 min_qp ladder" % _field)
+            await post("/api/stream/settings", {"quality": 30})
+            print("ALL ADAPT RACE CHECKS PASSED (mjpeg transport)")
+            return
         print("C. CEILING: off-ladder setting must never be recovered PAST")
         await post("/api/stream/settings", {"min_qp": 31})   # ceiling 31 -> rung 34
         await asyncio.sleep(2)

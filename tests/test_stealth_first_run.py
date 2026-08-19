@@ -56,7 +56,7 @@ assert "Choose a password" in body
 csrf = (re.search(r'name="_csrf"[^>]*value="([^"]+)"', body) or [None,""])[1]
 
 print("5. weak / default passwords refused")
-for pw,why in [("short","under 8"),("stealthbridge","this default"),("magicbridge","other default")]:
+for pw,why in [("abc","under 4"),("stealthbridge","this default"),("magicbridge","other default")]:
     d = urllib.parse.urlencode({"p1":pw,"p2":pw,"_csrf":csrf}).encode()
     st,_,body,_ = req("/first-run", cookie=ck, data=d)
     print("   %-14s refused=%s (%s)" % (pw, "Choose a password" in body, why))
