@@ -2944,10 +2944,21 @@ def api_wifi_add():
     cmd = ["connection","add","type","wifi","ifname","wlan0",
            "con-name",ssid,"ssid",ssid,"connection.autoconnect","yes",
            "connection.autoconnect-priority",str(prio)]
-    # hidden yes so a non-broadcast SSID associates; key-mgmt left unset so
-    # NetworkManager negotiates PSK or SAE (WPA3) from what the AP advertises.
+    # hidden yes so a non-broadcast SSID associates.
+    # key-mgmt MUST be supplied: it is a REQUIRED property of
+    # 802-11-wireless-security, so a psk without it makes nmcli reject the whole
+    # profile ("key-mgmt: property is missing") and the user is told their
+    # password is wrong. WPA3 is still covered by retrying with sae below,
+    # rather than by omitting the property.
     cmd += ["802-11-wireless.hidden", "yes"]
-    if pwd: cmd += ["wifi-sec.psk", pwd]
+    if pwd:
+        for km in ("wpa-psk", "sae"):
+            r = _nm(*(cmd + ["wifi-sec.key-mgmt", km, "wifi-sec.psk", pwd]), timeout=12)
+            if r.returncode == 0:
+                _log_sess(f"WiFi saved: {ssid}")
+                return jsonify({"ok": True})
+            _nm("connection", "delete", ssid, timeout=5)
+        return jsonify({"ok":False,"error":r.stderr.strip() or r.stdout.strip()})
     r = _nm(*cmd,timeout=12)
     if r.returncode == 0:
         _log_sess(f"WiFi saved: {ssid}")

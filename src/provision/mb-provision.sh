@@ -414,22 +414,35 @@ if [[ -f "$WIFI_FILE" ]]; then
     # because NM only probes for networks it saw in a scan. Harmless on a normal
     # broadcast network, which still connects exactly as before.
     #
-    # key-mgmt is deliberately NOT pinned to wpa-psk any more. Pinning it makes a
-    # WPA3/SAE-only router fail association even with the CORRECT password, and
-    # the buyer sees "WiFi setup failed", i.e. we blame their password for a
-    # setting we chose. Left unset, NetworkManager negotiates PSK or SAE from
-    # what the AP actually advertises, covering WPA2, WPA3 and mixed mode.
+    # key-mgmt MUST be set. It was previously left unset on purpose, to let a
+    # WPA3/SAE router negotiate - but key-mgmt is a REQUIRED property of
+    # NetworkManager's 802-11-wireless-security setting, so supplying a psk
+    # without it makes `nmcli connection add` fail verification outright
+    # ("802-11-wireless-security.key-mgmt: property is missing"). No profile was
+    # created, `connection up` then had nothing to bring up, and the owner was
+    # told "Wrong password?" - the exact false accusation that change set out to
+    # remove, reintroduced by the change itself.
+    # So: still support WPA3, but by TRYING each key-mgmt rather than omitting it.
+    # wpa-psk covers WPA2 and WPA3-transition; sae covers WPA3-only.
     if [[ -z "$PASS" ]]; then
+        # Open network: attach no security setting at all. ("none" would mean
+        # static WEP, not open.)
         nmcli connection add type wifi con-name "$SSID" ssid "$SSID" \
               802-11-wireless.hidden yes \
               connection.autoconnect yes
+        nmcli connection up "$SSID" || true
     else
-        nmcli connection add type wifi con-name "$SSID" ssid "$SSID" \
-              802-11-wireless.hidden yes \
-              wifi-sec.psk "$PASS" \
-              connection.autoconnect yes
+        for _km in wpa-psk sae; do
+            nmcli connection delete "$SSID" 2>/dev/null || true
+            nmcli connection add type wifi con-name "$SSID" ssid "$SSID" \
+                  802-11-wireless.hidden yes \
+                  wifi-sec.key-mgmt "$_km" \
+                  wifi-sec.psk "$PASS" \
+                  connection.autoconnect yes || continue
+            nmcli connection up "$SSID" && break
+            echo "[$(date)] key-mgmt $_km did not connect, trying the next"
+        done
     fi
-    nmcli connection up "$SSID" || true
     rm -f "$WIFI_FILE"
     # VERIFY it actually connected. A wrong password (or an out-of-range SSID)
     # makes `nmcli connection up` fail - and the old code still announced

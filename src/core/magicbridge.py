@@ -3832,21 +3832,38 @@ async def api_wifi(request):
                "connection.autoconnect", "yes",
                "connection.autoconnect-priority", "10"]
         if psk:
-            # key-mgmt deliberately NOT pinned to wpa-psk: that makes a WPA3
-            # (SAE-only) router fail association even with the correct password.
-            # Unset, NM negotiates PSK or SAE from what the AP advertises, so
-            # WPA2, WPA3 and mixed mode all work.
-            cmd += ["wifi-sec.psk", psk]
+            # key-mgmt MUST be present. Leaving it unset (to let a WPA3 router
+            # negotiate) makes nmcli reject the profile outright, because
+            # key-mgmt is a REQUIRED property of 802-11-wireless-security:
+            # "802-11-wireless-security.key-mgmt: property is missing". Nothing
+            # is created and the user is told their password is wrong.
+            # WPA3 is still supported - see the sae retry below, which reruns
+            # this command with key-mgmt=sae if wpa-psk fails.
+            cmd += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk]
         # Off-loop, same reason as the GET branch: adding a network can take
         # 15s + 10s, and blocking the loop there means the operator's mouse
         # and keyboard die mid-session just because someone saved a WiFi.
         r = await _run_off_loop(cmd, capture_output=True, text=True, timeout=15)
         ok = r.returncode == 0
         out = (r.stdout + r.stderr)[:300]
+        # WPA3-only (SAE) router: wpa-psk is refused, so retry the identical add
+        # with key-mgmt=sae. This is how WPA3 stays supported without omitting
+        # the required property (see the comment on the add above).
+        if not ok and psk and "already" not in out.lower():
+            sae_cmd = ["wifi-sec.key-mgmt" if c == "wifi-sec.key-mgmt" else c for c in cmd]
+            for i, c in enumerate(sae_cmd):
+                if c == "wifi-sec.key-mgmt":
+                    sae_cmd[i + 1] = "sae"
+                    break
+            r_sae = await _run_off_loop(sae_cmd, capture_output=True, text=True, timeout=15)
+            if r_sae.returncode == 0:
+                ok = True
+                out = (r_sae.stdout + r_sae.stderr)[:300]
         if not ok and "already" in out.lower():
             if psk:
                 r2 = await _run_off_loop(["nmcli", "connection", "modify", ssid,
-                               "802-11-wireless.hidden", "yes", "wifi-sec.psk", psk],
+                               "802-11-wireless.hidden", "yes",
+                               "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk],
                               capture_output=True, text=True, timeout=10)
             else:
                 r2 = await _run_off_loop(["nmcli", "connection", "modify", ssid,
