@@ -796,6 +796,99 @@ def _login_page(error: str = "", status: int = 200) -> web.Response:
     return web.Response(text=html, content_type="text/html", status=status)
 
 
+FIRSTRUN_HTML = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Choose a password</title><style>
+:root{--bg:#040911;--card:#0d1728;--line:#16263c;--accent:#22d3ee;--accent2:#0ea5c4;
+--text:#f1fbff;--sub:#a9cfe0;--muted:#88a8bd;--red:#f43f5e}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;
+justify-content:center;background:var(--bg);color:var(--text);padding:22px;
+font:15px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.card{width:100%;max-width:430px;background:var(--card);border:1px solid var(--line);
+border-radius:16px;padding:26px}
+h1{font-size:20px;margin:0 0 6px}
+p.lead{color:var(--sub);font-size:13.5px;margin:0 0 18px}
+label{display:block;font-size:12px;color:var(--muted);margin:14px 0 5px}
+input{width:100%;background:#070d18;border:1px solid var(--line);color:var(--text);
+border-radius:9px;padding:11px 12px;font:inherit;font-size:14px}
+input:focus{outline:none;border-color:var(--accent2)}
+button{width:100%;margin-top:20px;padding:12px;border:none;border-radius:9px;
+background:linear-gradient(180deg,var(--accent),var(--accent2));color:#04222b;
+font:inherit;font-weight:650;font-size:15px;cursor:pointer}
+.err{background:rgba(244,63,94,.12);border:1px solid rgba(244,63,94,.4);
+color:#ffb3c0;border-radius:9px;padding:10px 12px;font-size:13px;margin-bottom:14px}
+.note{color:var(--muted);font-size:12px;margin-top:16px}
+</style></head><body><div class="card">
+<h1>Choose a password</h1>
+<p class="lead">This device is still using its published default password, so anyone
+on this network could take control of the connected computer. Set your own password
+to continue. Nothing else works until you do.</p>
+__ERROR__
+<form method="POST" action="/first-run">
+  <label for="p1">New password</label>
+  <input id="p1" name="p1" type="password" autocomplete="new-password" autofocus required>
+  <label for="p2">Confirm new password</label>
+  <input id="p2" name="p2" type="password" autocomplete="new-password" required>
+  <button type="submit">Set password and continue</button>
+</form>
+<div class="note">Use at least 8 characters. Write it down somewhere safe: there is
+no reset without physical access to the card.</div>
+</div></body></html>"""
+
+
+async def first_run_handler(request: web.Request) -> web.Response:
+    """The only page served while the shipped default password is still in use.
+
+    Reached only when already signed in (auth_middleware runs first), so this is
+    "prove you are the owner by knowing the default, then replace it" rather than
+    an unauthenticated password reset.
+    """
+    if not _using_default_pw():          # already done: go be useful
+        return web.HTTPFound("/")
+
+    error = ""
+    if request.method == "POST":
+        data = await request.post()
+        p1 = str(data.get("p1", ""))
+        p2 = str(data.get("p2", ""))
+        if p1 != p2:
+            error = "Those two passwords do not match."
+        elif len(p1) < 8:
+            error = "Use at least 8 characters."
+        elif p1 in (DEFAULT_PASSWORD, "stealthbridge"):
+            error = "That is the default password. Please choose a different one."
+        else:
+            try:
+                cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
+            except Exception:
+                cfg = {}
+            auth = cfg.setdefault("auth", {})
+            if _HAS_BCRYPT:
+                auth["main_password_hash"] = _bcrypt.hashpw(p1.encode(), _bcrypt.gensalt()).decode()
+            else:
+                auth["main_password_hash"] = "sha256:" + hashlib.sha256(p1.encode()).hexdigest()
+            # Rotate the session secret: any cookie minted while the default was
+            # live (possibly by someone else who knew it) must stop validating.
+            new_secret = _sec.token_hex(32)
+            auth["main_secret_key"] = new_secret
+            auth["session_epoch"] = int(auth.get("session_epoch", 0)) + 1
+            _write_config(cfg)
+            # No cache to clear: _using_default_pw memoises on the HASH itself,
+            # so writing a new hash makes the next call recompute on its own.
+            log.warning("First-run password set; session secret rotated")
+            # Re-issue a cookie for THIS browser so the owner is not bounced back
+            # to the login page immediately after doing the right thing.
+            resp = web.HTTPFound("/")
+            token = _make_token(new_secret, epoch=int(auth.get("session_epoch", 0)))
+            resp.set_cookie(SESSION_COOKIE, token, httponly=True, samesite="Lax",
+                            secure=True, max_age=SESSION_TIMEOUT)
+            return resp
+
+    html = FIRSTRUN_HTML.replace("__ERROR__",
+                                 f'<div class="err">{error}</div>' if error else "")
+    return web.Response(text=html, content_type="text/html")
+
+
 async def login_handler(request: web.Request) -> web.Response:
     if request.method == "POST":
         ip = _login_client_ip(request)
@@ -1072,6 +1165,12 @@ async def api_authcheck(request: web.Request) -> web.Response:
     return web.Response(text="ok")
 
 
+# Paths that must keep working while the device is locked for a first-run
+# password change: the login flow itself, static assets, and the change page and
+# its POST. Everything else is refused until the default password is gone.
+_FIRSTRUN_OK = ("/login", "/logout", "/first-run", "/api/first-run")
+
+
 @web.middleware
 async def auth_middleware(request: web.Request, handler):
     if request.path == "/login" or request.path.startswith("/static/"):
@@ -1080,6 +1179,19 @@ async def auth_middleware(request: web.Request, handler):
         if request.path == "/ws" or request.path.startswith("/api/"):
             return web.json_response({"ok": False, "error": "auth"}, status=401)
         return web.HTTPFound("/login")
+    # FIRST-RUN LOCK. The unit ships with a published default password, so there
+    # is a window where anyone on the LAN knows it. Warning about it was not
+    # enough - a warning can be dismissed and the device still hands over the
+    # target's keyboard and mouse. So while the default is in use the device
+    # serves exactly one thing: the page that replaces it. No UI, no API, no
+    # WebSocket, which means no input to the target either. That makes the
+    # window as small as the owner's first sign-in rather than open-ended.
+    if _using_default_pw() and request.path not in _FIRSTRUN_OK:
+        if request.path == "/ws" or request.path.startswith("/api/"):
+            return web.json_response({"ok": False, "error": "first-run",
+                                      "detail": "Set a password before using this device."},
+                                     status=403)
+        return web.HTTPFound("/first-run")
     return await handler(request)
 
 
@@ -4526,6 +4638,8 @@ async def api_ai_run(request):
 def build_app() -> web.Application:
     app = web.Application(client_max_size=1024 * 1024, middlewares=[auth_middleware])
 
+    app.router.add_get("/first-run",  first_run_handler)
+    app.router.add_post("/first-run", first_run_handler)
     app.router.add_get("/login",  login_handler)
     app.router.add_post("/login", login_handler)
     app.router.add_post("/logout", logout_handler)

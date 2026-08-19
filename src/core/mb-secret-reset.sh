@@ -93,16 +93,19 @@ def _mkhash(s):
         return bcrypt.hashpw(s.encode(), bcrypt.gensalt()).decode()
     except Exception:
         return "sha256:"+hashlib.sha256(s.encode()).hexdigest()
-h=_mkhash(pw)
-# Fresh auth for BOTH panels with the SAME per-unit random password. CRITICAL:
-# the stealth admin dashboard (its auth.password_hash/secret_key) is reachable
-# on the LAN via nginx's location /stealth/ on :443 - the :7777 firewall drop
-# only blocks DIRECT access, not the proxy. If we only reset main and let the
-# stealth panel re-bootstrap, every clone would ship the public default
-# "stealthbridge" on a LAN-reachable admin panel that can rotate USB/MAC/EDID
-# and reveal WiFi PSKs. Setting both to the random pw closes that.
-c["auth"]={"main_password_hash":h,"main_secret_key":secrets.token_hex(32),
-           "password_hash":h,"secret_key":secrets.token_hex(32)}
+# Ship the two KNOWN defaults, and force a change at first login (the panels
+# refuse to serve anything until it is done - see _using_default_pw gating in
+# magicbridge.py / stealth-dashboard.py). Product decision: a per-unit random
+# password is unreadable to an owner whose OLED has failed or who is not next to
+# the device, and the card is the only other copy.
+#
+# The SECRET KEYS stay random per unit and MUST NOT be defaulted. They sign the
+# session cookie: a shared secret would let anyone mint a valid session for any
+# unit ever sold WITHOUT the password, which no forced password change could
+# ever repair. Password default = a first-login window; secret default = a
+# permanent universal backdoor. Only the first is on the table.
+c["auth"]={"main_password_hash":_mkhash("magicbridge"),"main_secret_key":secrets.token_hex(32),
+           "password_hash":_mkhash("stealthbridge"),"secret_key":secrets.token_hex(32)}
 c.pop("duckdns",None); c.pop("tailscale",None)
 c.pop("mac_persist",None)
 if isinstance(c.get("ai"),dict): c["ai"].pop("keys",None)
@@ -128,8 +131,9 @@ if [[ "$PW_OUT" == "1" && -s /run/magicbridge/.new-web-password ]]; then
     BOOT=/boot/firmware; [ -d "$BOOT" ] || BOOT=/boot
     if [ -d "$BOOT" ]; then
         { echo "MagicBridge web login"; echo "URL : https://${CURHN:-this-device}.local/  (or the IP on the OLED)";
-          echo "User: (none)"; echo "Password: ${NEWPW}"; echo;
-          echo "Change it after first login. Delete this file once you have it."; echo;
+          echo "User: (none)"; echo "Password: magicbridge      (admin panel: stealthbridge)"; echo;
+          echo "You will be asked to choose your own password the first time you"; echo;
+          echo "sign in. The device will not do anything else until you do."; echo;
           echo "NOTE: your browser will warn the connection is not private. That";
           echo "is expected on a private device with a self-signed certificate:";
           echo "choose Advanced, then Proceed."; } \
