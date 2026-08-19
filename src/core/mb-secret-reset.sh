@@ -230,9 +230,18 @@ rm -f /var/log/magicbridge-ram/* 2>/dev/null || true
 #    DEADLOCK that hangs before WiFi provisioning (no hotspot, no OLED progress).
 #    They have not started yet on a fresh flash, so they come up cleanly on their
 #    own once mb-firstboot exits - no restart is needed or wanted.
-info "restarting the early services (ssh, nginx) with the regenerated keys/cert"
+info "restarting the early services (ssh, nginx, avahi) with the regenerated keys/cert"
 systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
 systemctl restart nginx 2>/dev/null || true
+# avahi too, and for the HOSTNAME rather than a key: this script renames the unit
+# above, but avahi-daemon already started advertising the image's shipped name.
+# It does not pick up a rename on its own, so <hostname>.local - the address the
+# owner is handed on the boot partition - did not resolve until something else
+# happened to restart avahi. mb-provision's ensure_mdns_healthy does not cover
+# it either: its `enable --now` is a no-op on an already-running unit and its
+# restart only fires when the hostname still looks like a product tell, which it
+# no longer does by this point.
+systemctl restart avahi-daemon 2>/dev/null || true
 
 # FAIL-CLOSED (B2): exit non-zero if any CRITICAL per-unit secret failed to
 # regenerate, so mb-firstboot does NOT stamp .firstboot-done and the unit

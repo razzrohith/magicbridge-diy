@@ -271,6 +271,45 @@ for _s in 1 2; do
     [ "$_s" = 1 ] && sleep 1
 done
 
+# Tear down AP. DEFINED EARLY, ON PURPOSE - see the trap below.
+# Runs from the EXIT/INT/TERM trap as well as inline, so a systemd timeout or a
+# signal mid-portal can never leave the unit stranded on a half-configured
+# hotspot. Once-only via AP_TORNDOWN.
+#
+# It used to be defined AFTER the trap that names it, with the blocking captive
+# portal in between. bash resolves a trap's command when the trap FIRES, not when
+# it is armed, so for the entire portal window - the exact window the trap exists
+# to protect, up to TimeoutStartSec=1800 - the handler was an undefined command.
+# A systemd timeout or SIGTERM there ran nothing: nginx left stopped, the DNAT
+# rules left in place, the AP still beaconing. Definitions have no side effects,
+# so hoisting them costs nothing and makes the safety net real.
+AP_TORNDOWN=0
+ap_teardown() {
+    [ "$AP_TORNDOWN" = "1" ] && return 0
+    AP_TORNDOWN=1
+    pkill -F /tmp/mb-hostapd.pid 2>/dev/null || true
+    pkill -F /tmp/mb-dnsmasq.pid 2>/dev/null || true
+    iptables -t nat -F PREROUTING 2>/dev/null || true
+    # Drop the captive-DNS allows we added for the AP window. Looped because a
+    # retried provisioning run can insert them more than once, and they must not
+    # survive into normal operation.
+    while iptables -D INPUT -i "$AP_IFACE" -p udp --dport 53 -j ACCEPT 2>/dev/null; do :; done
+    while iptables -D INPUT -i "$AP_IFACE" -p tcp --dport 53 -j ACCEPT 2>/dev/null; do :; done
+    ip addr flush dev "$AP_IFACE" 2>/dev/null || true
+    # Hand wlan0 back to NetworkManager. `nmcli device disconnect` (up at the AP
+    # bring-up) does not just disconnect: it also blocks the device from
+    # autoconnecting again without manual intervention. Every exit path that does
+    # not end in an explicit `nmcli connection up` - AP failure, portal exit with
+    # no submission, retries exhausted - used to leave that block in place, so an
+    # already-provisioned unit that merely dipped into the AP path could not
+    # rejoin its own saved WiFi for the rest of the boot.
+    nmcli device set "$AP_IFACE" managed yes     2>/dev/null || true
+    nmcli device set "$AP_IFACE" autoconnect yes 2>/dev/null || true
+    # Put back what we stopped to free :80 and :53, or the unit comes up with no
+    # web UI and no name resolution and looks bricked.
+    [ "${NGINX_WAS_ACTIVE:-0}" = "1" ] && systemctl start nginx 2>/dev/null || true
+    systemctl start dnsmasq 2>/dev/null || true
+}
 if [[ -n "$AP_FAIL" ]]; then
     echo "[$(date)] AP bring-up FAILED ($AP_FAIL) - skipping portal, going to teardown/report"
     PORTAL_EXIT=98
@@ -318,27 +357,6 @@ fi
 
 echo "[$(date)] Portal exited (code $PORTAL_EXIT)"
 
-# Tear down AP. Runs from the EXIT/INT/TERM trap armed below as well as inline,
-# so a systemd timeout or a signal mid-portal can never leave the unit stranded
-# on a half-configured hotspot. Once-only via AP_TORNDOWN.
-AP_TORNDOWN=0
-ap_teardown() {
-    [ "$AP_TORNDOWN" = "1" ] && return 0
-    AP_TORNDOWN=1
-    pkill -F /tmp/mb-hostapd.pid 2>/dev/null || true
-    pkill -F /tmp/mb-dnsmasq.pid 2>/dev/null || true
-    iptables -t nat -F PREROUTING 2>/dev/null || true
-    # Drop the captive-DNS allows we added for the AP window. Looped because a
-    # retried provisioning run can insert them more than once, and they must not
-    # survive into normal operation.
-    while iptables -D INPUT -i "$AP_IFACE" -p udp --dport 53 -j ACCEPT 2>/dev/null; do :; done
-    while iptables -D INPUT -i "$AP_IFACE" -p tcp --dport 53 -j ACCEPT 2>/dev/null; do :; done
-    ip addr flush dev "$AP_IFACE" 2>/dev/null || true
-    # Put back what we stopped to free :80 and :53, or the unit comes up with no
-    # web UI and no name resolution and looks bricked.
-    [ "${NGINX_WAS_ACTIVE:-0}" = "1" ] && systemctl start nginx 2>/dev/null || true
-    systemctl start dnsmasq 2>/dev/null || true
-}
 ap_teardown
 # Mirror a human-readable report onto the FAT boot partition. THIS IS THE
 # ESCAPE HATCH: a unit that has neither WiFi nor a working hotspot is otherwise
@@ -430,7 +448,7 @@ if [[ -f "$WIFI_FILE" ]]; then
         nmcli connection add type wifi con-name "$SSID" ssid "$SSID" \
               802-11-wireless.hidden yes \
               connection.autoconnect yes
-        nmcli connection up "$SSID" || true
+        nmcli --wait 25 connection up "$SSID" || true
     else
         for _km in wpa-psk sae; do
             nmcli connection delete "$SSID" 2>/dev/null || true
@@ -439,7 +457,11 @@ if [[ -f "$WIFI_FILE" ]]; then
                   wifi-sec.key-mgmt "$_km" \
                   wifi-sec.psk "$PASS" \
                   connection.autoconnect yes || continue
-            nmcli connection up "$SSID" && break
+            # --wait 25, not nmcli's 90s default. With two key-mgmt attempts a
+            # genuinely wrong password would otherwise sit on "Connecting..." for
+            # 90+90+24 = over three minutes before saying anything. 25s is well
+            # past a normal WPA handshake + DHCP, and caps the verdict near a minute.
+            nmcli --wait 25 connection up "$SSID" && break
             echo "[$(date)] key-mgmt $_km did not connect, trying the next"
         done
     fi
@@ -494,10 +516,27 @@ fi
 # Tailscale auth key (if provided)
 if [[ -f "$TS_KEY_TMP" ]]; then
     TS_KEY=$(cat "$TS_KEY_TMP")
-    rm -f "$TS_KEY_TMP"
     if [[ -n "$TS_KEY" ]]; then
         echo "[$(date)] Authenticating Tailscale…"
-        tailscale up --authkey="$TS_KEY" --accept-routes --reset || true
+        # tailscaled is STOPPED by mb-secret-reset (it wipes tailscaled.state) and
+        # nothing restarted it, so `tailscale up` was talking to a dead socket and
+        # failing every time. The failure was swallowed by `|| true` and the key
+        # file had already been deleted a line earlier, so a single-use auth key
+        # was destroyed with no retry and no diagnostic. Start the daemon, wait
+        # for its socket, and only delete the key once it has actually worked.
+        systemctl start tailscaled 2>/dev/null || true
+        for _t in $(seq 1 15); do
+            tailscale status >/dev/null 2>&1 && break
+            sleep 1
+        done
+        if tailscale up --authkey="$TS_KEY" --accept-routes --reset; then
+            echo "[$(date)] Tailscale authenticated"
+            rm -f "$TS_KEY_TMP"
+        else
+            echo "[$(date)] Tailscale auth FAILED - keeping the key for the next boot"
+        fi
+    else
+        rm -f "$TS_KEY_TMP"
     fi
 fi
 
