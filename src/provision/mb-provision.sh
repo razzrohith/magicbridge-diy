@@ -220,8 +220,8 @@ NGINX_WAS_ACTIVE=0
 systemctl is-active --quiet nginx && NGINX_WAS_ACTIVE=1
 [ "$NGINX_WAS_ACTIVE" = "1" ] && { systemctl stop nginx 2>/dev/null || true; }
 
-pkill -f "hostapd /tmp/mb-hostapd" 2>/dev/null || true
-pkill -f "dnsmasq.*mb-dnsmasq"     2>/dev/null || true
+pkill -f "hostapd.*mb-hostapd" 2>/dev/null || true
+pkill -f "dnsmasq.*mb-dnsmasq" 2>/dev/null || true
 
 # Capture hostapd's own startup output. Launched with -B it daemonises and its
 # error goes to the journal, which cannot be read off a card on Windows/macOS -
@@ -235,9 +235,30 @@ sleep 1
 # Confirm the AP actually came up. If hostapd or dnsmasq isn't running there is
 # no hotspot to serve the portal on, so skip the (blocking) portal and fall
 # straight through to teardown + the /boot escape-hatch report + OLED error.
+# Ask the PID FILE, not the command line. Both daemons are launched with an
+# explicit -P/--pid-file, so the pid they wrote is the authoritative answer to
+# "did you start?" - and it cannot be broken by a change in flag order.
+#
+# THIS IS WHY: the old check was pgrep -f "hostapd /tmp/mb-hostapd", which
+# requires the literal string "hostapd /tmp/mb-hostapd". The real command line is
+# "hostapd -B /tmp/mb-hostapd.conf ...", so the "-B" sits between the two halves
+# and the pattern could NEVER match. Every boot therefore declared AP_FAIL even
+# when the radio had reached AP-ENABLED, and the script tore down a hotspot that
+# was working perfectly. The dnsmasq line one row below used ".*" and matched,
+# which is exactly why only hostapd was ever blamed. It survived review because
+# it LOOKS like the working line next to it, and it survived testing because the
+# AP had only ever been exercised on a dummy interface, never end to end.
+alive() {   # alive <pidfile> <name-fragment>
+    local pf="$1" frag="$2" pid
+    if [ -s "$pf" ]; then
+        pid=$(cat "$pf" 2>/dev/null)
+        case "$pid" in ''|*[!0-9]*) ;; *) kill -0 "$pid" 2>/dev/null && return 0 ;; esac
+    fi
+    pgrep -f "$frag" >/dev/null 2>&1   # fallback if the pid file is late/absent
+}
 AP_FAIL=""
-pgrep -f "hostapd /tmp/mb-hostapd" >/dev/null 2>&1 || AP_FAIL="hostapd"
-pgrep -f "dnsmasq.*mb-dnsmasq"     >/dev/null 2>&1 || AP_FAIL="${AP_FAIL:+$AP_FAIL+}dnsmasq"
+alive /tmp/mb-hostapd.pid "hostapd.*mb-hostapd" || AP_FAIL="hostapd"
+alive /tmp/mb-dnsmasq.pid "dnsmasq.*mb-dnsmasq" || AP_FAIL="${AP_FAIL:+$AP_FAIL+}dnsmasq"
 
 if [[ -n "$AP_FAIL" ]]; then
     echo "[$(date)] AP bring-up FAILED ($AP_FAIL) - skipping portal, going to teardown/report"
