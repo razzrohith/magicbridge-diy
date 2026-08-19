@@ -32,6 +32,8 @@ run test_stealth_first_run       python3 /tmp/test_stealth_first_run.py
 run test_first_run_both_panels   python3 /tmp/test_first_run_both_panels.py
 run test_session_revocation_live python3 /tmp/test_session_revocation_live.py
 run test_sweeper_precision     python3 /tmp/regfix_test.py
+run test_mjpeg_rungs           python3 /tmp/rungcheck.py
+run test_first_run_journey     python3 /tmp/e2e.py
 cp /tmp/cfg.suite.bak /etc/magicbridge/config.json
 systemctl restart magicbridge stealth-dashboard >/dev/null 2>&1; sleep 5
 echo
