@@ -150,11 +150,28 @@ ip link set "$AP_IFACE" up
 ip addr flush dev "$AP_IFACE" 2>/dev/null || true
 ip addr add "${AP_IP}/24" dev "$AP_IFACE"
 
+# The WiFi regulatory region. A Pi will NOT run an access point until it has one:
+# in client mode it copies the region from the router it joins (802.11d), but in
+# AP mode there is nobody to copy from, so hostapd refuses to bring the radio up
+# and dies with "Could not set channel / interface disabled". That is the whole
+# "hotspot failed hostapd" failure. So we set it explicitly here and hand the
+# same code to hostapd below.
+#
+# Channel 6 (2.4GHz) is legal under every region on earth, so US is a safe value
+# for the SETUP hotspot regardless of where the unit ends up - it only governs
+# this brief captive-portal AP, not the customer's later WiFi client link, which
+# re-learns its own region from their router. (International units that need a
+# different AP region: make MB_WIFI_REGION overridable; US is the shipping default.)
+MB_WIFI_REGION="${MB_WIFI_REGION:-US}"
+iw reg set "$MB_WIFI_REGION" 2>/dev/null || true
+
 # hostapd config
 cat > /tmp/mb-hostapd.conf <<HOSTCONF
 interface=$AP_IFACE
 driver=nl80211
 ssid=$AP_SSID
+country_code=$MB_WIFI_REGION
+ieee80211d=1
 hw_mode=g
 channel=6
 auth_algs=1
@@ -197,6 +214,7 @@ DNSCONF
 #   stripped from the image), so :80 happened to be free and provisioning
 #   worked by accident. Restored in teardown.
 rfkill unblock wifi 2>/dev/null || true
+nmcli radio wifi on 2>/dev/null || true   # NM can leave the radio soft-off on a fresh unit
 systemctl stop dnsmasq 2>/dev/null || true
 NGINX_WAS_ACTIVE=0
 systemctl is-active --quiet nginx && NGINX_WAS_ACTIVE=1
@@ -205,7 +223,11 @@ systemctl is-active --quiet nginx && NGINX_WAS_ACTIVE=1
 pkill -f "hostapd /tmp/mb-hostapd" 2>/dev/null || true
 pkill -f "dnsmasq.*mb-dnsmasq"     2>/dev/null || true
 
-hostapd -B /tmp/mb-hostapd.conf -P /tmp/mb-hostapd.pid
+# Capture hostapd's own startup output. Launched with -B it daemonises and its
+# error goes to the journal, which cannot be read off a card on Windows/macOS -
+# so the ONE line that says why the AP failed was invisible. Tee it to a file the
+# boot report includes, so a failure is diagnosable from the card, not guessed.
+hostapd -B /tmp/mb-hostapd.conf -P /tmp/mb-hostapd.pid 2>/tmp/mb-hostapd.err
 sleep 1
 dnsmasq -C /tmp/mb-dnsmasq.conf --pid-file=/tmp/mb-dnsmasq.pid
 sleep 1
@@ -307,6 +329,12 @@ mb_boot_report() {
       echo "===== hostapd / dnsmasq running? ====="
       pgrep -a hostapd 2>/dev/null || echo "(hostapd NOT running)"
       pgrep -a dnsmasq 2>/dev/null || echo "(dnsmasq NOT running)"
+      echo
+      echo "===== why hostapd failed (its own output) ====="
+      cat /tmp/mb-hostapd.err 2>/dev/null || echo "(no hostapd error captured)"
+      echo "===== wifi region + radio block state ====="
+      iw reg get 2>/dev/null | grep -E 'country|global' | head -2 || echo "(iw reg unavailable)"
+      rfkill list wifi 2>/dev/null || rfkill list 2>/dev/null | grep -iA2 wireless || echo "(rfkill unavailable)"
       echo
       # REDACTED. This file lands on the FAT boot partition, which is readable
       # by anyone who pulls the card, and it is never deleted on a live unit.
