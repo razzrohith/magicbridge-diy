@@ -2277,7 +2277,7 @@ WiFi passwords, so set your own password before going any further.</p>
   <input id="p2" name="p2" type="password" autocomplete="new-password" required>
   <button type="submit">Set password and continue</button>
 </form>
-<div class="note">At least 8 characters. This is separate from the main web
+<div class="note">At least 4 characters. This is separate from the main web
 interface password, so the two can differ.</div>
 </div></body></html>"""
 
@@ -2326,8 +2326,10 @@ def first_run():
             p2 = request.form.get("p2", "")
             if p1 != p2:
                 error = "Those two passwords do not match."
-            elif len(p1) < 8:
-                error = "Use at least 8 characters."
+            elif len(p1) < 4:
+                # 4, matching this panel's own password-change route and the main
+                # web UI. Consistency beats a stricter rule on one page only.
+                error = "Use at least 4 characters."
             elif p1 in (DEFAULT_PASSWORD, "magicbridge"):
                 error = "That is a default password. Please choose a different one."
             else:

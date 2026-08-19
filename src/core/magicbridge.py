@@ -831,7 +831,7 @@ __ERROR__
   <input id="p2" name="p2" type="password" autocomplete="new-password" required>
   <button type="submit">Set password and continue</button>
 </form>
-<div class="note">Use at least 8 characters. Write it down somewhere safe: there is
+<div class="note">Use at least 4 characters. Write it down somewhere safe: there is
 no reset without physical access to the card.</div>
 </div></body></html>"""
 
@@ -853,8 +853,12 @@ async def first_run_handler(request: web.Request) -> web.Response:
         p2 = str(data.get("p2", ""))
         if p1 != p2:
             error = "Those two passwords do not match."
-        elif len(p1) < 8:
-            error = "Use at least 8 characters."
+        elif len(p1) < 4:
+            # 4, matching the account password-change API below (line ~1117) and
+            # the stealth panel. This page is the FIRST thing a new owner sees,
+            # so a stricter rule here than everywhere else would just teach them
+            # a limit the rest of the product does not enforce.
+            error = "Use at least 4 characters."
         elif p1 in (DEFAULT_PASSWORD, "stealthbridge"):
             error = "That is the default password. Please choose a different one."
         else:
