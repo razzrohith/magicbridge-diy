@@ -2241,6 +2241,121 @@ setInterval(loadWifiStatus, 30000);
 
 # Routes
 
+FIRSTRUN_HTML = """<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Choose a password</title><style>
+:root{--bg:#040911;--card:#0d1728;--line:#16263c;--accent:#22d3ee;--accent2:#0ea5c4;
+--text:#f1fbff;--sub:#a9cfe0;--muted:#88a8bd}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;
+justify-content:center;background:var(--bg);color:var(--text);padding:22px;
+font:15px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.card{width:100%;max-width:430px;background:var(--card);border:1px solid var(--line);
+border-radius:16px;padding:26px}
+h1{font-size:20px;margin:0 0 6px}
+p.lead{color:var(--sub);font-size:13.5px;margin:0 0 18px}
+label{display:block;font-size:12px;color:var(--muted);margin:14px 0 5px}
+input{width:100%;background:#070d18;border:1px solid var(--line);color:var(--text);
+border-radius:9px;padding:11px 12px;font:inherit;font-size:14px}
+input:focus{outline:none;border-color:var(--accent2)}
+button{width:100%;margin-top:20px;padding:12px;border:none;border-radius:9px;
+background:linear-gradient(180deg,var(--accent),var(--accent2));color:#04222b;
+font:inherit;font-weight:650;font-size:15px;cursor:pointer}
+.err{background:rgba(244,63,94,.12);border:1px solid rgba(244,63,94,.4);
+color:#ffb3c0;border-radius:9px;padding:10px 12px;font-size:13px;margin-bottom:14px}
+.note{color:var(--muted);font-size:12px;margin-top:16px}
+</style></head><body><div class="card">
+<h1>Choose a password</h1>
+<p class="lead">This admin panel is still using its published default password.
+It can change how the device appears to the target computer and can reveal saved
+WiFi passwords, so set your own password before going any further.</p>
+{% if error %}<div class="err">{{ error }}</div>{% endif %}
+<form method="POST">
+  <input type="hidden" name="_csrf" value="{{ csrf }}">
+  <label for="p1">New password</label>
+  <input id="p1" name="p1" type="password" autocomplete="new-password" autofocus required>
+  <label for="p2">Confirm new password</label>
+  <input id="p2" name="p2" type="password" autocomplete="new-password" required>
+  <button type="submit">Set password and continue</button>
+</form>
+<div class="note">At least 8 characters. This is separate from the main web
+interface password, so the two can differ.</div>
+</div></body></html>"""
+
+# Endpoints reachable while the panel is locked for a first-run password change.
+# Everything else redirects to first_run until the shipped default is replaced.
+_FIRSTRUN_OK = {"login", "logout", "first_run", "static"}
+
+
+@app.before_request
+def _force_first_run():
+    """Serve nothing but the password page while the default password is live.
+
+    This panel is the more dangerous of the two: it can rotate the USB, MAC and
+    EDID identity the target sees, and it can read back saved WiFi PSKs. Shipping
+    it on a published default and merely WARNING about it would leave that reachable
+    to anyone on the LAN who gets there first. So while the default is in use the
+    panel answers exactly one thing: the page that replaces it.
+
+    Only applies once signed in, so this is "prove you know the default, then
+    replace it", not an unauthenticated reset.
+    """
+    if request.endpoint in _FIRSTRUN_OK:
+        return None
+    if not _authed():
+        return None                      # the normal login redirect still applies
+    if _using_default_pw():
+        if request.path.startswith("/api/"):
+            return jsonify({"ok": False, "error": "first-run",
+                            "detail": "Set a password before using this panel."}), 403
+        return redirect(_stealth("first-run"))
+    return None
+
+
+@app.route("/first-run", methods=["GET", "POST"])
+def first_run():
+    if not _authed():
+        return redirect(_stealth("login"))
+    if not _using_default_pw():
+        return redirect(_stealth())      # already done
+    error = None
+    if request.method == "POST":
+        if request.form.get("_csrf") != session.get("csrf"):
+            error = "Invalid request. Reload the page and try again."
+        else:
+            p1 = request.form.get("p1", "")
+            p2 = request.form.get("p2", "")
+            if p1 != p2:
+                error = "Those two passwords do not match."
+            elif len(p1) < 8:
+                error = "Use at least 8 characters."
+            elif p1 in (DEFAULT_PASSWORD, "magicbridge"):
+                error = "That is a default password. Please choose a different one."
+            else:
+                cfg = _load()
+                cfg.setdefault("auth", {})["password_hash"] = _hash_pw(p1)
+                # Rotate the signing secret so any session minted while the
+                # default was live (possibly someone else's) stops validating.
+                _new_secret = secrets.token_hex(32)
+                cfg["auth"]["secret_key"] = _new_secret
+                _save(cfg)
+                # app.secret_key is read ONCE at startup, so writing it to config
+                # alone leaves every cookie signed with the old key still valid
+                # until the service happens to restart. Set it in-process too, so
+                # a session someone else opened with the shipped default dies the
+                # instant the real password is set. (Same reason as the account
+                # password-change path further down, which already does this.)
+                app.secret_key = _new_secret
+                _al.info("First-run admin password set; secret rotated")
+                _log_sess("Admin password set at first run")
+                # Our own cookie was signed with the OLD secret, so this session
+                # is about to become invalid: send the operator to the login page
+                # rather than to a panel that would bounce them anyway.
+                session.clear()
+                return redirect(_stealth("login"))
+    return render_template_string(FIRSTRUN_HTML, error=error,
+                                  csrf=session.get("csrf", "")), (400 if error else 200)
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     cfg = _load()
