@@ -142,6 +142,7 @@ if [[ "$MODE" == "verify" ]]; then
   # only a REAL non-empty file here is an actual cross-link id.
   chk "dbus machine-id blank (cross-link id)"        '[ -L "$R/var/lib/dbus/machine-id" ] || [ ! -s "$R/var/lib/dbus/machine-id" ]'
   chk "no AI provider keys in config"                'python3 -c "import json,sys;sys.exit(0 if not json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"ai\",{}).get(\"keys\") else 1)"'
+  chk "free space was zeroed (--shrink has been run)" '[ -f "$R/etc/magicbridge/.image-zeroed" ]'
   chk "no usable Linux account password (shared root credential)" '! awk -F: "\$2 ~ /^\\$/ {found=1} END {exit !found}" "$R/etc/shadow"'
   chk "/tmp is empty (it is on the rootfs, so it ships)" '[ -z "$(find "$R/tmp" -mindepth 1 -print -quit 2>/dev/null)" ]'
   chk "no app backup files (*.bak/.old/.orig)"       '[ -z "$(find "$R/opt/magicbridge" -maxdepth 3 \( -name "*.bak" -o -name "*.bak.*" -o -name "*.bak_*" -o -name "*.old" -o -name "*.orig" \) -print -quit 2>/dev/null)" ]'
@@ -185,7 +186,12 @@ if [[ "$MODE" == "verify" ]]; then
   chk "web UI HTML is structurally sound"            'python3 "$R/opt/magicbridge-repo/tests/test_html_structure.py" "$R/opt/magicbridge/web/index.html" >/dev/null 2>&1'
   echo ""
   [[ -n "$BV" ]] && { umount "$BV" 2>/dev/null || true; rmdir "$BV" 2>/dev/null || true; }
-  if [[ $FAIL -eq 0 ]]; then ok "ALL CHECKS PASSED — safe to distribute"; exit 0
+  if [[ $FAIL -eq 0 ]]; then
+    ok "ALL CHECKS PASSED — safe to distribute"
+    info "  (run order matters: arm -> --shrink -> --verify -> --compress;"
+    info "   verifying BEFORE shrink blesses an image whose deleted secrets are"
+    info "   still recoverable from free space)"
+    exit 0
   else die "$FAIL check(s) FAILED — do NOT distribute this image"; fi
 fi
 
@@ -221,6 +227,15 @@ if [[ "$MODE" == "shrink" ]]; then
       dd if=/dev/zero of="$local_m/zero.fill" bs=4M status=none 2>/dev/null || true
       sync
       rm -f "$local_m/zero.fill"; sync
+      # Record it on the ROOT partition so --verify can tell a zeroed image from
+      # one that merely had files deleted. Deleting a file leaves its blocks
+      # readable; --verify only tests that files are ABSENT, so without this it
+      # cannot see the difference and would call an unzeroed image shippable.
+      if [[ "$part" == "$ROOTPART" ]]; then
+        mkdir -p "$local_m/etc/magicbridge" 2>/dev/null || true
+        date -u +"zeroed %Y-%m-%dT%H:%M:%SZ" > "$local_m/etc/magicbridge/.image-zeroed" 2>/dev/null || true
+        sync
+      fi
       ok "  free space on $part zeroed (remnants erased)"
       umount "$local_m" 2>/dev/null || true
     fi

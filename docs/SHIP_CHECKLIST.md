@@ -80,13 +80,20 @@ I then run, on WSL Ubuntu:
 
 ```bash
 sudo bash build-image.sh          base-new.img  magicbridge-new.img   # arm
+sudo bash build-image.sh --shrink magicbridge-new.img                 # zero free space + shrink
 sudo bash build-image.sh --verify magicbridge-new.img                 # prove it
-sudo bash build-image.sh --shrink magicbridge-new.img                 # zero + shrink
 sudo bash build-image.sh --compress magicbridge-new.img               # -> .img.xz
 ```
 
 `--verify` must print **"ALL CHECKS PASSED — safe to distribute"**. If any check
 fails the image is not shipped — that is the gate doing its job.
+
+**SHRINK BEFORE VERIFY, not after.** This used to be the other way round, which
+was wrong in a way that mattered: `--verify` only tests that secret FILES are
+absent, and deleting a file does not erase its blocks. Free space is zeroed by
+`--shrink`, so verifying first blessed an image whose deleted SSH keys, WiFi PSK
+and config backups were still recoverable straight out of the raw `.img`.
+`--verify` now refuses an image that has not been through `--shrink`.
 
 ---
 
