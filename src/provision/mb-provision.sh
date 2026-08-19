@@ -145,6 +145,27 @@ done
 nmcli device disconnect "$AP_IFACE" 2>/dev/null || true
 sleep 1
 
+# STEALTH: stamp the spoofed MAC onto the interface before the AP comes up.
+# mb-secret-reset picks a Dell/HP/Samsung MAC and arms it through
+# NetworkManager's cloned-mac-address - but that is only applied when NM
+# ACTIVATES a connection, and we have just taken wlan0 away from NM to run
+# hostapd on it directly. So the setup hotspot beaconed the permanent
+# dc:a6:32 Raspberry Pi OUI to every WiFi scanner in range, for the whole
+# setup window, while every check made AFTERWARDS showed a correct spoofed MAC
+# (because by then NM had activated the client connection). That is precisely
+# the leak the per-unit SSID and the MAC spoof were both built to prevent.
+# Fail-open, like the pre-arm itself: on any error we continue on the real MAC
+# rather than block a buyer from setting the device up at all.
+_MB_MAC="$(python3 -c "import json;print((json.load(open('/etc/magicbridge/config.json')).get('mac_persist') or {}).get('wlan0',''))" 2>/dev/null)"
+if [[ "$_MB_MAC" =~ ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$ ]]; then
+    ip link set "$AP_IFACE" down 2>/dev/null || true
+    if ip link set dev "$AP_IFACE" address "$_MB_MAC" 2>/dev/null; then
+        echo "[$(date)] setup AP will beacon the spoofed MAC $_MB_MAC"
+    else
+        echo "[$(date)] WARNING: could not set $_MB_MAC on $AP_IFACE - the setup AP will use the real MAC"
+    fi
+fi
+
 # Bring up static IP on wlan0
 ip link set "$AP_IFACE" up
 ip addr flush dev "$AP_IFACE" 2>/dev/null || true

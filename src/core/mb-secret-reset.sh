@@ -185,9 +185,12 @@ rm -f /etc/systemd/system/mb-mac.service 2>/dev/null || true
 # Drop the builder's NM-layer MAC override, then MINT a fresh per-unit vendor
 # MAC HERE - before any WiFi association - instead of leaving it to the
 # dashboard. The dashboard's _ensure_default_mac only runs after mb-provision
-# has already joined WiFi, so the FIRST association (and the setup-AP BSSID)
-# would otherwise broadcast the real Raspberry Pi OUI (dc:a6:32...) on the
-# owner's LAN. We stamp mac_persist so the dashboard sees the identity as
+# has already joined WiFi, so the FIRST association would otherwise broadcast the
+# real Raspberry Pi OUI (dc:a6:32...) on the owner's LAN.
+# NOTE: this NM cloned-mac only covers connections NetworkManager ACTIVATES. The
+# setup hotspot is hostapd on an interface taken away from NM, so it is NOT
+# covered here - mb-provision.sh stamps this same mac_persist value onto the
+# link with `ip link set address` before starting hostapd. Keep both. We stamp mac_persist so the dashboard sees the identity as
 # already chosen and never overrides it with a different value (which would
 # flip the MAC mid-life). Uses the SAME NM cloned-mac mechanism the dashboard
 # uses, just earlier. Fully fail-closed: on ANY error the unit simply connects

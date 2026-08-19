@@ -3161,7 +3161,7 @@ function setBandwidth(res,fps,tier){
   if(f && Array.prototype.some.call(f.options,o=>o.value===String(fps))) f.value=String(fps);
   const q=document.getElementById('sel-quality');
   if(q && _BW_MINQP[tier]!=null) q.value=String(_BW_MINQP[tier]);
-  applyVideo();
+  applyVideo();   // sends both min_qp and the matching MJPEG quality
 }
 // Bandwidth preset for the MJPEG path: drives fps + quality instead of a
 // resolution the CSI pipeline throws away and a bitrate only H.264 reads.
@@ -3211,12 +3211,25 @@ async function applyVideo(){
   const res=document.getElementById('sel-res').value;
   const fps=parseInt(document.getElementById('sel-fps').value);
   const mode=_preferredTransport;
-  // min_qp, not bitrate. The bitrate field still exists in the API for
-  // compatibility but the encoder ignores it, so sending it would be theatre.
+  // Send BOTH levers, because the two transports have different ones and a
+  // SHIPPED unit runs MJPEG (build-image.sh pins video.mode="mjpeg"; the Pi4
+  // H.264 encoder corrupts high-contrast text). min_qp is read only by the
+  // H.264 launcher, so sending it alone made this control pure theatre on every
+  // customer unit: it restarted the stream, said "Video updated", persisted the
+  // value, and changed the bandwidth by exactly zero.
+  //
+  // MJPEG's lever is --quality (higher = better), the inverse of min_qp. The
+  // values below are deliberately at or under 30 because video.py caps quality
+  // at 30 whenever the resolution is high (min(self.quality,30) if _hi_res) -
+  // anything above that would be silently clamped and, again, do nothing.
+  const _MJPEG_Q = {20:30, 26:26, 30:22, 34:18, 40:14};
   const qEl=document.getElementById('sel-quality');
   const min_qp=qEl?parseInt(qEl.value,10):undefined;
   const body={resolution:res, fps, mode};
-  if(min_qp && !isNaN(min_qp)) body.min_qp=min_qp;
+  if(min_qp && !isNaN(min_qp)){
+    body.min_qp=min_qp;                       // H.264 path
+    if(_MJPEG_Q[min_qp]) body.quality=_MJPEG_Q[min_qp];   // MJPEG path
+  }
   try{
     const r=await fetch('/api/stream/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const d=await r.json();

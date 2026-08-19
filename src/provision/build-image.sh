@@ -444,6 +444,13 @@ fi
 # Strip the stub too (harmless), but do the real work on the mounted BOOTPART.
 rm -f "$MNT"/boot/firmware/magicbridge-setup-report.txt "$MNT"/boot/magicbridge-setup-report.txt 2>/dev/null || true
 rm -f "$MNT"/boot/firmware/magicbridge-password.txt    "$MNT"/boot/magicbridge-password.txt    2>/dev/null || true
+# The lockdown's PERSISTED firewall rules, not just the config flag above.
+# netfilter-persistent restores rules.v4 at boot, so a golden unit cloned while
+# Tailscale-only was on would ship every clone with :80/:443 DROPped even after
+# the flag is gone. Drop only our own commented rules; leave anything else.
+for _rf in "$MNT"/etc/iptables/rules.v4 "$MNT"/etc/iptables/rules.v6; do
+  [ -f "$_rf" ] && sed -i '/mb-lockdown/d' "$_rf" 2>/dev/null || true
+done
 if [[ -n "${BOOTPART:-}" ]]; then
   _SB=$(mktemp -d)
   if mount "$BOOTPART" "$_SB" 2>/dev/null; then
@@ -484,6 +491,13 @@ p=sys.argv[1]
 try: c=json.load(open(p))
 except Exception: c={}
 c.pop("auth",None); c.pop("tailscale",None); c.pop("duckdns",None)
+# network.tailscale_only MUST go with the Tailscale identity we just stripped.
+# magicbridge.py re-applies the lockdown from this flag on EVERY boot, and
+# first-boot deletes tailscaled.state - so a golden unit cloned while locked
+# down shipped every clone with :80/:443 DROPped and no tailscale0 to come in
+# on. The buyer would get an OLED showing an IP that answers nothing, forever,
+# with no way to heal it.
+if isinstance(c.get("network"),dict): c["network"].pop("tailscale_only",None)
 if isinstance(c.get("ai"),dict): c["ai"].pop("keys",None)   # provider API keys - never ship
 if isinstance(c.get("usb"),dict): c["usb"]["serial"]=""
 c["mac_persist"]={}                        # -> unique vendor MAC per unit
