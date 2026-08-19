@@ -134,6 +134,11 @@ if [[ "$PW_OUT" == "1" && -s /run/magicbridge/.new-web-password ]]; then
           echo "User: (none)"; echo "Password: magicbridge      (admin panel: stealthbridge)"; echo;
           echo "You will be asked to choose your own password the first time you"; echo;
           echo "sign in. The device will not do anything else until you do."; echo;
+          if [ -s /run/magicbridge/.new-os-password ]; then
+            echo "SSH (only if you want a terminal; not needed for normal use)";
+            echo "  user: ${OSUSER:-raj}   password: $(cat /run/magicbridge/.new-os-password)";
+            echo "  This one is UNIQUE to this device."; echo;
+          fi
           echo "NOTE: your browser will warn the connection is not private. That";
           echo "is expected on a private device with a self-signed certificate:";
           echo "choose Advanced, then Proceed."; } \
@@ -162,6 +167,26 @@ else
            /var/lib/NetworkManager/*.lease \
            /var/lib/NetworkManager/*-internal.lease \
            /var/lib/NetworkManager/dhclient*.lease 2>/dev/null || true
+fi
+
+# 5b. Linux ACCOUNT password - per unit, never shared.
+# build-image.sh locks every account password in the distributed image, because
+# shipping the build unit's password gave one buyer root over SSH on every unit
+# (that account has NOPASSWD sudo and sshd allows password login). Locked alone
+# would leave the owner unable to SSH in at all, so mint a fresh random one here
+# and surface it beside the web password. FAIL-CLOSED: if this cannot be set the
+# unit must not stamp first-boot done, or it ships locked-out or, worse, unlocked.
+OSUSER="$(getent passwd 1000 2>/dev/null | cut -d: -f1)"
+[ -n "$OSUSER" ] || OSUSER="raj"
+if id "$OSUSER" >/dev/null 2>&1; then
+    OSPW="$(tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 14 || true)"
+    if [ -n "$OSPW" ] && printf '%s:%s\n' "$OSUSER" "$OSPW" | chpasswd 2>/dev/null; then
+        info "per-unit Linux password set for $OSUSER"
+        printf '%s' "$OSPW" > /run/magicbridge/.new-os-password 2>/dev/null || true
+        chmod 600 /run/magicbridge/.new-os-password 2>/dev/null || true
+    else
+        fail "could not set a per-unit Linux account password for $OSUSER"
+    fi
 fi
 
 # 6. Tailscale — don't inherit the builder's node identity.

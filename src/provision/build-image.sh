@@ -142,6 +142,7 @@ if [[ "$MODE" == "verify" ]]; then
   # only a REAL non-empty file here is an actual cross-link id.
   chk "dbus machine-id blank (cross-link id)"        '[ -L "$R/var/lib/dbus/machine-id" ] || [ ! -s "$R/var/lib/dbus/machine-id" ]'
   chk "no AI provider keys in config"                'python3 -c "import json,sys;sys.exit(0 if not json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"ai\",{}).get(\"keys\") else 1)"'
+  chk "no usable Linux account password (shared root credential)" '! awk -F: "\$2 ~ /^\\$/ {found=1} END {exit !found}" "$R/etc/shadow"'
   chk "/tmp is empty (it is on the rootfs, so it ships)" '[ -z "$(find "$R/tmp" -mindepth 1 -print -quit 2>/dev/null)" ]'
   chk "no app backup files (*.bak/.old/.orig)"       '[ -z "$(find "$R/opt/magicbridge" -maxdepth 3 \( -name "*.bak" -o -name "*.bak.*" -o -name "*.bak_*" -o -name "*.old" -o -name "*.orig" \) -print -quit 2>/dev/null)" ]'
   chk "no Tailscale identity"                        '[ ! -f "$R/var/lib/tailscale/tailscaled.state" ]'
@@ -426,6 +427,22 @@ rm -f "$MNT"/var/log/mb-hdmi-init.log "$MNT"/var/log/magicbridge-update.log 2>/d
 rm -f "$MNT"/etc/systemd/system/mb-mac.service \
       "$MNT"/etc/systemd/system/multi-user.target.wants/mb-mac.service 2>/dev/null || true
 rm -f "$MNT"/etc/magicbridge/.provision-wifi "$MNT"/tmp/mb-ts-key 2>/dev/null || true
+
+# LOCK EVERY LINUX ACCOUNT PASSWORD. This block strips SSH host keys, machine-id,
+# TLS certs, WiFi, Tailscale and the MAC - but it never touched /etc/shadow, so
+# every distributed image carried the BUILD UNIT's account password. That
+# account has NOPASSWD sudo, install.sh forces PasswordAuthentication yes, and
+# port 22 is accepted on every interface, so one buyer (or one imaged card) had
+# root over SSH on every unit ever sold - completely bypassing the web
+# first-run password lock, which cannot gate sshd.
+# Locked here, then given a fresh RANDOM password per unit by mb-secret-reset on
+# first boot, so the owner still gets SSH but no two units share a credential.
+if [[ -f "$MNT/etc/shadow" ]]; then
+  awk -F: 'BEGIN{OFS=":"} {if ($2 ~ /^\$/) $2="!"; print}' "$MNT/etc/shadow" > "$MNT/etc/shadow.mbtmp" \
+    && mv "$MNT/etc/shadow.mbtmp" "$MNT/etc/shadow" \
+    && chmod 640 "$MNT/etc/shadow" 2>/dev/null || true
+  ok "  every account password locked (per-unit password set on first boot)"
+fi
 
 # CLEAR /tmp AND /var/tmp ENTIRELY. On this image /tmp is on the ROOTFS, not a
 # tmpfs, so anything left there is cloned into every unit we ship. On the golden
