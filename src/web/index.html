@@ -3152,6 +3152,10 @@ const _BW_MINQP = {low: 40, bal: 30, sharp: 20};
 // fps and JPEG quality. Measured on a 1080p unit: q10 87 KB/frame, q15 108 KB,
 // q20 129 KB, q25 147 KB. Before this, "Low" actually RAISED bandwidth on MJPEG
 // (it pushed fps from 10 up to 15) while its tooltip promised 1.5 Mbps.
+// min_qp option value -> the MJPEG --quality it means. MUST match MJPEG_LADDER
+// in magicbridge.py (tests/test_quality_tables_agree.py enforces that). Declared
+// at top level because both applyVideo() and the dropdown seeding need it.
+const _MJPEG_Q = {20:20, 26:16, 30:12, 34:9, 40:6};
 const _BW_MJPEG = {
   low:   {fps: 10, quality: 10},   // ~7 Mbit/s at 1080p
   bal:   {fps: 20, quality: 12},   // ~16 Mbit/s
@@ -3229,7 +3233,7 @@ async function applyVideo(){
   // (build-image.sh), so the panel's default selection matches what the unit
   // shipped with. They are also all under video.py's high-resolution clamp of
   // 30, which would silently discard anything above it.
-  const _MJPEG_Q = {20:20, 26:16, 30:12, 34:9, 40:6};   // MUST match MJPEG_LADDER in magicbridge.py
+
   const qEl=document.getElementById('sel-quality');
   const min_qp=qEl?parseInt(qEl.value,10):undefined;
   const body={resolution:res, fps, mode};
@@ -4256,10 +4260,36 @@ async function refreshStatus(){
       // it silently reset that too. Seed from the CEILING when the adapter has
       // eased off, so the box shows the operator's own setting rather than the
       // temporary degraded one.
+      // The <option> VALUES are min_qp numbers, but on a shipped (MJPEG) unit the
+      // live setting is a --quality number on a completely different scale. So
+      // seeding straight from it matched no option, the select silently fell back
+      // to its markup default "Balanced", and the operator's next Apply POSTed
+      // that default over the quality they had actually saved - the very
+      // overwrite this block exists to prevent, just via the other lever.
+      // Map through _MJPEG_Q instead, nearest-rung so the off-ladder values the
+      // MJPEG bandwidth presets write (10, 12, 25) still land somewhere sane.
       const q=document.getElementById('sel-quality');
-      if(q && d.stream.min_qp){
-        const want=String(_adaptCeiling || d.stream.min_qp);
-        if(Array.prototype.some.call(q.options,o=>o.value===want)) q.value=want;
+      if(q){
+        let want=null;
+        // Decide from d.stream.mode, NOT from _adaptField. This block is a
+        // ONE-SHOT that fires on the first status poll, which routinely beats
+        // the /api/stream/adapt fetch that populates _adaptField - so keying on
+        // _adaptField meant the branch was simply never taken and the select
+        // still fell back to its markup default. The mode is in this very
+        // payload, so it is always there when we need it.
+        const liveQ = d.stream.quality || _adaptCeiling;
+        if(d.stream.mode==='mjpeg' && liveQ){
+          let best=null, bestd=Infinity;
+          for(const k in _MJPEG_Q){
+            const dd=Math.abs(_MJPEG_Q[k]-liveQ);
+            if(dd<bestd){ bestd=dd; best=k; }
+          }
+          want=best;
+        }else if(d.stream.min_qp){
+          want=String(_adaptCeiling || d.stream.min_qp);
+        }
+        if(want && Array.prototype.some.call(q.options,o=>o.value===String(want)))
+          q.value=String(want);
       }
     }
     maybeShowPwWarn(!!d.default_pw);
@@ -4800,7 +4830,7 @@ let _adaptLastLost = -1, _adaptLastRecv = -1, _adaptRtt = -1, _adaptSince = 0;
 // A genuinely healed link clears the penalty by staying clean.
 const ADAPT_REGRET_MS  = 240000;  // an "up" undone within 4 min counts as a mistake
 const ADAPT_GOOD_MAX   = 16;      // ceiling on the multiplier (~10 min of clean)
-let _adaptGoodNeed = ADAPT_GOOD_N, _adaptLastUpAt = 0, _adaptCeiling = 0;
+let _adaptGoodNeed = ADAPT_GOOD_N, _adaptLastUpAt = 0, _adaptCeiling = 0, _adaptField = '';
 let _adaptGen = -1;   // the _webrtcGen the counters belong to
 
 function adaptNote(t){
@@ -4818,6 +4848,7 @@ async function adaptRefresh(){
     const d = await r.json();
     const a = d.adapt || {};
     if(a.ceiling) _adaptCeiling = a.ceiling;
+    if(a.field) _adaptField = a.field;   // "quality" on MJPEG, "min_qp" on H.264
     if(!_adaptOn) return;
     adaptNote(a.adapted
       ? ('Eased off' + (a.reason ? ' (' + a.reason + ')' : ''))
