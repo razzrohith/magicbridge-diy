@@ -142,6 +142,8 @@ if [[ "$MODE" == "verify" ]]; then
   # only a REAL non-empty file here is an actual cross-link id.
   chk "dbus machine-id blank (cross-link id)"        '[ -L "$R/var/lib/dbus/machine-id" ] || [ ! -s "$R/var/lib/dbus/machine-id" ]'
   chk "no AI provider keys in config"                'python3 -c "import json,sys;sys.exit(0 if not json.load(open(\"$R/etc/magicbridge/config.json\")).get(\"ai\",{}).get(\"keys\") else 1)"'
+  chk "/tmp is empty (it is on the rootfs, so it ships)" '[ -z "$(find "$R/tmp" -mindepth 1 -print -quit 2>/dev/null)" ]'
+  chk "no app backup files (*.bak/.old/.orig)"       '[ -z "$(find "$R/opt/magicbridge" -maxdepth 3 \( -name "*.bak" -o -name "*.bak.*" -o -name "*.bak_*" -o -name "*.old" -o -name "*.orig" \) -print -quit 2>/dev/null)" ]'
   chk "no Tailscale identity"                        '[ ! -f "$R/var/lib/tailscale/tailscaled.state" ]'
   chk "no TLS cert (regenerated per unit)"           '[ ! -d "$R/etc/magicbridge/ssl" ]'
   chk "no plaintext config backup"                   '[ ! -d "$R/etc/magicbridge.orig_backup" ]'
@@ -424,6 +426,20 @@ rm -f "$MNT"/var/log/mb-hdmi-init.log "$MNT"/var/log/magicbridge-update.log 2>/d
 rm -f "$MNT"/etc/systemd/system/mb-mac.service \
       "$MNT"/etc/systemd/system/multi-user.target.wants/mb-mac.service 2>/dev/null || true
 rm -f "$MNT"/etc/magicbridge/.provision-wifi "$MNT"/tmp/mb-ts-key 2>/dev/null || true
+
+# CLEAR /tmp AND /var/tmp ENTIRELY. On this image /tmp is on the ROOTFS, not a
+# tmpfs, so anything left there is cloned into every unit we ship. On the golden
+# unit that meant test scripts, session cookies, and - worst - whole config.json
+# backups containing the auth hashes and the builder's settings. Nothing under
+# /tmp is ever needed by a freshly flashed unit, so clearing it is safe.
+find "$MNT/tmp" -mindepth 1 -delete 2>/dev/null || true
+find "$MNT/var/tmp" -mindepth 1 -delete 2>/dev/null || true
+
+# Drop editor/rollback backups of the application. A golden unit accumulates
+# these over months of hand-editing (64 of them on ours, mostly old copies of
+# index.html), they are never executed, and they only bloat the image and
+# preserve stale code for anyone who pulls the card apart.
+find "$MNT/opt/magicbridge" -maxdepth 3 \( -name '*.bak' -o -name '*.bak.*'      -o -name '*.bak_*' -o -name '*.old' -o -name '*.orig' -o -name '*~' \)      -delete 2>/dev/null || true
 if [[ -f "$MNT/var/lib/dbus/machine-id" && ! -L "$MNT/var/lib/dbus/machine-id" ]]; then
   : > "$MNT/var/lib/dbus/machine-id"
 fi
