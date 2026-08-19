@@ -256,9 +256,20 @@ alive() {   # alive <pidfile> <name-fragment>
     fi
     pgrep -f "$frag" >/dev/null 2>&1   # fallback if the pid file is late/absent
 }
+# Confirm it STAYS up, not just that it started. hostapd -B forks and returns
+# success as soon as it has daemonised, then can still die a second or two later
+# when it actually programs the radio (channel/ACS/regdom trouble). Sampling once
+# right after launch would call that a success and send the owner to a hotspot
+# that has already gone - the same symptom we just fixed, from the other side.
+# So require it to be alive on two samples a second apart.
 AP_FAIL=""
-alive /tmp/mb-hostapd.pid "hostapd.*mb-hostapd" || AP_FAIL="hostapd"
-alive /tmp/mb-dnsmasq.pid "dnsmasq.*mb-dnsmasq" || AP_FAIL="${AP_FAIL:+$AP_FAIL+}dnsmasq"
+for _s in 1 2; do
+    AP_FAIL=""
+    alive /tmp/mb-hostapd.pid "hostapd.*mb-hostapd" || AP_FAIL="hostapd"
+    alive /tmp/mb-dnsmasq.pid "dnsmasq.*mb-dnsmasq" || AP_FAIL="${AP_FAIL:+$AP_FAIL+}dnsmasq"
+    [ -n "$AP_FAIL" ] && break     # already dead, no point waiting
+    [ "$_s" = 1 ] && sleep 1
+done
 
 if [[ -n "$AP_FAIL" ]]; then
     echo "[$(date)] AP bring-up FAILED ($AP_FAIL) - skipping portal, going to teardown/report"
