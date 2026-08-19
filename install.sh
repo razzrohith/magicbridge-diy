@@ -26,7 +26,7 @@
 #  (see the closing notes) - everything else the anonymity model needs
 #  (RAM-only logs, spoofable identity) is set up here.
 #
-#  Assumes the Pi user account (raj/lol, or whatever username was set
+#  Assumes the Pi user account (see .secrets/device.env, or whatever username was set
 #  during Raspberry Pi Imager flashing) already has sudo + SSH access.
 #  This script does not create or modify any Linux user accounts.
 # =============================================================

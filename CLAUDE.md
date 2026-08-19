@@ -13,7 +13,7 @@ device is plugged into the target, the target must not detect a KVM/Pi. Preserve
 the anonymity model (`MAGICBRIDGE_SYSTEM.md` §2) through every change.
 
 ## The device
-- Pi @ **172.16.20.116**, SSH **`raj` / `lol`**. Sudo: `echo 'lol' | sudo -S bash -c '…'`
+- Pi @ **172.16.20.116**, SSH creds and sudo password: see `.secrets/device.env` (untracked)
 - Real backend: **`/opt/magicbridge/core/magicbridge.py`** (NOT `/opt/magicbridge/magicbridge.py`, which is empty).
 - `/opt/magicbridge` on the Pi is **NOT a git repo** → deploy by **SFTP** (large
   files via `sftp.putfo`, never base64 echo — it truncates).

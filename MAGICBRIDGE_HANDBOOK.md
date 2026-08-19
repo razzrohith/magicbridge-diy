@@ -44,10 +44,10 @@ USB gadget mode: the Pi's USB-C port presents as a USB keyboard + mouse via the 
 |------|-------|
 | IP | `172.16.20.116` (may change if DHCP renews — check router if unreachable) |
 | SSH user | `raj` |
-| SSH password | `lol` |
-| Sudo password | `lol` |
+| SSH password | `<redacted>` |
+| Sudo password | `<redacted>` |
 | Web UI | `https://172.16.20.116/` or `https://magicbridge.local/` |
-| Sudo syntax | `echo 'lol' \| sudo -S bash -c '<command>'` |
+| Sudo syntax | `echo "$MB_SUDO_PW" \| sudo -S bash -c '<command>'` |
 
 ### CRITICAL constraint: no sandbox → Pi network path
 The Cowork/Claude Linux sandbox **cannot reach 172.16.20.116**. All Pi access goes through **Windows Python + paramiko**, executed via the File Explorer address-bar trick:
@@ -262,7 +262,7 @@ A full feature-by-feature audit (67 features scored working/partial/missing, wit
 2. Never shell-redirect a deploy script's output (`> log.txt`) — it writes its own log internally.
 3. Large files (HTML/Python) deploy via SFTP, never base64/echo.
 4. No admin rights on the Windows laptop.
-5. Sudo on the Pi: `echo 'lol' | sudo -S bash -c '<command>'`.
+5. Sudo on the Pi: `echo "$MB_SUDO_PW" | sudo -S bash -c '<command>'`.
 6. Never put `JSON.stringify(x)` inside an HTML `onclick` attribute — use `data-*` attributes (`el.closest('[data-net]').dataset.net`), a real bug hit and fixed in an earlier session.
 7. Real backend is `/opt/magicbridge/core/magicbridge.py` — `/opt/magicbridge/magicbridge.py` is an empty decoy.
 8. Use the `Read` tool (not bash) as ground truth for any `_live_pull`/`pi_source` file edited via `Edit` this session — see the drift-risk note in §4.
@@ -270,4 +270,4 @@ A full feature-by-feature audit (67 features scored working/partial/missing, wit
 
 ---
 
-*Source of truth: the live Pi filesystem is still ground truth for anything not yet synced. As of 2026-07-09, `github.com/razzrohith/MagicBridge` (`main`, commit `13246c7` as of this writing) and the laptop clone at `C:\Users\razzr\Claude\Projects\MagicBridge\repo\` are reconciled with it — prefer editing the repo clone and deploying via SFTP + `mb_git_*` sync over the older `_live_pull\`/`pi_source\` mirrors where both exist. Deploy-script staging area (not source of truth): `E:\Startup\magicbridge\`. Pi: `172.16.20.116`, user `raj`, password `lol`.*
+*Source of truth: the live Pi filesystem is still ground truth for anything not yet synced. As of 2026-07-09, `github.com/razzrohith/MagicBridge` (`main`, commit `13246c7` as of this writing) and the local laptop clone are reconciled with it — prefer editing the repo clone and deploying via SFTP + `mb_git_*` sync over the older `_live_pull\`/`pi_source\` mirrors where both exist. Deploy-script staging area (not source of truth): `E:\Startup\magicbridge\`. Pi: `172.16.20.116`, credentials: see `.secrets/device.env` (untracked).*

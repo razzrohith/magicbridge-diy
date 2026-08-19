@@ -88,7 +88,7 @@ UI language, and stealth model but run on different hardware/software stacks.
                 │                                     │
         MagicBridge DIY                       MagicBridge PiKVM
         repo: magicbridge-diy                 repo: magicbridge-pikvm
-        Pi @ 172.16.20.116 (raj/lol)          Pi @ 172.16.20.209 (root/root)
+        Pi @ 172.16.20.116 (creds: see .secrets/device.env)          Pi @ 172.16.20.209 (creds: see .secrets/device.env)
         Raspberry Pi 4B, from scratch          PiKVM V4 Mini, fork of kvmd
         C790 (TC358743) CSI capture            kvmd-native capture + Janus
         + LED + fan + OLED                     PiKVM OS base, rebranded
@@ -115,12 +115,12 @@ Old "V2/V3" version labels are **RETIRED** — use the platform names above.
 |---|---|---|
 | Board | Raspberry Pi 4B | PiKVM V4 Mini (CM4) |
 | Pi IP | 172.16.20.116 | 172.16.20.209 |
-| SSH | `raj` / `lol` | `root` / `root` |
+| SSH | creds: see `.secrets/device.env` | creds: see `.secrets/device.env` |
 | Capture | C790 HDMI→CSI-2 (TC358743) | kvmd-native |
 | Video ceiling | 1080p**50** (2 CSI lanes) | up to 1080p60 (CM4, 4 lanes) |
 | Install root | `/opt/magicbridge` (NOT a git repo — deploy via SFTP) | `/opt/magicbridge` is a git tree (deploy via `align_pi.py` git reset) |
 | Real backend | `/opt/magicbridge/core/magicbridge.py` | kvmd + `/opt/magicbridge/services/*` |
-| Sudo on Pi | `echo 'lol' \| sudo -S bash -c '…'` | root (no sudo needed) |
+| Sudo on Pi | `echo "$MB_SUDO_PW" \| sudo -S bash -c '…'` | root (no sudo needed) |
 
 **How to reach the Pis (Claude Code):** use your **built-in shell/terminal
 directly** — run `ssh` / `scp` / `git` / paramiko yourself. You do **NOT** need
@@ -312,7 +312,7 @@ brick the Pi or change its network/boot is RISKY.
 ## 11. Working with the Pi from a Claude Code session
 
 - Use the **native shell + SSH** (an isolated sandbox can't reach the LAN Pis).
-- **Sudo (DIY):** `echo 'lol' | sudo -S bash -c '…'`. PiKVM is root already.
+- **Sudo (DIY):** `echo "$MB_SUDO_PW" | sudo -S bash -c '…'`. PiKVM is root already.
 - **Large files → SFTP** (`sftp.putfo` / `scp`), never base64-echo (truncates).
 - **paramiko gotcha:** `exec_command(timeout=)` does NOT bound `stdout.read()`;
   set `channel.settimeout()` on the channel or a long read can hang forever.
