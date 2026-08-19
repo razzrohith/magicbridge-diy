@@ -917,6 +917,7 @@ async def first_run_handler(request: web.Request) -> web.Response:
         return web.HTTPFound("/")
 
     error = ""
+    _rotated_stealth = False
     if request.method == "POST":
         data = await request.post()
         p1 = str(data.get("p1", ""))
@@ -954,6 +955,7 @@ async def first_run_handler(request: web.Request) -> web.Response:
             # windows. The panels keep INDEPENDENT session secrets.
             auth["password_hash"] = _new_hash
             auth["secret_key"] = _sec.token_hex(32)
+            _rotated_stealth = True
             # Rotate the session secret: any cookie minted while the default was
             # live (possibly by someone else who knew it) must stop validating.
             new_secret = _sec.token_hex(32)
@@ -963,6 +965,22 @@ async def first_run_handler(request: web.Request) -> web.Response:
             # No cache to clear: _using_default_pw memoises on the HASH itself,
             # so writing a new hash makes the next call recompute on its own.
             log.warning("First-run password set; session secret rotated")
+            # The stealth panel is a SEPARATE process that reads auth.secret_key
+            # once, at startup. Writing the new key to disk therefore does not
+            # invalidate anything in the running app: a session opened with the
+            # shipped "stealthbridge" would keep working until that service
+            # happened to restart - the exact window first-run exists to close.
+            # Restart it so the rotation means something now.
+            if _rotated_stealth:
+                try:
+                    import subprocess as _sp_fr   # module-level import does not exist here
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, lambda: _sp_fr.run(
+                            ["systemctl", "restart", "stealth-dashboard"],
+                            capture_output=True, timeout=20))
+                    log.info("stealth-dashboard restarted so its new secret takes effect")
+                except Exception as e:
+                    log.warning("could not restart stealth-dashboard: %s", e)
             # Re-issue a cookie for THIS browser so the owner is not bounced back
             # to the login page immediately after doing the right thing.
             resp = web.HTTPFound("/")
@@ -2373,7 +2391,13 @@ _adapt_lock = asyncio.Lock()
 # arithmetic and works for either transport without caring which way the numbers
 # run. Values are <= 30 because video.py clamps quality to 30 at high
 # resolution, so a coarser step must go below that to change anything at all.
-MJPEG_LADDER = [30, 26, 22, 18, 14]     # sharp -> coarse
+# Centred on the value the factory image pins (build-image.sh sets
+# video.quality = 12), NOT on some range above it. The first ladder here ran
+# 30..14, entirely ABOVE 12 - so a shipped unit that touched the control jumped
+# to MORE bandwidth than it left the factory with, and the adapter could never
+# ease off past 14 to reach the safe value it started on. The middle rung is 12
+# so the panel's default selection matches the factory exactly.
+MJPEG_LADDER = [20, 16, 12, 9, 6]       # sharp -> coarse
 
 
 def _adapt_ctx():

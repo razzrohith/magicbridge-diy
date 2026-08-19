@@ -3225,10 +3225,11 @@ async function applyVideo(){
   // value, and changed the bandwidth by exactly zero.
   //
   // MJPEG's lever is --quality (higher = better), the inverse of min_qp. The
-  // values below are deliberately at or under 30 because video.py caps quality
-  // at 30 whenever the resolution is high (min(self.quality,30) if _hi_res) -
-  // anything above that would be silently clamped and, again, do nothing.
-  const _MJPEG_Q = {20:30, 26:26, 30:22, 34:18, 40:14};
+  // The values are centred on 12, the quality the factory image pins
+  // (build-image.sh), so the panel's default selection matches what the unit
+  // shipped with. They are also all under video.py's high-resolution clamp of
+  // 30, which would silently discard anything above it.
+  const _MJPEG_Q = {20:20, 26:16, 30:12, 34:9, 40:6};   // MUST match MJPEG_LADDER in magicbridge.py
   const qEl=document.getElementById('sel-quality');
   const min_qp=qEl?parseInt(qEl.value,10):undefined;
   const body={resolution:res, fps, mode};
