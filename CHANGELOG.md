@@ -12,6 +12,11 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.7.4
+
+- The jiggler now waits a full 2 minutes of you being idle before it takes back
+  over, so it gives you more room during longer pauses in your work.
+
 ## 1.7.3
 
 - The mouse jiggler now stays out of your way. While you are controlling the

@@ -1433,7 +1433,7 @@ JIGGLER_DEFAULT_STYLE = "moderate"
 # auto-on, daily window) runs on a separate loop using absolute times and is
 # never shifted or reset by a pause, so a scheduled jiggler picks up right where
 # the clock left it.
-JIGGLER_ACTIVE_GRACE = 45
+JIGGLER_ACTIVE_GRACE = 120   # 2 minutes
 
 
 # ---- Human-wander motion (pure, testable) ---------------------------------
