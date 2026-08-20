@@ -1424,6 +1424,17 @@ JIGGLER_STYLES = {
 }
 JIGGLER_DEFAULT_STYLE = "moderate"
 
+# While a control session is CONNECTED, hold the jiggler at least this long after
+# the operator's last input before it moves again, so it never fights an active
+# session: a person working has natural pauses (reading, thinking) far longer
+# than the short per-style grace, and a cursor twitching mid-task is exactly what
+# this avoids. It resumes on its own once they have been idle this long, or as
+# soon as they disconnect. This ONLY gates the move - the schedule (auto-off,
+# auto-on, daily window) runs on a separate loop using absolute times and is
+# never shifted or reset by a pause, so a scheduled jiggler picks up right where
+# the clock left it.
+JIGGLER_ACTIVE_GRACE = 45
+
 
 # ---- Human-wander motion (pure, testable) ---------------------------------
 # Kept at module scope, free of any HID/`self` state, so the exact geometry and
@@ -1515,6 +1526,10 @@ class MouseJiggler:
         self.enabled = False
         self.style = JIGGLER_DEFAULT_STYLE
         self._task = None
+        # True when the jiggler is ON but holding still because the operator is
+        # actively driving the target (see the run loop). Surfaced in status so
+        # the UI can say "paused - you're using it" instead of looking off.
+        self._paused_for_input = False
         # Estimated net displacement from where the cursor started, in px. Used
         # ONLY by the "human" wander style to keep its long strokes from running
         # off to a screen corner. It is an estimate (relative mode gives us no
@@ -1593,6 +1608,8 @@ class MouseJiggler:
                 local = None
         return {
             "enabled":   self.enabled,
+            # Enabled but holding still because the operator is driving the target.
+            "paused_active": bool(self.enabled and self._paused_for_input),
             "style":     self.style,
             "styles":    {k: v["label"] for k, v in JIGGLER_STYLES.items()},
             "off_at":    self.off_at,            # epoch seconds, or null
@@ -1717,9 +1734,21 @@ class MouseJiggler:
             await asyncio.sleep(wait)
 
             if not self.enabled:
+                self._paused_for_input = False
                 continue
-            if time.time() - _last_real_input[0] < cfg["pause_after_real_input"]:
+            # Pause while the human is (or was just) driving the target. With a
+            # session CONNECTED we hold a long grace (JIGGLER_ACTIVE_GRACE) so the
+            # jiggler never jumps in during a brief pause in their work; with
+            # nobody connected the short per-style grace applies (keep-awake is
+            # the whole point). Resumes automatically once they are idle past the
+            # grace or disconnect. The schedule is untouched (separate loop).
+            grace = cfg["pause_after_real_input"]
+            if _ws_clients:
+                grace = max(grace, JIGGLER_ACTIVE_GRACE)
+            if time.time() - _last_real_input[0] < grace:
+                self._paused_for_input = True
                 continue  # don't fight an active KVM session
+            self._paused_for_input = False
 
             try:
                 mover = self._wander if cfg.get("mode") == "wander" else self._jiggle

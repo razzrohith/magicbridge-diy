@@ -5182,8 +5182,13 @@ async function refreshJigglerStatus(){
     const st=document.getElementById('jiggler-status');
     if(st){
       const lbl=(d.styles&&d.styles[d.style])||JIG_STYLE_LABELS[d.style]||d.style||'';
-      st.textContent = _jigEnabled ? ('Running · '+lbl) : 'Off';
-      st.style.color = _jigEnabled ? 'var(--green)' : 'var(--muted)';
+      if(_jigEnabled && d.paused_active){
+        st.textContent = 'Paused · you’re using it';   // holds still while you control; resumes when idle
+        st.style.color = 'var(--yellow)';
+      } else {
+        st.textContent = _jigEnabled ? ('Running · '+lbl) : 'Off';
+        st.style.color = _jigEnabled ? 'var(--green)' : 'var(--muted)';
+      }
     }
     _jigTzFill(d);
     _jigRenderAutomation(d);

@@ -12,6 +12,15 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.7.3
+
+- The mouse jiggler now stays out of your way. While you are controlling the
+  other computer it pauses on its own, and stays paused as long as you keep
+  working (short pauses to read or think are fine). It resumes by itself once you
+  step away. Any on/off schedule or timer you set keeps running in the
+  background, so the jiggler picks up right where the clock left it. The jiggler
+  panel shows "Paused, you're using it" while you are active.
+
 ## 1.7.2
 
 - Much better on a phone. You can now tap the screen to click, drag two fingers
