@@ -892,11 +892,9 @@ color:#ffb3c0;border-radius:9px;padding:10px 12px;font-size:13px;margin-bottom:1
 .note{color:var(--muted);font-size:12px;margin-top:16px}
 </style></head><body><div class="card">
 <h1>Choose a password</h1>
-<p class="lead">This device is still using its published default password, so anyone
-on this network could take control of the connected computer. Set your own password
-to continue. Nothing else works until you do.</p>
-<p class="lead">This sets the password for <b>both</b> this page and the admin
-panel, so neither is left on a default.</p>
+<p class="lead">This device still uses its default password, which is public. Set your
+own password to continue.</p>
+<p class="lead">This sets the password for <b>both</b> this page and the admin panel.</p>
 __ERROR__
 <form method="POST" action="/first-run">
   <label for="p1">New password</label>

@@ -12,6 +12,11 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.7.7
+
+- Shortened the password-change screens on the control page and the admin page
+  so they read cleaner and get to the point.
+
 ## 1.7.6
 
 - Trimmed the wordy help text in Settings so the panels read cleaner and more

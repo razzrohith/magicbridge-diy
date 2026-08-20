@@ -2425,9 +2425,8 @@ color:#ffb3c0;border-radius:9px;padding:10px 12px;font-size:13px;margin-bottom:1
 .note{color:var(--muted);font-size:12px;margin-top:16px}
 </style></head><body><div class="card">
 <h1>Choose a password</h1>
-<p class="lead">This admin panel is still using its published default password.
-It can change how the device appears to the target computer and can reveal saved
-WiFi passwords, so set your own password before going any further.</p>
+<p class="lead">This admin panel still uses its default password, which is public.
+Set your own password to continue.</p>
 {% if error %}<div class="err">{{ error }}</div>{% endif %}
 <form method="POST">
   <input type="hidden" name="_csrf" value="{{ csrf }}">
