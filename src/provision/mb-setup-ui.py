@@ -187,7 +187,13 @@ class Handler(BaseHTTPRequestHandler):
         # Write TS key if given
         if tskey:
             try:
-                with open(TS_FILE, "w") as f:
+                # 0600, like WIFI_FILE above. A bare open() creates 0644, and on
+                # this image /tmp is on the ROOTFS rather than a tmpfs - so a
+                # Tailscale auth key, which is enough to join the owner's tailnet,
+                # was left world-readable on disk and survived a reboot.
+                fd = os.open(TS_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                os.fchmod(fd, 0o600)
+                with os.fdopen(fd, "w") as f:
                     f.write(tskey)
             except Exception:
                 pass

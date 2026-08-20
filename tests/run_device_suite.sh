@@ -60,6 +60,7 @@ run test_session_revocation_live python3 /tmp/test_session_revocation_live.py
 run test_sweeper_precision     python3 /tmp/regfix_test.py
 run test_mjpeg_rungs           python3 /tmp/rungcheck.py
 run test_first_run_journey     python3 /tmp/e2e.py
+run test_stealth_failclosed    python3 /tmp/test_stealth_failclosed.py
 # Restore to the SHIPPED DEFAULTS, not to "whatever was there when the suite
 # started". Several tests deliberately change passwords, and restoring a
 # start-of-run snapshot just propagates the previous run's leftovers - which is

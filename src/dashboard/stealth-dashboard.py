@@ -252,23 +252,92 @@ def _using_default_pw() -> bool:
     return v
 
 # Config helpers
-def _load() -> dict:
+class ConfigCorrupt(Exception):
+    """config.json exists but could not be parsed. NOT the same as absent."""
+
+
+def _load(strict: bool = False) -> dict:
+    """Read config.json. ABSENT reads as {}; CORRUPT is an error, not an empty dict.
+
+    That distinction is the whole point. This used to swallow every exception
+    and return {}, so a torn file looked exactly like a brand-new device -
+    _ensure_defaults then wrote back the PUBLISHED default password, minted a
+    new secret, and persisted a config containing nothing but the auth block,
+    destroying main_password_hash, usb, edid, mac_persist and the rest.
+    Anyone on the LAN could then sign in with the word from this repo.
+
+    Reaching a torn file was not exotic either: _save() below is called from 19
+    places, Flask serves requests threaded, and the device is USB-powered and
+    unplugged casually. magicbridge.py already fails closed here for exactly
+    this reason (see its _read_config); this now matches.
+    """
+    p = Path(CONFIG_PATH)
     try:
-        return json.loads(Path(CONFIG_PATH).read_text())
+        raw = p.read_text()
+    except FileNotFoundError:
+        return {}
     except Exception:
+        if strict:
+            raise ConfigCorrupt("config unreadable")
+        return {}
+    try:
+        return json.loads(raw)
+    except Exception as e:
+        if strict:
+            raise ConfigCorrupt("config unparseable: %s" % e)
         return {}
 
+
 def _save(cfg: dict):
-    Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-    Path(CONFIG_PATH).write_text(json.dumps(cfg, indent=2))
+    """Atomic write: temp file, fsync, rename. Never truncate the live file.
+
+    The old version was Path.write_text() - truncate first, then write - so an
+    interrupted or interleaved save left a zero-length or half-written
+    config.json holding the password hashes for BOTH panels. Same contract as
+    magicbridge.py's _write_config.
+    """
+    import os as _os, tempfile as _tf
+    d = Path(CONFIG_PATH).parent
+    d.mkdir(parents=True, exist_ok=True)
+    fd, tmp = _tf.mkstemp(dir=str(d), prefix=".cfg.", suffix=".tmp")
+    try:
+        with _os.fdopen(fd, "w") as f:
+            json.dump(cfg, f, indent=2)
+            f.flush()
+            _os.fsync(f.fileno())
+        _os.chmod(tmp, 0o600)
+        _os.replace(tmp, CONFIG_PATH)
+    except Exception:
+        try:
+            _os.unlink(tmp)
+        except Exception:
+            pass
+        raise
+
 
 def _ensure_defaults(cfg: dict) -> dict:
+    """Bootstrap auth for a genuinely NEW device only.
+
+    Refuses to write when config.json exists but could not be parsed: writing
+    defaults over a torn file is how a configured unit silently reverted to the
+    published password. On a corrupt file we leave it alone and serve from
+    whatever is in memory, so the failure is visible (login stops working) and
+    recoverable, rather than silent and exploitable.
+    """
+    try:
+        _load(strict=True)
+    except ConfigCorrupt as e:
+        app.logger.error("config.json is CORRUPT (%s) - NOT resetting auth over it", e)
+        return cfg
     auth = cfg.setdefault("auth", {})
+    changed = False
     if not auth.get("password_hash"):
         auth["password_hash"] = _hash_pw(DEFAULT_PASSWORD)
-        _save(cfg)
+        changed = True
     if not auth.get("secret_key"):
         auth["secret_key"] = secrets.token_hex(32)
+        changed = True
+    if changed:
         _save(cfg)
     return cfg
 
@@ -1602,7 +1671,8 @@ hr{border:none;border-top:1px solid var(--br);margin:10px 0}
     </div>
     <div id="pw-form" style="display:none;margin-top:10px">
       <div class="frow" style="flex-wrap:wrap;gap:7px">
-        <input type="password" id="pw-new" placeholder="New password" aria-label="New password" style="flex:1;min-width:120px">
+        <input type="password" id="pw-current" placeholder="Current password" aria-label="Current password" autocomplete="current-password" style="flex:1;min-width:120px">
+        <input type="password" id="pw-new" placeholder="New password" aria-label="New password" autocomplete="new-password" style="flex:1;min-width:120px">
         <input type="password" id="pw-confirm" placeholder="Confirm password" aria-label="Confirm password" style="flex:1;min-width:120px">
         <button class="btn btn-p" onclick="savePw()" aria-label="Save new password">Save</button>
         <button class="btn" onclick="document.getElementById('pw-form').style.display='none'" aria-label="Cancel">Cancel</button>
@@ -2204,15 +2274,19 @@ function chPw() {
 }
 
 async function savePw() {
+  const cu = document.getElementById('pw-current').value;
   const nw = document.getElementById('pw-new').value;
   const cf = document.getElementById('pw-confirm').value;
   const st = document.getElementById('pw-st');
   if (!nw) { st.textContent = 'Password cannot be empty'; return; }
   if (nw !== cf) { st.textContent = 'Passwords do not match'; return; }
-  const r = await api('/stealth/api/change-password', {password: nw});
+  // The server requires the current password: a session alone must not be
+  // enough to take over the panel that rotates identity and reads WiFi PSKs.
+  const r = await api('/stealth/api/change-password', {password: nw, current: cu});
   st.textContent = r.ok ? 'Password changed!' : (r.error||'Error');
   st.style.color = r.ok ? 'var(--ok)' : 'var(--er)';
   if (r.ok) {
+    document.getElementById('pw-current').value = '';
     document.getElementById('pw-new').value = '';
     document.getElementById('pw-confirm').value = '';
     setTimeout(() => { document.getElementById('pw-form').style.display='none'; }, 2000);
@@ -2361,7 +2435,10 @@ def first_run():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     cfg = _load()
-    _ensure_defaults(cfg)
+    # Deliberately NOT _ensure_defaults() here. Bootstrapping belongs in _boot();
+    # calling it from an UNAUTHENTICATED view meant any stranger hitting
+    # /stealth/login could trigger a config write, which is what turned a torn
+    # config into a reset-to-default-password with no operator action at all.
     _purge_old_logs_if_due()
     if request.method == "POST":
         ip = _client_ip()
@@ -2684,6 +2761,20 @@ def api_change_password():
         return jsonify({"ok": False, "error": "Password must be at least 4 characters"}), 400
     cfg = _load()
     auth = cfg.setdefault("auth", {})
+    # PROVE THE CURRENT PASSWORD. A session alone was enough to change it, so
+    # anyone who got a session - a borrowed/unlocked browser, a cookie lifted
+    # from a shared machine, or whoever reached the panel first during the
+    # shipped-default window - could lock the owner out of the panel that
+    # rotates USB/MAC/EDID identity and reads back saved WiFi PSKs. The main
+    # panel already requires this (magicbridge.py api_change_password); this
+    # brings the admin panel in line. Skipped only when the stored hash is the
+    # shipped default, since first_run() is the flow that replaces THAT and it
+    # has already proven the default.
+    _cur = str(d.get("current", ""))
+    _stored = auth.get("password_hash", "")
+    if _stored and not _check_pw(DEFAULT_PASSWORD, _stored):
+        if not _check_pw(_cur, _stored):
+            return jsonify({"ok": False, "error": "Current password is incorrect"}), 403
     auth["password_hash"] = _hash_pw(pw)
 
     # Rotate the Flask session-signing secret so any other already-issued
