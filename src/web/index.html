@@ -750,6 +750,7 @@ body:not(.fs) .fs-hud{display:none!important}
   <button id="fh-send" onclick="fhSend()">Send ↵</button>
   <div class="fh-sep"></div>
   <button class="fh-btn" onclick="releaseAll()" title="Release control">Release Input</button>
+  <button class="fh-btn" onclick="fsClosePaste()" title="Close (Esc)" aria-label="Close paste bar">✕ Close</button>
 </div>
 
 <!-- Main -->
@@ -3048,12 +3049,28 @@ function toggleFsCombos(e){
   document.getElementById('fshud-combos').classList.toggle('on',_fsCombosOpen);
 }
 function fsPaste(){
-  // Reveal + pin the bottom paste bar and focus its input; unpins when the
-  // input loses focus so it can auto-hide again.
+  // Reveal the bottom paste bar and focus its input. It has NO hover reveal any
+  // more, so it must be closed explicitly: the ✕ button, the Escape key while
+  // typing, or by clicking away from the bar (focus leaves #fs-bot). See
+  // fsClosePaste. This replaces the old behaviour where moving the cursor off
+  // the bottom edge hid it - which is exactly what made it pop up over the
+  // target's taskbar all the time.
   _fsbotPinned=true;
   const b=document.getElementById('fs-bot'); if(b) b.classList.add('vis');
   const i=document.getElementById('fh-input');
-  if(i){ i.focus(); i.onblur=()=>{ _fsbotPinned=false; i.onblur=null; }; }
+  if(i){ i.focus();
+    // Close when focus leaves the bar entirely (e.g. click back on the video).
+    // Clicking Send / the speed box / Release / ✕ keeps focus inside #fs-bot,
+    // so those never dismiss it out from under you.
+    i.onblur=(ev)=>{ const to=ev && ev.relatedTarget;
+      if(!(to && to.closest && to.closest('#fs-bot'))) fsClosePaste(); };
+  }
+}
+function fsClosePaste(){
+  _fsbotPinned=false;
+  const b=document.getElementById('fs-bot'); if(b) b.classList.remove('vis');
+  const i=document.getElementById('fh-input');
+  if(i){ i.onblur=null; i.blur(); }   // clear handler first so blur() can't re-enter
 }
 // Close the HUD combos dropdown when clicking outside it.
 document.addEventListener('click',e=>{ if(_fsCombosOpen && !e.target.closest('.fshud-cwrap')){ _fsCombosOpen=false; document.getElementById('fshud-combos').classList.remove('on'); } });
@@ -3083,7 +3100,10 @@ async function fhSend(){
   if(!ok){ toast('Not connected, text kept'); return; }
   inp.value=''; toast('Sent ✓');
 }
-document.getElementById('fh-input').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();fhSend();}});
+document.getElementById('fh-input').addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();fhSend();}
+  else if(e.key==='Escape'){e.preventDefault();e.stopPropagation();fsClosePaste();}   // Esc closes the paste bar (it does NOT reach the target: this field is a local input)
+});
 
 // Sidebar
 // On phones/narrow viewports start closed (it's an overlay there and would

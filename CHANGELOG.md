@@ -12,6 +12,12 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.4.2
+
+- The paste bar can now be closed. Use its Close button, press the Escape key
+  while typing in it, or click back on the screen and it goes away. Before, it
+  could be opened from the top bar but not dismissed.
+
 ## 1.4.1
 
 - In fullscreen, the control bar at the top no longer pops up by accident. It
