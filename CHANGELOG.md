@@ -12,6 +12,11 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.7.6
+
+- Trimmed the wordy help text in Settings so the panels read cleaner and more
+  professional.
+
 ## 1.7.5
 
 - When a new version is available, opening or refreshing the page now shows a

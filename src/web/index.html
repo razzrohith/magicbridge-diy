@@ -881,14 +881,14 @@ body:not(.fs) .fs-hud{display:none!important}
               <option value="40">Lightest - slow link</option>
             </select>
           </div>
-          <div class="snote" style="margin:5px 0 0">Lower quality means a slightly coarser picture and a much steadier connection. This is the control that actually changes bandwidth on this hardware.</div>
+          <div class="snote" style="margin:5px 0 0">Lower quality trades sharpness for a steadier link. The main control for reducing lag.</div>
           <div class="swrow" style="margin-top:8px">
             <label class="sw"><input type="checkbox" id="adapt-sw" aria-label="Ease off on a bad connection" checked onchange="adaptToggle(this.checked)"><i></i></label>
             <span class="swlab">Ease off on a bad connection
               <span class="swsub" id="adapt-status">Watching the link</span>
             </span>
           </div>
-          <div class="snote" style="margin:5px 0 0">Drops the picture quality one step when the link stays bad for a while, and puts it back when it recovers. It never goes sharper than the setting above. Each change reloads the video for about two seconds, so it waits for a real problem instead of reacting to every blip.</div>
+          <div class="snote" style="margin:5px 0 0">Lowers quality one step on a weak link, and restores it when the link recovers. Never sharper than the setting above.</div>
           <div class="srow" style="margin-top:6px"><span class="sk">Presets</span>
             <span style="display:flex;gap:4px">
               <button class="sbtn" style="padding:2px 9px;margin:0;font-size:11px" onclick="setBandwidthAuto('640x360',15,'low')" title="Slow or remote links">Low</button>
@@ -990,7 +990,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="srow" style="margin-bottom:6px"><span class="sk">Reach it at</span><span class="sv" id="mdns-url" style="font-weight:700">-</span></div>
           <label class="wifi-label" for="mdns-alias">Name (letters, numbers, hyphens)</label>
           <input class="sinput wifi-field" type="text" id="mdns-alias" placeholder="e.g. studio  →  studio.local" autocomplete="off" spellcheck="false" maxlength="32">
-          <div class="snote" style="margin:6px 0">Lets you open the device by a name you pick, on your own WiFi. Choose something plain, never a name that hints it is a control box. Leave empty for full stealth.</div>
+          <div class="snote" style="margin:6px 0">A name to open the device by on your WiFi. Keep it plain, nothing that hints at a control box. Leave empty for full stealth.</div>
           <div style="display:flex;gap:6px">
             <button class="sbtn pri" style="flex:2;min-width:0;white-space:nowrap" onclick="mdnsSave()">Save name</button>
             <button class="sbtn" style="flex:1;min-width:0;white-space:nowrap" onclick="mdnsClear()" title="Remove the custom name">Clear</button>
@@ -1293,7 +1293,7 @@ body:not(.fs) .fs-hud{display:none!important}
         <div class="sys-cat" data-cat="peripherals">
         <div class="scard">
           <div class="scard-title"><span class="dot-acc"></span>Name This Device</div>
-          <div class="snote" style="margin-bottom:8px">Your own name for this unit. It shows in the title bar and the top of this page, so if you run more than one MagicBridge you can tell their tabs apart. It is only for you: the target computer never sees it.</div>
+          <div class="snote" style="margin-bottom:8px">A label for this unit, shown in the title bar. Handy if you run more than one. Only you see it; the target computer never does.</div>
           <div class="srow"><span class="sk">Name</span>
             <input class="sinput" id="dev-name" maxlength="40" placeholder="e.g. Office tower"
               style="flex:1;min-width:0" onkeydown="if(event.key==='Enter')saveDeviceName()">
