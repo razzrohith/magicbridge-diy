@@ -29,16 +29,16 @@ body{display:flex;align-items:center;justify-content:center;padding:1.5rem}
 .card{background:#0f0f0f;border:0.5px solid #1c1c1c;border-radius:12px;
       padding:2rem;width:100%;max-width:360px}
 h1{font-size:18px;font-weight:600;margin-bottom:4px;color:#fff}
-.sub{font-size:12px;color:#444;margin-bottom:1.5rem}
-label{display:block;font-size:11px;color:#555;margin-bottom:3px;margin-top:10px}
+.sub{font-size:12px;color:#9aa4b0;margin-bottom:1.5rem}
+label{display:block;font-size:11px;color:#c2cad6;margin-bottom:3px;margin-top:10px}
 label:first-of-type{margin-top:0}
 input{width:100%;padding:9px 11px;background:#080808;
-      border:0.5px solid #1c1c1c;border-radius:7px;
-      color:#ddd;font-size:13px;outline:none;transition:border .15s}
+      border:0.5px solid #2a2a2a;border-radius:7px;
+      color:#f0f3f7;font-size:13px;outline:none;transition:border .15s}
 input:focus{border-color:#4a9eff;box-shadow:0 0 0 2px rgba(74,158,255,.1)}
-details{margin-top:14px;font-size:12px;color:#444}
-summary{cursor:pointer;color:#333;padding:4px 0}
-summary:hover{color:#555}
+details{margin-top:14px;font-size:12px;color:#9aa4b0}
+summary{cursor:pointer;color:#9aa4b0;padding:4px 0}
+summary:hover{color:#c8d0da}
 button{margin-top:1rem;width:100%;padding:10px;
        background:#4a9eff;border:none;border-radius:7px;
        color:#fff;font-size:13px;font-weight:500;cursor:pointer;transition:opacity .15s}
@@ -46,7 +46,7 @@ button:hover{opacity:.83}
 .msg{margin-top:.7rem;padding:8px 10px;border-radius:6px;font-size:12px}
 .ok{background:rgba(76,190,130,.08);border:0.5px solid rgba(76,190,130,.3);color:#4cbe82}
 .er{background:rgba(224,80,80,.08);border:0.5px solid rgba(224,80,80,.3);color:#e05050}
-.hint{margin-top:1rem;font-size:11px;color:#2a2a2a;text-align:center;line-height:1.6}
+.hint{margin-top:1rem;font-size:11px;color:#8b949e;text-align:center;line-height:1.6}
 </style>
 </head>
 <body>
@@ -63,14 +63,15 @@ button:hover{opacity:.83}
     <input type="password" id="pass" name="pass"
            placeholder="WiFi password" autocomplete="off">
     <details>
-      <summary>Tailscale auth key (optional)</summary>
+      <summary>Use it away from home (optional, advanced)</summary>
       <div style="margin-top:6px">
-        <label for="tskey">Auth key</label>
+        <label for="tskey">Tailscale auth key</label>
         <input type="text" id="tskey" name="tskey"
                placeholder="tskey-auth-..." autocomplete="off">
-        <p style="margin-top:5px;font-size:11px;color:#333;line-height:1.5">
-          Generate at tailscale.com/admin/settings/keys.
-          Enables remote access immediately after setup.
+        <p style="margin-top:5px;font-size:11px;color:#9aa4b0;line-height:1.5">
+          Leave this blank to use MagicBridge on your home WiFi. To reach it from
+          anywhere later, you can turn on secure remote access from the Network
+          tab. (Advanced: paste a key from tailscale.com/admin/settings/keys.)
         </p>
       </div>
     </details>
@@ -100,27 +101,35 @@ body{display:flex;align-items:center;justify-content:center;padding:1.5rem}
       padding:2rem;width:100%;max-width:340px;text-align:center}
 .icon{font-size:40px;margin-bottom:12px}
 h1{font-size:16px;font-weight:600;color:#4cbe82;margin-bottom:8px}
-p{font-size:12px;color:#444;line-height:1.7}
-strong{color:#888}
+p{font-size:12.5px;color:#aab3c0;line-height:1.7;margin-bottom:.6rem}
+strong{color:#e6edf3}
+.addr{display:block;font-size:17px;color:#4a9eff;font-weight:600;margin:6px 0;word-break:break-all}
+.note{font-size:11.5px;color:#8b949e}
 </style>
 </head>
 <body>
 <main>
 <div class="card">
   <div class="icon">✓</div>
-  <h1>Setup complete!</h1>
+  <h1>Got it. Connecting now.</h1>
   <p>
-    Connecting to <strong>SSID_PLACEHOLDER</strong>.<br>
-    This setup network will disappear in a few seconds.
+    We are joining <strong>SSID_PLACEHOLDER</strong>. Give it about 2 minutes.
+    This setup network will disappear shortly, which is normal.
   </p>
   <p>
-    Reconnect to your main WiFi, then open:<br>
-    <strong style="font-size:16px;color:#111">https://HOSTNAME_PLACEHOLDER.local/</strong>
+    Reconnect your phone to your main WiFi, then open this address and
+    <strong>save it</strong> (it is also shown on the device's small screen):
   </p>
-  <p style="font-size:12px">
-    Write that down now. If it does not open, look for
-    <strong>HOSTNAME_PLACEHOLDER</strong> in your router's device list and use
-    its IP address instead.
+  <span class="addr">https://HOSTNAME_PLACEHOLDER.local/</span>
+  <p class="note">
+    The first time you open it, your browser may say the connection is
+    "not private." That is expected for a device on your own network:
+    tap <strong>Advanced</strong>, then <strong>Continue / Proceed</strong>.
+  </p>
+  <p class="note">
+    If the device does not come online, the setup network you just joined
+    (its name starts with <strong>Setup-</strong>) will reappear. Rejoin it and
+    enter your WiFi again, double-checking the password.
   </p>
 </div>
 </main>

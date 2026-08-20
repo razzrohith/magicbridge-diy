@@ -121,6 +121,13 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar,body.fs #railnav{display:none!i
 #cdot.info{background:var(--accent);animation:pulse 1.4s infinite}
 #cdot.warn{background:var(--yellow);animation:pulse 1.4s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+/* Honour the OS "reduce motion" setting: stop the indefinitely-looping
+   indicators (connection dot pulse, recapture ring spin, pulsing primary
+   buttons) for customers with vestibular sensitivity. Purely additive. */
+@media (prefers-reduced-motion: reduce){
+  #cdot.info,#cdot.warn,.rc-ring,.sbtn.pulse{animation:none!important}
+  *{scroll-behavior:auto!important}
+}
 #sp{flex:1}
 .stat-chip{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--muted);flex-shrink:0;cursor:default;
   padding:3px 9px;border-radius:20px;background:rgba(255,255,255,.05);border:1px solid transparent}
@@ -188,7 +195,12 @@ body:not(.fs) .fs-hud{display:none!important}
 
 /* Main */
 #main{flex:1;display:flex;overflow:hidden;position:relative}
-#view{flex:1;position:relative;overflow:hidden;background:#000;min-width:0;cursor:default}
+#view{flex:1;position:relative;overflow:hidden;background:#000;min-width:0;cursor:default;
+  /* Suppress native touch gestures over the VIDEO so our custom tap/drag/right-
+     click/scroll mapping isn't fought by the iOS text-selection magnifier, the
+     long-press callout, or native pan-zoom. Scoped to the video area only; the
+     settings sidebar scrolls normally. */
+  touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
 /* GPU-composite the video surfaces.
    Without this the browser rescales every incoming 1920x1080 frame to the
    viewport ON THE MAIN THREAD - the same thread that handles mouse/keyboard and
@@ -337,7 +349,7 @@ body:not(.fs) .fs-hud{display:none!important}
 .mbacc>summary{list-style:none;cursor:pointer;padding:8px 10px;font-size:11px;font-weight:600;
   color:var(--sub);display:flex;align-items:center;gap:7px;user-select:none}
 .mbacc>summary::-webkit-details-marker{display:none}
-.mbacc>summary::before{content:'B8';font-size:9px;color:var(--muted);transition:transform .15s}
+.mbacc>summary::before{content:'\25B8';font-size:9px;color:var(--muted);transition:transform .15s}
 .mbacc[open]>summary::before{transform:rotate(90deg)}
 .mbacc>summary:hover{color:var(--text)}
 .mbacc-count{margin-left:auto;font-size:10px;color:var(--muted);font-weight:500}
@@ -604,6 +616,15 @@ body:not(.fs) .fs-hud{display:none!important}
   #relbar{padding:0 8px}
   #rellbl{font-size:10px}
 
+  /* Touch targets: raise the core controls a phone customer taps daily to a
+     comfortable >=~38px. Desktop density (outside this query) is untouched. */
+  .tbtn{height:38px;padding:0 12px}
+  .tbtn.icon{width:38px;height:38px;font-size:17px}
+  .wifi-item button{min-height:34px;padding:4px 12px}
+  .clip-act{min-height:34px}
+  .fh-btn,#fh-send,#fh-input{height:36px}
+  .sbtn{height:38px}
+
   /* Sidebar becomes an overlay instead of squeezing the video area. */
   #sidebar{position:fixed;top:var(--topH);bottom:var(--botH);right:0;
     z-index:250;box-shadow:-10px 0 30px rgba(0,0,0,.55)}
@@ -705,7 +726,7 @@ body:not(.fs) .fs-hud{display:none!important}
     </svg>
     <span id="logo">MagicBridge</span>
   </div>
-  <div id="connpill"><div id="cdot" class="info"></div><span id="cdtxt">Connecting…</span></div>
+  <div id="connpill" role="status" aria-live="polite" aria-atomic="true"><div id="cdot" class="info"></div><span id="cdtxt">Connecting…</span></div>
   <button class="tbtn" id="reltop" onclick="releaseAll()" title="Release control (or hold Esc / Right Ctrl 2s)" style="display:none">✕ Release</button>
   <div id="cwrap">
     <button class="tbtn" onclick="toggleCombos()" title="Key shortcuts">⌨ Combos ▾</button>
@@ -719,16 +740,16 @@ body:not(.fs) .fs-hud{display:none!important}
       <div class="ci" onclick="combo(['MetaLeft','ShiftLeft','KeyS'])">Snip tool<span class="kbd">⊞⇧S</span></div>
     </div>
   </div>
-  <button class="tbtn icon" id="kb-btn" onclick="toggleVKBD()" title="On-screen keyboard">⌨</button>
-  <button class="tbtn icon" id="audio-btn" onclick="toggleAudioMute()" title="Target audio" style="display:none">🔇</button>
+  <button class="tbtn icon" id="kb-btn" onclick="toggleVKBD()" title="On-screen keyboard" aria-label="On-screen keyboard">⌨</button>
+  <button class="tbtn icon" id="audio-btn" onclick="toggleAudioMute()" title="Target audio" aria-label="Target audio" style="display:none">🔇</button>
   <div id="sp"></div>
   <div class="stat-chip" id="chip-viewers" title="Connected viewers">👁 <span id="sv-viewers">-</span></div>
   <div class="stat-chip" id="chip-uptime" title="Device uptime">⏱ <span id="sv-uptime">-</span></div>
   <div class="stat-chip" id="chip-temp" title="CPU temperature">🌡 <span id="sv-temp">-</span></div>
   <div class="stat-chip" id="chip-lat" title="Control delay">⚡ <span id="sv-lat">-</span><span class="spark" id="lat-spark"></span></div>
-  <button class="tbtn icon" onclick="toggleFS()" title="Fullscreen">⛶</button>
-  <button class="tbtn" id="set-btn" onclick="toggleSidebar()" title="Settings">⚙</button>
-  <button class="tbtn icon" onclick="mbLogout()" title="Sign out">⏏</button>
+  <button class="tbtn icon" onclick="toggleFS()" title="Fullscreen" aria-label="Fullscreen">⛶</button>
+  <button class="tbtn" id="set-btn" onclick="toggleSidebar()" title="Settings" aria-label="Settings">⚙</button>
+  <button class="tbtn icon" onclick="mbLogout()" title="Sign out" aria-label="Sign out">⏏</button>
 </div>
 
 <!-- FS HUD Top -->
@@ -745,6 +766,7 @@ body:not(.fs) .fs-hud{display:none!important}
     <option value="0.005">Fast</option>
     <option value="0.02" selected>Normal</option>
     <option value="0.06">Slow</option>
+    <option value="0.12">Very Slow</option>
     <option value="human">Human 🤖</option>
   </select>
   <button id="fh-send" onclick="fhSend()">Send ↵</button>
@@ -755,7 +777,7 @@ body:not(.fs) .fs-hud{display:none!important}
 
 <!-- Main -->
 <div id="main">
-  <div id="view">
+  <div id="view" class="idle">
     <!-- No src= here on purpose: with it, the browser opens the MJPEG stream at
          page PARSE, before any JS can check whether this unit allows MJPEG at
          all. On an mjpeg_fallback=false unit that put 1080p on a link that
@@ -811,8 +833,8 @@ body:not(.fs) .fs-hud{display:none!important}
               <option value="mjpeg">MJPEG (fallback / compatible)</option>
             </select>
           </div>
-          <div class="srow"><span class="sk">Resolution</span>
-            <select class="ssel" id="sel-res" style="width:auto;margin:0">
+          <div class="srow"><span class="sk">Resolution <span style="color:var(--muted);font-weight:400">(follows the computer)</span></span>
+            <select class="ssel" id="sel-res" style="width:auto;margin:0" title="On this device the picture follows the connected computer's own resolution. To reduce lag, use Picture quality below.">
               <option value="1920x1080">1080p</option>
               <option value="1280x720" selected>720p ★</option>
               <option value="854x480">480p</option>
@@ -848,7 +870,7 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
           <div class="snote" style="margin:5px 0 0">Lower quality means a slightly coarser picture and a much steadier connection. This is the control that actually changes bandwidth on this hardware.</div>
           <div class="swrow" style="margin-top:8px">
-            <label class="sw"><input type="checkbox" id="adapt-sw" checked onchange="adaptToggle(this.checked)"><i></i></label>
+            <label class="sw"><input type="checkbox" id="adapt-sw" aria-label="Ease off on a bad connection" checked onchange="adaptToggle(this.checked)"><i></i></label>
             <span class="swlab">Ease off on a bad connection
               <span class="swsub" id="adapt-status">Watching the link</span>
             </span>
@@ -957,7 +979,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <input class="sinput wifi-field" type="text" id="mdns-alias" placeholder="e.g. studio  →  studio.local" autocomplete="off" spellcheck="false" maxlength="32">
           <div class="snote" style="margin:6px 0">Lets you open the device by a name you pick, on your own WiFi. Choose something plain, never a name that hints it is a control box. Leave empty for full stealth.</div>
           <div style="display:flex;gap:6px">
-            <button class="sbtn suc" style="flex:2;min-width:0;white-space:nowrap" onclick="mdnsSave()">Save name</button>
+            <button class="sbtn pri" style="flex:2;min-width:0;white-space:nowrap" onclick="mdnsSave()">Save name</button>
             <button class="sbtn" style="flex:1;min-width:0;white-space:nowrap" onclick="mdnsClear()" title="Remove the custom name">Clear</button>
           </div>
           <div id="mdns-msg" style="display:none;margin-top:6px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
@@ -1158,7 +1180,10 @@ body:not(.fs) .fs-hud{display:none!important}
             <button class="sbtn pri" onclick="wolWake()" style="flex:1">⚡ Wake PC</button>
           </div>
           <div class="snote" id="wol-msg" style="margin-bottom:0;margin-top:6px;display:none"></div>
-          <div class="snote" style="margin-bottom:0">Wakes the computer this device controls. Needs Wake-on-LAN enabled in its BIOS.</div>
+          <div class="snote" style="margin-bottom:0">Wakes the computer this device controls. Needs Wake-on-LAN enabled in its BIOS.
+            <details style="margin-top:5px"><summary style="cursor:pointer;color:var(--accent-l)">How do I find its MAC address?</summary>
+            <div style="margin-top:4px">On the computer, open a command window and run <code>getmac</code> (Windows) or <code>ip link</code> (Mac/Linux). It looks like <code>A1:B2:C3:D4:E5:F6</code>. You can also find it in your router's list of connected devices.</div></details>
+          </div>
           <div class="scard-title" style="margin-top:12px"><span class="dot-cyn"></span>Wake schedule <span style="font-size:10px;color:var(--muted);margin-left:auto;font-weight:400;text-transform:none">auto wake at set times</span></div>
           <div id="wol-sched-list"></div>
           <div style="display:flex;gap:5px;margin-top:5px">
@@ -1267,7 +1292,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="scard-title"><span class="dot-yel" style="background:var(--green)"></span>Mouse Jiggler</div>
           <div class="snote" style="margin-bottom:8px">Keeps the target awake. Pauses while you're using it.</div>
           <div class="swrow" style="margin-bottom:9px">
-            <label class="sw"><input type="checkbox" id="jiggler-sw" onchange="toggleJiggler(this.checked)"><i></i></label>
+            <label class="sw"><input type="checkbox" id="jiggler-sw" aria-label="Mouse jiggler" onchange="toggleJiggler(this.checked)"><i></i></label>
             <span class="swlab">Jiggler
               <span class="swsub" id="jiggler-status">-</span>
             </span>
@@ -1289,7 +1314,7 @@ body:not(.fs) .fs-hud{display:none!important}
 
             <!-- START ------------------------------------------------------->
             <div class="swrow">
-              <label class="sw"><input type="checkbox" id="jig-on-sw" onchange="jigOnSwitch(this.checked)"><i></i></label>
+              <label class="sw"><input type="checkbox" id="jig-on-sw" aria-label="Start jiggler automatically" onchange="jigOnSwitch(this.checked)"><i></i></label>
               <span class="swlab">Start automatically</span>
             </div>
             <div class="swbody" id="jig-on-body" style="display:none">
@@ -1314,7 +1339,7 @@ body:not(.fs) .fs-hud{display:none!important}
 
             <!-- STOP -------------------------------------------------------->
             <div class="swrow">
-              <label class="sw"><input type="checkbox" id="jig-off-sw" onchange="jigOffSwitch(this.checked)"><i></i></label>
+              <label class="sw"><input type="checkbox" id="jig-off-sw" aria-label="Stop jiggler automatically" onchange="jigOffSwitch(this.checked)"><i></i></label>
               <span class="swlab">Stop automatically</span>
             </div>
             <div class="swbody" id="jig-off-body" style="display:none">
@@ -1339,7 +1364,7 @@ body:not(.fs) .fs-hud{display:none!important}
 
             <!-- DAILY ------------------------------------------------------->
             <div class="swrow">
-              <label class="sw"><input type="checkbox" id="jig-sc-sw" onchange="jigSchedSwitch(this.checked)"><i></i></label>
+              <label class="sw"><input type="checkbox" id="jig-sc-sw" aria-label="Daily jiggler schedule" onchange="jigSchedSwitch(this.checked)"><i></i></label>
               <span class="swlab">Daily schedule</span>
             </div>
             <div class="swbody" id="jig-sc-body" style="display:none">
@@ -1628,7 +1653,7 @@ body:not(.fs) .fs-hud{display:none!important}
   <button onclick="pwChangeNow()">Change it</button>
   <button class="pw-x" onclick="dismissPwWarn()" aria-label="Dismiss">✕</button>
 </div>
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
 <!-- WebRTC (C790/H.264) client libs - additive, only used when Transport is
      set to WebRTC. Files are vendored by install_janus_webrtc.sh into
@@ -1981,7 +2006,7 @@ function _nsState(s){
     if(ic) ic.style.display='none';
   } else {   // 'nosignal'
     if(h) h.textContent='No Signal';
-    if(p) p.textContent='Connect HDMI from PC to capture card. Check ustreamer is running.';
+    if(p) p.textContent='No picture yet. Turn on the connected computer and make sure its HDMI cable is firmly plugged into MagicBridge at both ends. The picture appears automatically.';
     if(b) b.style.display='';
     if(ic) ic.style.display='';
   }
@@ -2730,6 +2755,18 @@ document.addEventListener('mousemove',e=>{
     _fsEdgeReveal(document.getElementById('fshud'), e.clientX, e.clientY, true, _fsCombosOpen);
   }
 });
+// Touch reveal for the fullscreen HUD: a phone has no mousemove, so the hover
+// reveal above is unreachable and a customer could get stranded in fullscreen
+// with no way to reach Exit / Release / Keyboard / Paste. A tap near the top
+// edge brings the HUD back.
+document.addEventListener('touchstart',e=>{
+  if(!document.fullscreenElement) return;
+  const t=e.touches&&e.touches[0]; if(!t) return;
+  if(t.clientY < 48){
+    const h=document.getElementById('fshud');
+    if(h){ h.classList.add('vis'); if(typeof _fsArmAutohide==='function') _fsArmAutohide(h); }
+  }
+},{passive:true});
 // Browser e.button and USB-HID button bits use DIFFERENT numbering:
 //   JS  : 0=left, 1=middle, 2=right
 //   HID : 0=left, 1=right,  2=middle   (bit0=L, bit1=R, bit2=M)
@@ -2966,14 +3003,26 @@ async function loadMouseMode(){
 
 // Touch
 let _tp=null,_moved=false,_longT=null,_lastTap=0;
+// Two-finger vertical drag = scroll, reusing the mouse-wheel _scrollDY path.
+let _tp2=null;
 $view.addEventListener('touchstart',e=>{
   if(e.touches.length===1){
     _tp={x:e.touches[0].clientX,y:e.touches[0].clientY};_moved=false;
     _longT=setTimeout(()=>{send({type:'mousedown',button:1});send({type:'mouseup',button:1});toast('Right-click');},500);  // HID right = 1
+  } else if(e.touches.length===2){
+    if(_longT){clearTimeout(_longT);_longT=null;} _tp=null; _moved=true;   // not a tap/drag
+    _tp2=(e.touches[0].clientY+e.touches[1].clientY)/2;
+    if(!captured) _setCaptured(true);   // touch: go live without desktop pointer-lock
   }
 },{passive:true});
 $view.addEventListener('touchmove',e=>{
   if(_longT){clearTimeout(_longT);_longT=null;}
+  if(e.touches.length===2 && _tp2!==null){
+    const cy=(e.touches[0].clientY+e.touches[1].clientY)/2;
+    const d=cy-_tp2; _tp2=cy;
+    _scrollDY+=d*0.6; _scrollPending=true; _queueMouse();   // coalesced (one send/frame)
+    return;
+  }
   if(e.touches.length===1&&_tp){
     const dx=e.touches[0].clientX-_tp.x,dy=e.touches[0].clientY-_tp.y;
     if(Math.abs(dx)+Math.abs(dy)>4){_moved=true;_relDX+=dx;_relDY+=dy;_relPending=true;_queueMouse();}  // coalesced: one send/frame (touch-drag flood twin of wheel/mouse)
@@ -2982,8 +3031,12 @@ $view.addEventListener('touchmove',e=>{
 },{passive:true});
 $view.addEventListener('touchend',e=>{
   if(_longT){clearTimeout(_longT);_longT=null;}
+  if(e.touches.length===0) _tp2=null;
   if(!_moved){
-    if(!captured){capture();return;}
+    // A phone has no Pointer Lock API, so the desktop capture() can never succeed
+    // and used to eat every tap. touchend only fires from a real touch, so here we
+    // go live directly and make the tap a real left-click.
+    if(!captured) _setCaptured(true);
     const now=Date.now();
     if(now-_lastTap<350){
       // The first tap already sent one click, so ONE more completes a
@@ -3100,17 +3153,24 @@ document.addEventListener('mouseleave', function(){
   if(typeof _heldBtns!=='undefined' && _heldBtns.size) _releaseMouseButtons();
 });
 async function fhSend(){
+  if(_pasteInFlight) return;
   const inp=document.getElementById('fh-input');
   const txt=inp.value; if(!txt) return;
   const sv=document.getElementById('fh-speed').value;
-  toast('Sending…',4000);
-  let ok;
-  if(sv==='human'){ ok=await humanTypePaste(txt); }
-  else { const spd=parseFloat(sv); ok=send({type:'paste',text:txt,delay:spd}); if(ok) await sleep(txt.length*spd*1000+500); }
-  // Never clear the box on a failed send: that text is the user's, and during
-  // a WiFi blip this used to destroy it while toasting "Sent".
-  if(!ok){ toast('Not connected, text kept'); return; }
-  inp.value=''; toast('Sent ✓');
+  const btn=document.getElementById('fh-send'), selEl=document.getElementById('fh-speed');
+  _pasteInFlight=true; if(btn)btn.disabled=true; if(selEl)selEl.disabled=true;
+  try{
+    toast('Sending…',4000);
+    let ok;
+    if(sv==='human'){ ok=await humanTypePaste(txt); }
+    else { const spd=parseFloat(sv); ok=send({type:'paste',text:txt,delay:spd}); if(ok) await sleep(txt.length*spd*1000+500); }
+    // Never clear the box on a failed send: that text is the user's, and during
+    // a WiFi blip this used to destroy it while toasting "Sent".
+    if(!ok){ toast('Not connected, text kept'); return; }
+    inp.value=''; toast('Sent ✓');
+  } finally {
+    _pasteInFlight=false; if(btn)btn.disabled=false; if(selEl)selEl.disabled=false;
+  }
 }
 document.getElementById('fh-input').addEventListener('keydown',e=>{
   if(e.key==='Enter'){e.preventDefault();fhSend();}
@@ -3197,20 +3257,30 @@ async function humanTypePaste(txt){
   }
   return true;
 }
+let _pasteInFlight=false;   // guards BOTH paste bars: a second tap during a slow
+                            // send used to launch a second concurrent type, so the
+                            // remote PC received the text twice, interleaved.
 async function sendPaste(){
+  if(_pasteInFlight) return;
   const txt=document.getElementById('pinput').value; if(!txt) return;
   const sv=document.getElementById('speedsel').value;
-  toast('Sending…',5000);
-  let ok;
-  if(sv==='human'){
-    ok=await humanTypePaste(txt);
-  } else {
-    const spd=parseFloat(sv);
-    ok=send({type:'paste',text:txt,delay:spd});
-    if(ok) await sleep(txt.length*spd*1000+500);
+  const btn=document.getElementById('psend'), selEl=document.getElementById('speedsel');
+  _pasteInFlight=true; if(btn)btn.disabled=true; if(selEl)selEl.disabled=true;
+  try{
+    toast('Sending…',5000);
+    let ok;
+    if(sv==='human'){
+      ok=await humanTypePaste(txt);
+    } else {
+      const spd=parseFloat(sv);
+      ok=send({type:'paste',text:txt,delay:spd});
+      if(ok) await sleep(txt.length*spd*1000+500);
+    }
+    if(!ok){ toast('Not connected, text kept'); return; }
+    document.getElementById('pinput').value=''; toast('Sent ✓');
+  } finally {
+    _pasteInFlight=false; if(btn)btn.disabled=false; if(selEl)selEl.disabled=false;
   }
-  if(!ok){ toast('Not connected, text kept'); return; }
-  document.getElementById('pinput').value=''; toast('Sent ✓');
 }
 document.getElementById('pinput').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();sendPaste();}});
 
@@ -4807,14 +4877,14 @@ async function sysCheckVer(userInitiated){
       btn.classList.add('pulse');
       btn.disabled=false;
       btn.dataset.mode=d.mode||'full';
-      const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='sys-dot warn';
+      const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='rdot warn';
     }else{
       avail.textContent='Up to date';
       avail.className='sv ok';
       btn.textContent='✓ Up to date';       // distinct from the grey "Check" button, and inert
       btn.classList.remove('pulse');
       btn.disabled=true;
-      const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='sys-dot ok';
+      const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='rdot ok';
     }
     // Release notes for the incoming version, written for the operator. These
     // come from CHANGELOG.md now, not from commit subjects: raw subjects name
@@ -4899,7 +4969,7 @@ async function refreshLockdownStatus(){
     }
     b.dataset.enabled=d.tailscale_only?'1':'0';
     const secDot=document.getElementById('sys-dot-security');
-    if(secDot) secDot.className='sys-dot '+(d.tailscale_only?'ok':'warn');
+    if(secDot) secDot.className='rdot '+(d.tailscale_only?'ok':'warn');
   }catch(e){}
 }
 async function toggleLockdown(){
@@ -5661,14 +5731,22 @@ function wolSchedAdd(){
   _wolScheds.push({time:t,days:days,enabled:true}); wolSchedSave();
 }
 function wolSchedDel(i){ _wolScheds.splice(i,1); wolSchedSave(); }
+// Accept 001122AABBCC / 00-11-22-.. / 00:11:22:.. and normalise to AA:BB:CC:DD:EE:FF.
+function _normMac(s){
+  const h=(s||'').replace(/[^0-9a-fA-F]/g,'');
+  if(h.length!==12) return null;
+  return h.match(/.{2}/g).join(':').toUpperCase();
+}
 async function wolSave(){
-  const mac = document.getElementById('wol-mac').value.trim();
+  const raw = document.getElementById('wol-mac').value.trim();
+  const mac = _normMac(raw);
+  if(raw && !mac){ _wolShow('That does not look like a MAC address (needs 12 hex characters).', false); return; }
   try{
     const r = await fetch('/api/wol/settings', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({mac})});
+      body: JSON.stringify({mac: mac||''})});
     const d = await r.json();
     if(d.ok){
-      document.getElementById('wol-mac').value = d.config.mac || '';
+      document.getElementById('wol-mac').value = d.config.mac || mac || '';
       _wolShow('✓ MAC address saved', true);
       toast('Wake-on-LAN MAC saved ✓');
     }else{
@@ -5677,6 +5755,13 @@ async function wolSave(){
   }catch(e){ _wolShow('Error: '+e, false); }
 }
 async function wolWake(){
+  // Use whatever is in the box: if it holds a valid MAC that isn't saved yet,
+  // save it first so "Wake" works even if the owner forgot to press Save.
+  const raw = document.getElementById('wol-mac').value.trim();
+  if(raw){
+    if(!_normMac(raw)){ _wolShow('That does not look like a MAC address (needs 12 hex characters).', false); return; }
+    await wolSave();
+  }
   try{
     const r = await fetch('/api/wol/wake', {method:'POST'});
     const d = await r.json();
@@ -5961,6 +6046,32 @@ identityRefresh();
 deviceRefresh();
 adaptSync();   // the switch lives in the DEFAULT tab, so sync it at load
 tsRefresh();
+// One-time welcome: orient a first-time owner to the three basics. Gated by a
+// localStorage flag so it never nags, and wrapped so it can never break load.
+try{
+  if(!localStorage.getItem('mb_welcomed')){
+    localStorage.setItem('mb_welcomed','1');
+    setTimeout(()=>toast('Welcome to MagicBridge. Turn on the other computer to see its screen, click the screen to take control, and paste text with the bar at the bottom.', 9000), 1400);
+  }
+}catch(e){}
+// Accessibility: make the combo/shortcut items keyboard-operable, and expose
+// segmented-control selection state to assistive tech. Additive, wrapped so it
+// can never break load.
+try{
+  document.querySelectorAll('.ci').forEach(el=>{
+    el.setAttribute('role','button'); if(!el.hasAttribute('tabindex')) el.setAttribute('tabindex','0');
+    el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); el.click(); } });
+  });
+  const _segSel='.snav-btn,.cur-opt,#mm-rel,#mm-abs';
+  const _mark=()=>document.querySelectorAll(_segSel).forEach(b=>{
+    const tab=b.classList.contains('snav-btn');
+    b.setAttribute(tab?'aria-selected':'aria-pressed', b.classList.contains('active')?'true':'false');
+    if(tab && !b.hasAttribute('role')) b.setAttribute('role','tab');
+  });
+  _mark();
+  const _mo=new MutationObserver(_mark);
+  document.querySelectorAll(_segSel).forEach(b=>_mo.observe(b,{attributes:true,attributeFilter:['class']}));
+}catch(e){}
 wifiRefresh();
 renderClips();
 renderMacros();

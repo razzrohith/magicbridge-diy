@@ -12,6 +12,27 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.7.2
+
+- Much better on a phone. You can now tap the screen to click, drag two fingers
+  to scroll, and reach the fullscreen controls by tapping the top edge. Buttons
+  are larger and easier to tap, and stray phone gestures no longer interfere.
+- Clearer first-time setup. The setup page no longer says "complete" before it
+  has actually connected, warns you about the normal browser "not private"
+  message, shows your device's address in bright, readable text, and tells you
+  what to do if the WiFi password was mistyped.
+- Friendlier screens. The "no picture" message now explains what to check in
+  plain words, a short welcome tip appears the first time you open the control
+  page, and the buttons read more consistently.
+- Easier to use with assistive technology. Connection changes and messages are
+  announced to screen readers, controls carry proper labels, the keyboard
+  shortcuts can be used without a mouse, and animations respect the system
+  "reduce motion" setting.
+- Fixes. Pressing Send twice no longer types your text twice, a broken arrow in
+  the Network settings is fixed, the small status dots on the side menu stay in
+  their corner, and the wake-a-computer feature now accepts the address in any
+  common format and helps you find it.
+
 ## 1.7.1
 
 - The admin page can now use two-factor sign-in. If you have already turned on

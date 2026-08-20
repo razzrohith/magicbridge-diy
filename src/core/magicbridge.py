@@ -848,7 +848,8 @@ def _login_page(error: str = "", status: int = 200) -> web.Response:
         html = html.replace("__HINT__",
             '<div class="hint warn"><b>This device still uses the default password '
             f'&ldquo;{DEFAULT_PASSWORD}&rdquo;.</b> It is public. Anyone on this network '
-            'can take over the target. Change it in Settings, System, Account.</div>')
+            'can take over the target. You will be asked to set your own password '
+            'as soon as you sign in.</div>')
     else:
         html = html.replace("__HINT__",
             '<div class="hint">First sign-in? Your password is in '
