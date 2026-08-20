@@ -2637,6 +2637,54 @@ function _lpdClassify(e){  // called on each move while a left-down is pending
   else _lpdArm();                                             // paused then moved = deliberate drag
 }
 
+// --- Fullscreen edge-reveal, intent-based ------------------------------------
+// The top HUD and bottom paste bar are hidden in fullscreen and revealed by
+// bringing the cursor to the top/bottom CENTRE and pausing for a moment. The
+// old logic revealed on a bare 90/80px Y-band across the WHOLE width, so simply
+// driving the target near its own menu bar, taskbar, or a corner popped our
+// chrome over it. Now a reveal needs three things at once: near the edge, near
+// horizontal centre (so corners and the outer width never trigger), and a short
+// linger. Brushing past on the way somewhere no longer triggers it.
+const _FS_EDGE   = 30;    // px from the edge to START a reveal (was 90 / 80)
+const _FS_KEEP   = 116;   // once shown, stays open within this larger band so
+                          // moving onto the buttons cannot dismiss it (hysteresis)
+const _FS_CENTRE = 210;   // px each side of horizontal centre; excludes corners
+const _FS_DWELL  = 240;   // ms the cursor must linger in the zone before it shows
+const _FS_AUTOHIDE = 2600; // ms: once shown, retire it on its own so it never
+                           // just sits there taking space if the cursor rests
+                           // near the top. Hovering the bar keeps it alive.
+function _fsHide(el){ el.classList.remove('vis');
+  if(el._fsT){ clearTimeout(el._fsT); el._fsT = null; }
+  if(el._fsHT){ clearTimeout(el._fsHT); el._fsHT = null; } }
+function _fsArmAutohide(el){
+  if(el._fsHT) clearTimeout(el._fsHT);
+  el._fsHT = setTimeout(()=>{ el._fsHT = null;
+    if(!el.matches(':hover')) el.classList.remove('vis'); }, _FS_AUTOHIDE);
+}
+function _fsEdgeReveal(el, x, y, isTop, override){
+  if(!el) return;
+  const on = el.classList.contains('vis');
+  // Explicit action (Combos dropdown open) always wins and cancels auto-hide.
+  if(override){ if(!on) el.classList.add('vis');
+    if(el._fsHT){ clearTimeout(el._fsHT); el._fsHT = null; } return; }
+  const w = window.innerWidth, h = window.innerHeight;
+  if(on){
+    // Keep it open while still near the edge (larger band) or hovering the bar,
+    // and (re)arm the auto-hide so it retires shortly after you stop using it.
+    const inKeep = isTop ? (y < _FS_KEEP) : (y > h - _FS_KEEP);
+    if(inKeep || el.matches(':hover')) _fsArmAutohide(el);
+    else _fsHide(el);
+    return;
+  }
+  // Not shown: require the cursor in the small centre-edge zone, then a linger.
+  const inReveal = Math.abs(x - w/2) < _FS_CENTRE &&
+                   (isTop ? (y < _FS_EDGE) : (y > h - _FS_EDGE));
+  if(inReveal){
+    if(!el._fsT) el._fsT = setTimeout(()=>{ el._fsT = null;
+      el.classList.add('vis'); _fsArmAutohide(el); }, _FS_DWELL);
+  } else if(el._fsT){ clearTimeout(el._fsT); el._fsT = null; }
+}
+
 document.addEventListener('mousemove',e=>{
   if(captured){
     if(_mouseMode==='absolute'){
@@ -2660,12 +2708,13 @@ document.addEventListener('mousemove',e=>{
     }
   }
   if(document.fullscreenElement){
-    const h=window.innerHeight;
-    // Reveal the top control HUD when the cursor nears the top edge (or while
-    // its Combos dropdown is open); the bottom paste bar near the bottom edge
-    // (or while pinned open by the Paste button).
-    document.getElementById('fshud').classList.toggle('vis', e.clientY<90 || _fsCombosOpen);
-    document.getElementById('fs-bot').classList.toggle('vis', e.clientY>h-80 || _fsbotPinned);
+    // ONLY the top HUD reveals on hover, and only on a deliberate top-centre
+    // linger (see _fsEdgeReveal). The bottom paste bar deliberately has NO
+    // hover reveal any more: fsPaste() already reveals+pins+focuses it, so the
+    // hover trigger was pure redundancy that covered the target's own taskbar
+    // every time the cursor went near the bottom of the screen. The whole
+    // bottom edge is now free.
+    _fsEdgeReveal(document.getElementById('fshud'), e.clientX, e.clientY, true, _fsCombosOpen);
   }
 });
 // Browser e.button and USB-HID button bits use DIFFERENT numbering:

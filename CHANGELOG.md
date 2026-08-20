@@ -12,6 +12,15 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.4.1
+
+- In fullscreen, the control bar at the top no longer pops up by accident. It
+  appears only when you move to the top center of the screen and pause for a
+  moment, and it hides itself again on its own, so it stops covering what you are
+  working on. Moving near a corner or along an edge no longer triggers it.
+- The paste bar at the bottom no longer appears on its own. It shows only when
+  you press Paste, keeping the bottom of the screen clear.
+
 ## 1.4.0
 
 - The mouse jiggler can now switch itself off. Set a time ("stop at 4 pm") or a
