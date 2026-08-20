@@ -12,6 +12,16 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.5.0
+
+- You can now give the device your own name to reach it by. In Settings,
+  Network, under "Custom name", type something like "studio" and from then on
+  open it at studio.local on your WiFi. Leave it empty to keep the device
+  unnamed, which is the default.
+- The name is only visible on your own WiFi. The computer it controls never sees
+  it, and to your router the device still looks like an ordinary PC. The device
+  gently blocks names that would give away what it is.
+
 ## 1.4.2
 
 - The paste bar can now be closed. Use its Close button, press the Escape key

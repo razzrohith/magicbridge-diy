@@ -2770,6 +2770,107 @@ async def api_oled_settings(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "config": merged})
 
 
+# --- Custom .local name (mDNS alias) ------------------------------------------
+# Opt-in friendly address, e.g. "mypet" -> the box answers at mypet.local on the
+# OWNER's WiFi. Deliberately an mDNS ALIAS, never a hostname change: the system
+# hostname stays the disguised DESKTOP-XXXXXXX so the router/DHCP view is
+# unchanged, and the target (USB/HID + HDMI/EDID) never sees a network name at
+# all. Empty string = full stealth, which is the shipped default. See
+# mb-mdns-alias.sh. The ONE real risk is a self-outing name, so the validator
+# blocks words that hint at what the device is.
+_MDNS_BLOCK = ("kvm", "pikvm", "tinypilot", "jetkvm", "magicbridge", "magic",
+               "bridge", "spy", "hack", "keylog", "capture", "raspberry", "rpi",
+               "root", "admin", "haxor", "backdoor")
+
+def _sanitize_mdns_alias(raw):
+    """Return (alias, error). alias is a valid lowercase mDNS label or "".
+
+    "" is valid and means 'no alias' (stealth). A non-empty value must be a
+    legal single DNS label AND must not obviously reveal what the device is - a
+    self-outing name on the control LAN is the only real risk of this feature.
+    """
+    import re as _re
+    s = ("" if raw is None else str(raw)).strip().lower()
+    if s.endswith(".local"):
+        s = s[:-6]
+    if s == "":
+        return "", None                       # explicit disable = stealth
+    if len(s) > 32:
+        return None, "Name too long (32 characters maximum)."
+    if not _re.fullmatch(r"[a-z0-9]([a-z0-9-]*[a-z0-9])?", s):
+        return None, ("Use letters, numbers and hyphens only, and start and end "
+                      "with a letter or number.")
+    for bad in _MDNS_BLOCK:
+        if bad in s:
+            return None, ("Please pick a name that does not hint at what the "
+                          "device is (avoid words like \"%s\"). A neutral name "
+                          "such as \"studio\" or \"backroom\" keeps it discreet." % bad)
+    return s, None
+
+async def api_mdns_settings(request: web.Request) -> web.Response:
+    """GET/POST /api/mdns/settings: the optional friendly .local name.
+
+    GET  -> {alias, url, hostname, hostname_url, stealth}
+    POST {"alias": "..."} -> validate, persist, restart the publisher.
+    """
+    import socket as _sock
+    hostname = _sock.gethostname()
+    if request.method == "GET":
+        try:
+            cfg = _load_cfg()
+        except Exception:
+            cfg = {}
+        alias = (cfg.get("mdns_alias") or "")
+        return web.json_response({
+            "ok": True,
+            "alias": alias,
+            "url": ("https://%s.local/" % alias) if alias else "",
+            "hostname": hostname,
+            "hostname_url": "https://%s.local/" % hostname,
+            "stealth": (alias == ""),
+        })
+
+    try:
+        d = await request.json()
+    except Exception:
+        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+
+    alias, err = _sanitize_mdns_alias(d.get("alias"))
+    if err:
+        return web.json_response({"ok": False, "error": err}, status=400)
+
+    try:
+        cfg = _load_cfg()
+    except Exception as e:
+        # Corrupt config: refuse rather than clobber it (same fail-closed posture
+        # as every other config writer here - never reset a stealth unit).
+        return web.json_response({"ok": False, "error": "Could not read settings: " + str(e)}, status=500)
+    cfg["mdns_alias"] = alias
+    _save_cfg(cfg)
+
+    # Apply now: restart the publisher so the new name goes live (or, for "",
+    # stops the old one). Off-loop so a slow avahi restart can't freeze input.
+    restart_out = ""
+    try:
+        r = await _run_off_loop(["systemctl", "restart", "mb-mdns-alias"],
+                                capture_output=True, text=True, timeout=15)
+        restart_out = ((r.stdout or "") + (r.stderr or "")).strip()
+    except Exception as e:
+        restart_out = "restart error: " + str(e)
+
+    return web.json_response({
+        "ok": True,
+        "alias": alias,
+        "url": ("https://%s.local/" % alias) if alias else "",
+        "stealth": (alias == ""),
+        "note": (("Now reachable at %s.local on your WiFi. It can take a few "
+                  "seconds to appear." % alias) if alias
+                 else ("Custom name cleared. The device stays reachable at "
+                       "%s.local." % hostname)),
+        "out": restart_out[-200:],
+    })
+
+
 async def api_oled_reset(request: web.Request) -> web.Response:
     try:
         cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
@@ -4883,6 +4984,8 @@ def build_app() -> web.Application:
     app.router.add_post("/api/stream/settings",  api_stream_settings)
     app.router.add_get("/api/oled/settings",   api_oled_settings)
     app.router.add_post("/api/oled/settings",  api_oled_settings)
+    app.router.add_get("/api/mdns/settings",   api_mdns_settings)
+    app.router.add_post("/api/mdns/settings",  api_mdns_settings)
     app.router.add_post("/api/oled/reset",     api_oled_reset)
     app.router.add_get("/api/wol/settings",    api_wol_settings)
     app.router.add_post("/api/wol/settings",   api_wol_settings)

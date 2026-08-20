@@ -951,6 +951,18 @@ body:not(.fs) .fs-hud{display:none!important}
           <div id="wifi-msg" style="display:none;margin-top:6px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
         <div class="scard">
+          <div class="scard-title"><span class="dot-acc"></span>Custom name</div>
+          <div class="srow" style="margin-bottom:6px"><span class="sk">Reach it at</span><span class="sv" id="mdns-url" style="font-weight:700">-</span></div>
+          <label class="wifi-label" for="mdns-alias">Name (letters, numbers, hyphens)</label>
+          <input class="sinput wifi-field" type="text" id="mdns-alias" placeholder="e.g. studio  →  studio.local" autocomplete="off" spellcheck="false" maxlength="32">
+          <div class="snote" style="margin:6px 0">Lets you open the device by a name you pick, on your own WiFi. Choose something plain, never a name that hints it is a control box. Leave empty for full stealth.</div>
+          <div style="display:flex;gap:6px">
+            <button class="sbtn suc" style="flex:1" onclick="mdnsSave()">Save name</button>
+            <button class="sbtn" onclick="mdnsClear()" title="Remove the custom name">Clear</button>
+          </div>
+          <div id="mdns-msg" style="display:none;margin-top:6px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
+        </div>
+        <div class="scard">
           <div class="scard-title"><span class="dot-pur"></span>Tailscale
             <span class="tag tag-pur" id="ts-tag" style="margin-left:auto">-</span>
           </div>
@@ -3147,7 +3159,7 @@ function showTab(name){
   // leaving it here would hit the network on every one of those clicks. It runs
   // from sysNavShow when the Update section is actually opened.
   if(name==='system'){adaptSync();refreshStatus();refreshJigglerStatus();refreshHidAutoDcStatus();refreshOledSettings();identityRefresh();deviceRefresh();}
-  if(name==='network'){wifiRefresh();tsRefresh();}
+  if(name==='network'){wifiRefresh();tsRefresh();mdnsLoad();}
 }
 // Rail click. Same collapse-on-second-click behaviour as before, but a section
 // only counts as "already open" when its CATEGORY matches too, so clicking
@@ -4698,6 +4710,44 @@ async function wifiAdd(){
       msg.style.cssText='display:block;background:rgba(220,50,50,.12);color:var(--red);padding:5px 8px;border-radius:4px;border:1px solid var(--red)';
     }
   }catch(e){toast('Error: '+e);}
+}
+
+// Custom .local name (mDNS alias). Opt-in; empty = stealth. The name is visible
+// only on the owner's WiFi, never to the target over USB/HDMI. Backend validates
+// and blocks self-outing names; the system hostname stays disguised regardless.
+function _mdnsMsg(text, ok){
+  const m=document.getElementById('mdns-msg'); if(!m) return;
+  m.textContent=text;
+  m.style.cssText='display:block;margin-top:6px;font-size:10px;padding:5px 8px;border-radius:4px;'+
+    (ok?'background:rgba(0,200,100,.10);color:var(--green);border:1px solid var(--green)'
+       :'background:rgba(220,50,50,.12);color:var(--red);border:1px solid var(--red)');
+}
+async function mdnsLoad(){
+  try{
+    const r=await fetch('/api/mdns/settings'); const d=await r.json();
+    const inp=document.getElementById('mdns-alias'); const url=document.getElementById('mdns-url');
+    if(inp && document.activeElement!==inp) inp.value=d.alias||'';
+    if(url) url.textContent = d.alias ? (d.alias+'.local')
+                                      : ((d.hostname||'device')+'.local (default)');
+  }catch(e){}
+}
+async function mdnsSave(){
+  const inp=document.getElementById('mdns-alias'); const alias=(inp?inp.value:'').trim();
+  try{
+    const r=await fetch('/api/mdns/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alias})});
+    const d=await r.json();
+    if(d.ok){ _mdnsMsg(d.note||'Saved ✓', true); toast('Name saved ✓'); mdnsLoad(); }
+    else _mdnsMsg(d.error||'Could not save', false);
+  }catch(e){ _mdnsMsg('Error: '+e, false); }
+}
+async function mdnsClear(){
+  const inp=document.getElementById('mdns-alias'); if(inp) inp.value='';
+  try{
+    const r=await fetch('/api/mdns/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alias:''})});
+    const d=await r.json();
+    if(d.ok){ _mdnsMsg(d.note||'Custom name cleared', true); toast('Cleared ✓'); mdnsLoad(); }
+    else _mdnsMsg(d.error||'Could not clear', false);
+  }catch(e){ _mdnsMsg('Error: '+e, false); }
 }
 
 async function wifiRemove(btn){
