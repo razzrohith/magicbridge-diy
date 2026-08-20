@@ -257,7 +257,7 @@ if [[ "$MODE" == "shrink" ]]; then
    chmod +x /usr/local/bin/pishrink.sh"
   fi
   echo ""; ok "Shrink complete: $IMG"
-  echo "  Next: $0 --verify $IMG   then:  $0 --compress $IMG"
+  echo "  Next: $0 --verify $IMG   then:  $0 --compress $IMG"   # verify AFTER shrink, by design
   exit 0
 fi
 
@@ -597,6 +597,6 @@ fi
 sync; umount "$MNT"; MNT=""; losetup -d "$LOOP"; LOOP=""; trap - EXIT
 
 echo ""; ok "Armed image ready: $IMG"
-echo "  Next:  $0 --verify $IMG"
-echo "         $0 --shrink $IMG      # zero free space + shrink"
+echo "  Next:  $0 --shrink $IMG      # zero free space + shrink  (MUST run first)"
+echo "         $0 --verify $IMG      # the gate; refuses an unzeroed image"
 echo "         $0 --compress $IMG    # -> .img.xz for distribution"
