@@ -30,18 +30,19 @@ on the next natural reboot. The full upgrade's install.sh is self-update guarded
 (gadget not rebound, EDID not re-applied live). Cert/avahi/mDNS/IPv6 changes are
 LAN-side only and never touch the target.
 
-## Held for bench validation on the TEST Pi (NOT shipped to the live unit)
+## The four formerly-held items — now resolved (v1.7.1)
 
-These are correct to want, but cannot be proven 100% safe without a reboot on the
-test Pi with real USB/video hardware. Shipping them unverified could break USB
-enumeration on the target or destabilise live video, which the owner forbade.
+Handled so the live unit is never at risk: the two hardware-descriptor items are
+OFF by default (byte-identical to today) with an auto-fallback, so deploying the
+code changes nothing on the live unit until the owner flips them on at the test
+Pi. The other two needed honesty, not a risky change.
 
-| # | Upgrade | Why held |
-|---|---|---|
-| 3 | Full 2FA on the stealth panel | The identity panel. A bug in an untested enrollment/verify flow could lock the owner out. The panel is already hardened (hard lockout + forced first-run password + de-branded). Do with a bench test of the login flow. |
-| 12 | Force USB iSerialNumber to a true 0 | Needs an lsusb -v read on the target to confirm the current index, and possibly an f_hid change that could break enumeration. Verify on the bench; until then do not claim iSerial=0 in the model. |
-| 16 | Smooth long-run video/timing cadence | Touches the live video pipeline; a bad change degrades latency/stability. Needs bench measurement. |
-| 20 | Flesh out the 3rd (HID++) USB interface descriptor | A malformed report descriptor would break enumeration on reboot = target loses input. Bench-only. |
+| # | Item | How it was resolved | Safe because |
+|---|---|---|---|
+| 3 | Stealth-panel 2FA | Reuses the MAIN panel's TOTP (shared config); the stealth login requires the same code ONLY when 2FA is already enabled there. Verified against RFC 6238 vectors. | Inert unless 2FA is enrolled, so it can never lock out an un-enrolled user. `magicbridge.py --disable-2fa` (SSH) is the escape hatch. |
+| 12 | True USB iSerial=0 | NOT forced. A true zero index isn't cleanly achievable via configfs and forcing it risks breaking enumeration. The empty serial string stays; the "iSerial=0" claim was softened to the truth. **Bench check:** on the target run `lsusb -v -d 046d:c52b \| grep -i iSerial` - if it shows `iSerial 0` we're already correct; a non-zero index is the residual. | No gadget change, so no enumeration risk. |
+| 16 | Long-run timing cadence | The only target-visible periodic signal is the mouse jiggler, already handled by the v1.6.0 "Human" style. Video-bitrate cadence is deliberately left alone (risk to live video > speculative gain); the web-poll cadence is owner-side and encrypted, not a target tell. | No change to the live video pipeline. |
+| 20 | Full HID++ 3rd interface | Correct full descriptor (short 0x10 + long 0x11) added behind `usb.hidpp_full` (default OFF = today's stub). The UDC bind now auto-falls-back to keyboard+mouse if any descriptor is rejected, so it can never brick HID. | Default off + auto-fallback = the target never loses input. **Bench:** set `usb.hidpp_full=true`, reboot the test Pi, confirm HID works and `lsusb` shows the fuller interface. |
 
 ## Documentation-only (no code change, by design)
 

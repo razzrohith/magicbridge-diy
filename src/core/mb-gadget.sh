@@ -31,6 +31,8 @@ MFR="Logitech"
 PROD="USB Receiver"
 SER=""
 EXTRA_IFACE="true"
+HIDPP_FULL="false"   # false = short-stub aux descriptor (proven). true = full
+                     # HID++ (short 0x10 + long 0x11) - opt-in, bench-test first.
 MOUSE_MODE="relative"   # relative (boot mouse, stealthiest) | absolute (pointer)
 BCD_USB="0x0200"
 # A real Logitech c52b receiver reports a firmware release (e.g. 12.03), never
@@ -57,7 +59,9 @@ except: print('$2')
     EXTRA_IFACE=$(_py extra_iface "true")
     MOUSE_MODE=$(_py mouse_mode "relative")
     BCD_DEV=$(_py bcdDevice "0x1203")
+    HIDPP_FULL=$(_py hidpp_full "false")
 fi
+HIDPP_FULL=$(echo "$HIDPP_FULL" | tr '[:upper:]' '[:lower:]')
 MOUSE_MODE=$(echo "$MOUSE_MODE" | tr '[:upper:]' '[:lower:]')
 # Normalize case (Python may print True/False) so the comparison below
 # works regardless of how the value ended up stored in config.json.
@@ -209,9 +213,20 @@ if [[ "$EXTRA_IFACE" == "true" ]]; then
         mkdir -p "$GADGET_DIR/functions/hid.aux"
         echo "0" > "$GADGET_DIR/functions/hid.aux/protocol"       # 0 = none (non-boot vendor iface)
         echo "0" > "$GADGET_DIR/functions/hid.aux/subclass"       # 0 = non-boot
-        echo "7" > "$GADGET_DIR/functions/hid.aux/report_length"  # 1 report-id byte + 6 data bytes
-        printf '\x06\x00\xff\x09\x01\xa1\x01\x85\x10\x75\x08\x95\x06\x15\x00\x26\xff\x00\x09\x01\x81\x02\x09\x01\x91\x02\xc0' \
-            > "$GADGET_DIR/functions/hid.aux/report_desc"
+        if [[ "$HIDPP_FULL" == "true" ]]; then
+            # Full Unifying-receiver HID++ descriptor: short report 0x10 (6 data
+            # bytes) AND long report 0x11 (19 data bytes), matching what a real
+            # receiver's interface 2 exposes under inspection. report_length must
+            # cover the longest report incl. its ID = 20. Opt-in; if the controller
+            # rejects it the bind-fallback below reverts to keyboard+mouse.
+            echo "20" > "$GADGET_DIR/functions/hid.aux/report_length"
+            printf '\x06\x00\xff\x09\x01\xa1\x01\x85\x10\x95\x06\x75\x08\x15\x00\x26\xff\x00\x09\x01\x81\x00\x09\x01\x91\x00\x85\x11\x95\x13\x09\x02\x81\x00\x09\x02\x91\x00\xc0' \
+                > "$GADGET_DIR/functions/hid.aux/report_desc"
+        else
+            echo "7" > "$GADGET_DIR/functions/hid.aux/report_length"  # 1 report-id byte + 6 data bytes
+            printf '\x06\x00\xff\x09\x01\xa1\x01\x85\x10\x75\x08\x95\x06\x15\x00\x26\xff\x00\x09\x01\x81\x02\x09\x01\x91\x02\xc0' \
+                > "$GADGET_DIR/functions/hid.aux/report_desc"
+        fi
         ln -sf "$GADGET_DIR/functions/hid.aux" "$GADGET_DIR/configs/c.1/hid.aux"
     ) || echo "mb-gadget: WARNING could not create aux interface, continuing with keyboard+mouse only"
 fi
@@ -219,13 +234,30 @@ fi
 # Bind to USB Device Controller
 UDC=$(ls /sys/class/udc 2>/dev/null | head -1)
 if [[ -n "$UDC" ]]; then
-    echo "$UDC" > "$GADGET_DIR/UDC"
-    echo "mb-gadget: bound to $UDC"
-    echo "mb-gadget: /dev/hidg0 = keyboard    /dev/hidg1 = mouse"
-    if [[ -e "$GADGET_DIR/functions/hid.aux" ]]; then
-        echo "mb-gadget: /dev/hidg2 = aux (idle vendor interface)"
+    _bound() { [[ "$(cat "$GADGET_DIR/UDC" 2>/dev/null)" == "$UDC" ]]; }
+    echo "$UDC" > "$GADGET_DIR/UDC" 2>/dev/null || true
+    if ! _bound; then
+        # The controller rejected the descriptor set (most likely an opt-in aux
+        # descriptor it does not like). AUTO-RECOVER so the target NEVER loses its
+        # keyboard/mouse: drop the OPTIONAL aux interface and rebind the proven
+        # keyboard+mouse config. This makes every descriptor refinement safe to
+        # ship - the worst case is a working 2-interface fallback, never dead HID.
+        echo "mb-gadget: initial bind failed, retrying without the aux interface"
+        rm -f "$GADGET_DIR/configs/c.1/hid.aux" 2>/dev/null || true
+        echo "" > "$GADGET_DIR/UDC" 2>/dev/null || true
+        echo "$UDC" > "$GADGET_DIR/UDC" 2>/dev/null || true
     fi
-    echo "mb-gadget: USB identity: '$MFR' '$PROD' (VID=$VID PID=$PID, serial=${SER:-<none>})"
+    if _bound; then
+        echo "mb-gadget: bound to $UDC"
+        echo "mb-gadget: /dev/hidg0 = keyboard    /dev/hidg1 = mouse"
+        if [[ -e "$GADGET_DIR/configs/c.1/hid.aux" ]]; then
+            echo "mb-gadget: /dev/hidg2 = aux (idle vendor interface, HID++=$HIDPP_FULL)"
+        fi
+        echo "mb-gadget: USB identity: '$MFR' '$PROD' (VID=$VID PID=$PID, serial=${SER:-<none>})"
+    else
+        echo "mb-gadget: WARNING, bind still failing after fallback - check the UDC/target link"
+        exit 1
+    fi
 else
     echo "mb-gadget: WARNING, no UDC found"
     echo "  Ensure the Pi USB-C OTG port is connected to the target computer."

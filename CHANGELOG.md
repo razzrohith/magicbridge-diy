@@ -12,6 +12,16 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.7.1
+
+- The admin page can now use two-factor sign-in. If you have already turned on
+  the authenticator code on the main page, the admin page asks for the same code
+  too. If you have not turned it on, nothing changes.
+- A closer match to a real wireless receiver for owners who want it, off by
+  default and safe to try: it falls back to the proven setup on its own if the
+  other computer does not accept it.
+- Small honesty and safety cleanups under the hood.
+
 ## 1.7.0
 
 - Stronger privacy on your own network. The device no longer carries its product

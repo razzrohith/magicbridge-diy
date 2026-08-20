@@ -222,6 +222,69 @@ def _record_ok(ip: str):
     _login_fails.pop(ip, None)
     _login_lock_until.pop(ip, None)
 
+# ── 2FA (shared with the main panel) ─────────────────────────────────────────
+# The stealth panel controls the whole device identity, so it must be at least
+# as protected as the main KVM panel. Instead of a second enrollment it REUSES
+# the main panel's TOTP: when the owner has turned 2FA on there (auth.totp_enabled
+# + auth.totp_secret, in the SAME config.json), the stealth login requires the
+# same code too. If 2FA is off this is completely inert and login stays
+# password-only, so it can NEVER lock out someone who has not enrolled.
+# `magicbridge.py --disable-2fa` from an SSH shell turns it off for both panels
+# (the escape hatch). Algorithm is a verbatim copy of magicbridge.py's RFC-6238
+# code (SHA-1, +/-1 step drift window), which is checked against the RFC vectors.
+_B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+
+def _b32decode(s: str) -> bytes:
+    s = "".join(c for c in s.upper() if c in _B32)
+    bits = "".join(bin(_B32.index(c))[2:].zfill(5) for c in s)
+    return bytes(int(bits[i:i + 8], 2) for i in range(0, len(bits) - 7, 8))
+
+def _totp_at(secret_b32: str, counter: int, digits: int = 6) -> str:
+    key = _b32decode(secret_b32)
+    msg = counter.to_bytes(8, "big")
+    dig = hmac.new(key, msg, hashlib.sha1).digest()
+    off = dig[-1] & 0x0F
+    code = ((dig[off] & 0x7F) << 24 | dig[off + 1] << 16 |
+            dig[off + 2] << 8 | dig[off + 3]) % (10 ** digits)
+    return str(code).zfill(digits)
+
+def _totp_verify(secret_b32: str, code: str, window: int = 1) -> bool:
+    code = "".join(ch for ch in str(code) if ch.isdigit())
+    if not code or not secret_b32:
+        return False
+    counter = int(time.time()) // 30
+    for drift in range(-window, window + 1):
+        if hmac.compare_digest(_totp_at(secret_b32, counter + drift), code):
+            return True
+    return False
+
+def _recovery_hash(code: str) -> str:
+    return hashlib.sha256(code.replace("-", "").upper().encode()).hexdigest()
+
+def _totp_enabled() -> bool:
+    a = _load().get("auth", {})
+    return bool(a.get("totp_enabled")) and bool(a.get("totp_secret"))
+
+def _totp_check(code: str) -> bool:
+    """A live TOTP code, OR a single-use recovery code from the same list the
+    main panel issued (burned atomically via _save)."""
+    cfg = _load()
+    auth = cfg.get("auth", {})
+    if _totp_verify(auth.get("totp_secret", ""), code):
+        return True
+    h = _recovery_hash(code or "")
+    remaining = list(auth.get("totp_recovery", []))
+    if h not in remaining:
+        return False
+    remaining.remove(h)                       # single use - burn it
+    cfg.setdefault("auth", {})["totp_recovery"] = remaining
+    try:
+        _save(cfg)
+        app.logger.warning("stealth 2FA: recovery code used (%d left)", len(remaining))
+    except Exception as e:
+        app.logger.error("stealth 2FA: could not burn recovery code: %s", e)
+    return True
+
 # Password helpers
 # Last-resort bootstrap value only. install.sh (fresh DIY install) and
 # mb-firstboot.sh (flashed image) both write a random per-unit password before
@@ -1299,6 +1362,11 @@ button:focus{outline:2px solid #388bfd;outline-offset:3px}
     <label for="pw">Password</label>
     <input type="password" id="pw" name="pw"
            autocomplete="current-password" aria-required="true" autofocus>
+    {% if totp %}
+    <label for="code">Authenticator code</label>
+    <input type="text" id="code" name="code" inputmode="numeric"
+           autocomplete="one-time-code" placeholder="6-digit code (or recovery code)">
+    {% endif %}
     <button type="submit">Unlock</button>
   </form>
   <p class="hint">Forgot it? See <b>magicbridge-password.txt</b> on the SD card.</p>
@@ -2460,18 +2528,26 @@ def login():
     _purge_old_logs_if_due()
     if request.method == "POST":
         ip = _client_ip()
+        _tf = _totp_enabled()
         if request.form.get("_csrf") != session.get("login_csrf"):
-            return render_template_string(LOGIN_HTML, error="Invalid request.", csrf=_fresh_login_csrf()), 400
+            return render_template_string(LOGIN_HTML, error="Invalid request.", csrf=_fresh_login_csrf(), totp=_tf), 400
         lr = _lock_remaining(ip)
         if lr > 0:
             _al.info(f"Login refused (locked) from {ip}, {int(lr)}s left")
             return render_template_string(LOGIN_HTML,
                 error=f"Too many attempts. Locked for {int(lr)+1}s.",
-                csrf=_fresh_login_csrf()), 429
+                csrf=_fresh_login_csrf(), totp=_tf), 429
         _apply_delay(ip)
         pw     = request.form.get("pw", "")
         stored = cfg.get("auth", {}).get("password_hash", "")
         if _check_pw(pw, stored):
+            # 2FA gate: only when the owner has enabled it (shared main-panel
+            # secret). Inert when off, so it never locks out an un-enrolled user.
+            if _tf and not _totp_check(request.form.get("code", "")):
+                _record_fail(ip)
+                _al.info(f"Failed 2FA from {ip}")
+                return render_template_string(LOGIN_HTML,
+                    error="Incorrect 2FA code.", csrf=_fresh_login_csrf(), totp=_tf), 401
             _record_ok(ip)
             session.clear()
             session["ok"]   = True
@@ -2483,8 +2559,10 @@ def login():
         _record_fail(ip)
         n = _login_fails.get(ip, 0)
         _al.info(f"Failed login from {ip} (attempt {n})")
-        return render_template_string(LOGIN_HTML, error="Incorrect password.", csrf=_fresh_login_csrf()), 401
-    return render_template_string(LOGIN_HTML, error=None, csrf=_fresh_login_csrf())
+        return render_template_string(LOGIN_HTML,
+            error=("Incorrect password or 2FA code." if _tf else "Incorrect password."),
+            csrf=_fresh_login_csrf(), totp=_tf), 401
+    return render_template_string(LOGIN_HTML, error=None, csrf=_fresh_login_csrf(), totp=_totp_enabled())
 
 
 @app.route("/")

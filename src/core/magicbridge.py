@@ -573,10 +573,13 @@ _PLACEHOLDER_SERIAL = "12AB34CD"
 
 # has_serial/extra_iface reflect what real hardware for each identity
 # actually does, verified against real Unifying Receiver USB descriptors:
-# a genuine Logitech Unifying Receiver reports NO serial number at all
-# (iSerial = 0) and exposes 3 USB interfaces (two idle boot interfaces
-# plus one vendor HID++ interface), not just a plain 2-interface
-# keyboard+mouse composite device. Microsoft/Dell equivalents are left
+# a genuine Logitech Unifying Receiver reports no serial number and exposes
+# 3 USB interfaces (two boot interfaces plus one vendor HID++ interface), not
+# just a plain 2-interface keyboard+mouse composite. We match the serial with an
+# EMPTY serial STRING. NOTE: configfs still assigns that empty string a
+# descriptor index, so the device-descriptor iSerialNumber may be an
+# index-to-empty rather than a literal 0 - confirm with `lsusb -v` on the target;
+# forcing a true 0 needs a kernel/f_hid change and is deliberately out of scope. Microsoft/Dell equivalents are left
 # as before (verified descriptor data wasn't available for them), so
 # only the Logitech default/profile is corrected here.
 _DEFAULT_USB_IDENTITY = {
