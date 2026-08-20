@@ -111,9 +111,16 @@ strong{color:#888}
   <h1>Setup complete!</h1>
   <p>
     Connecting to <strong>SSID_PLACEHOLDER</strong>.<br>
-    This setup network will disappear in a few seconds.<br><br>
-    Reconnect to your main WiFi, then open the address<br>
-    shown on the device's small screen.
+    This setup network will disappear in a few seconds.
+  </p>
+  <p>
+    Reconnect to your main WiFi, then open:<br>
+    <strong style="font-size:16px;color:#111">https://HOSTNAME_PLACEHOLDER.local/</strong>
+  </p>
+  <p style="font-size:12px">
+    Write that down now. If it does not open, look for
+    <strong>HOSTNAME_PLACEHOLDER</strong> in your router's device list and use
+    its IP address instead.
   </p>
 </div>
 </main>
@@ -202,7 +209,21 @@ class Handler(BaseHTTPRequestHandler):
         # person using this portal) and was previously substituted into the
         # response page raw - a network named e.g. "<script>...</script>"
         # would have executed in the setup browser. Real, if narrow, XSS.
-        page = SUCCESS_HTML.replace("SSID_PLACEHOLDER", html.escape(ssid))
+        # Tell the owner the ADDRESS here, on their phone, while they are still
+        # holding it. The page used to say "open the address shown on the
+        # device's small screen", which assumes an OLED - a unit built without
+        # one, or whose panel has failed, left the owner with no way at all to
+        # find the device. This costs nothing in stealth: the hostname is
+        # already broadcast by DHCP and mDNS regardless, and it deliberately
+        # reads as an ordinary PC (DESKTOP-XXXXXXX), unlike the "magicbridge"
+        # alias which is disabled in shipped images for exactly that reason.
+        try:
+            import socket as _sock
+            _hn = _sock.gethostname().split(".")[0] or "magicbridge"
+        except Exception:
+            _hn = "magicbridge"
+        page = (SUCCESS_HTML.replace("SSID_PLACEHOLDER", html.escape(ssid))
+                            .replace("HOSTNAME_PLACEHOLDER", html.escape(_hn)))
         self._send(200, page)
         # Signal main thread to stop
         threading.Timer(1.5, _done.set).start()
