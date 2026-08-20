@@ -12,6 +12,17 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.6.0
+
+- New jiggler style, "Human". Instead of a tiny nudge, the pointer makes long,
+  natural moves across the screen: it speeds up and slows down, follows a
+  slightly curved path, and even overshoots a little and corrects, the way a
+  real hand does. It roams around rather than returning to the same spot, and
+  never traces a repeating pattern. Pick it under the Mouse Jiggler settings if
+  you want the movement to look like someone is actually using the mouse.
+- Software-only updates now apply as a quick update instead of a full reinstall,
+  so most updates finish in seconds.
+
 ## 1.5.1
 
 - Tidied the Custom name box: the "Save name" button no longer wraps onto two

@@ -1402,8 +1402,103 @@ JIGGLER_STYLES = {
         "substep_delay":        (0.008, 0.03),
         "pause_after_real_input": 10,
     },
+    # A different MOTION MODEL, not just bigger numbers. Instead of a tiny
+    # round-trip, it makes long strokes across the screen the way a hand does -
+    # curved, ease-in-out speed, a little overshoot - and does NOT return to the
+    # exact same spot, so it never traces a repeating figure. See _wander.
+    "human": {
+        "label":                "Human - long, lifelike movements",
+        "interval":             (25, 70),     # seconds between movement bursts
+        "stroke_px":            (120, 460),   # a long move, most of the time
+        "short_px":             (20, 70),     # a small adjusting nudge, sometimes
+        "short_prob":           0.30,         # chance a given stroke is a small one
+        "max_drift":            340,          # soft radius it wanders inside
+        "substep_delay":        (0.004, 0.014),
+        "pause_after_real_input": 8,
+        "mode":                 "wander",
+    },
 }
 JIGGLER_DEFAULT_STYLE = "moderate"
+
+
+# ---- Human-wander motion (pure, testable) ---------------------------------
+# Kept at module scope, free of any HID/`self` state, so the exact geometry and
+# timing a real target's movement-analysis would see can be simulated and
+# checked offline (see tests/test_jiggler_human.py). Nothing here talks to the
+# mouse; _wander() below turns these steps into relative moves.
+def _wander_pick_dir(drift, max_drift):
+    """A unit direction for the next stroke: random, but once the cursor has
+    drifted far from where it started, blend in a pull back toward the origin so
+    it never runs off to a corner. The blend is gradual and partial, so the
+    pull-back is never a recognisable 'return to start' move - it just biases
+    the otherwise-random wander to stay in a region."""
+    ang = _jrand.uniform(0, 2 * _jmath.pi)
+    rx, ry = _jmath.cos(ang), _jmath.sin(ang)
+    dmag = _jmath.hypot(drift[0], drift[1])
+    soft = float(max_drift) * 0.5
+    if dmag > soft:
+        bias = min(0.9, (dmag - soft) / soft)
+        bx, by = -drift[0] / dmag, -drift[1] / dmag
+        rx, ry = (1 - bias) * rx + bias * bx, (1 - bias) * ry + bias * by
+        n = _jmath.hypot(rx, ry) or 1.0
+        rx, ry = rx / n, ry / n
+    return rx, ry
+
+
+def _wander_smoother(t):
+    """Ease-in-out with zero slope at both ends (Perlin smootherstep). Used as
+    the Bezier parameter so the pointer accelerates then decelerates - the
+    single clearest difference from a bot, which moves at constant velocity."""
+    return t * t * t * (t * (6 * t - 15) + 10)
+
+
+def _gen_human_stroke(L, ux, uy, short, cfg):
+    """Yield (dx, dy, pause_after) integer relative steps for ONE stroke.
+
+    Geometry: a quadratic Bezier bowed off the straight line (so the path is
+    curved), sampled with an eased parameter (so speed ramps up then down), with
+    sub-pixel jitter and, on longer strokes, a Fitts's-law overshoot then a
+    correction back to the exact target. The running sum of the emitted integer
+    deltas lands exactly on the target (net = round(L*u))."""
+    lo, hi = cfg["substep_delay"]
+    tgtx, tgty = ux * L, uy * L
+    px, py = -uy, ux                       # perpendicular, for the bow
+    curve = 0.0 if short else L * _jrand.uniform(0.06, 0.18) * _jrand.choice((-1, 1))
+    cx, cy = tgtx * 0.5 + px * curve, tgty * 0.5 + py * curve
+    n = (max(4, min(14, int(L / 5))) if short else max(6, min(64, int(L / 7))))
+    hes_at = _jrand.randint(1, n - 1) if (not short and n > 2 and _jrand.random() < 0.15) else -1
+
+    pts = [(0.0, 0.0)]
+    for i in range(1, n + 1):
+        te = _wander_smoother(i / n)
+        mt = 1 - te
+        bx = 2 * mt * te * cx + te * te * tgtx
+        by = 2 * mt * te * cy + te * te * tgty
+        if i < n:                          # last point stays exact; jitter the rest
+            bx += _jrand.uniform(-1.0, 1.0)
+            by += _jrand.uniform(-1.0, 1.0)
+        pts.append((bx, by))
+
+    if not short and _jrand.random() < 0.5:            # overshoot + correct
+        o = _jrand.uniform(3, 14)
+        ox, oy = tgtx + ux * o, tgty + uy * o
+        pts.append(((tgtx + ox) * 0.5, (tgty + oy) * 0.5))
+        pts.append((ox, oy))
+        pts.append(((ox + tgtx) * 0.5, (oy + tgty) * 0.5))
+        pts.append((tgtx, tgty))                       # back to exact target
+
+    m = len(pts)
+    prevx = prevy = 0
+    for j in range(1, m):
+        ix, iy = int(round(pts[j][0])), int(round(pts[j][1]))
+        dx, dy = ix - prevx, iy - prevy
+        prevx, prevy = ix, iy
+        t = j / m
+        edge = 1 - _jmath.sin(_jmath.pi * t)           # ~0 mid-stroke, ->1 at ends
+        pause = _jrand.uniform(lo, hi) * (1 + 1.4 * edge)
+        if j == hes_at:
+            pause += _jrand.uniform(0.08, 0.30)         # a hand hesitating
+        yield dx, dy, pause
 
 
 class MouseJiggler:
@@ -1416,6 +1511,13 @@ class MouseJiggler:
         self.enabled = False
         self.style = JIGGLER_DEFAULT_STYLE
         self._task = None
+        # Estimated net displacement from where the cursor started, in px. Used
+        # ONLY by the "human" wander style to keep its long strokes from running
+        # off to a screen corner. It is an estimate (relative mode gives us no
+        # true position), which is fine: near a real edge the OS clamps and our
+        # estimate over-counts outward, so the pull-back only ever errs toward
+        # the centre. Reset whenever the wander style (re)starts.
+        self._drift = [0.0, 0.0]
         # Auto-off deadline: absolute UNIX time to switch the jiggler off, or
         # None for "run until told otherwise". Stored absolute (not "N minutes
         # left") on purpose, so it survives a service restart and a reboot with
@@ -1446,6 +1548,11 @@ class MouseJiggler:
         if style not in JIGGLER_STYLES:
             style = JIGGLER_DEFAULT_STYLE
         self.enabled = bool(enabled)
+        # A (re)configure is a fresh start for the wander drift: forget wherever
+        # a previous run had roamed to, so the human style always begins its
+        # bounded wander from "here" rather than pulling toward a stale origin.
+        if style != self.style or not self.enabled:
+            self._drift = [0.0, 0.0]
         self.style = style
         # "keep" (the default) leaves any existing deadline alone, so a plain
         # style change does not silently cancel a schedule the operator set.
@@ -1611,7 +1718,8 @@ class MouseJiggler:
                 continue  # don't fight an active KVM session
 
             try:
-                await loop.run_in_executor(None, self._jiggle, cfg)
+                mover = self._wander if cfg.get("mode") == "wander" else self._jiggle
+                await loop.run_in_executor(None, mover, cfg)
             except Exception:
                 log.debug("jiggler move failed", exc_info=True)
 
@@ -1651,6 +1759,31 @@ class MouseJiggler:
             rem_y -= sy
             if not last:
                 time.sleep(_jrand.uniform(*cfg["substep_delay"]))
+
+    # ---- Human wander style ----------------------------------------------
+    def _wander(self, cfg):
+        """One burst of the "human" style: one or two long, lifelike strokes,
+        then a rest - the way a person moves the mouse, pauses, maybe moves
+        again, then lets go. Unlike _jiggle it does NOT return to the origin;
+        _wander_pick_dir keeps it roaming a bounded region instead."""
+        for k in range(_jrand.choice((1, 1, 2))):
+            if k:
+                time.sleep(_jrand.uniform(0.15, 0.6))   # brief settle between moves
+            self._one_stroke(cfg)
+        time.sleep(_jrand.uniform(0.3, 1.4))            # hand comes off the mouse
+
+    def _one_stroke(self, cfg):
+        short = _jrand.random() < cfg.get("short_prob", 0.30)
+        L = _jrand.uniform(*(cfg["short_px"] if short else cfg["stroke_px"]))
+        ux, uy = _wander_pick_dir(self._drift, cfg.get("max_drift", 340))
+        for dx, dy, pause in _gen_human_stroke(L, ux, uy, short, cfg):
+            if dx or dy:
+                self._mouse.move(dx, dy)
+            if pause > 0:
+                time.sleep(pause)
+        # Overshoot nets back to the target, so a stroke shifts us by its vector.
+        self._drift[0] += ux * L
+        self._drift[1] += uy * L
 
 
 jiggler = MouseJiggler(mouse)
@@ -4408,9 +4541,19 @@ _UPD_FILE_MAP = {
 # run on the OPERATOR'S laptop and never touch the Pi, so letting one fall
 # through to the "unknown file" branch would force a pointless full reinstall
 # here (mb-rescue.ps1 did exactly that).
-_UPD_IGNORE_PREFIXES = ("docs/", "src/provision/build-image.sh")
+_UPD_IGNORE_PREFIXES = ("docs/", "tests/", "src/provision/build-image.sh")
 _UPD_IGNORE_FILES    = ("README.md", ".gitignore", "LICENSE", "NOTICE", "CLAUDE.md",
-                        "MAGICBRIDGE_HANDBOOK.md")
+                        "MAGICBRIDGE_HANDBOOK.md",
+                        # Release metadata, NOT runtime files: the updater reads
+                        # VERSION/CHANGELOG straight from the git clone (which the
+                        # pull always advances), never from /opt/magicbridge. Until
+                        # these were listed, every release classified as a FULL
+                        # reinstall, because a version bump and a changelog line
+                        # ride along with every single release - so a code-only
+                        # update that should have been a quick incremental instead
+                        # re-ran install.sh. (tests/ above is skipped for the same
+                        # reason: test files are never deployed to the device.)
+                        "VERSION", "CHANGELOG.md")
 
 def _upd_classify(changed):
     """'full' or 'incremental' for a list of repo-relative changed paths.
