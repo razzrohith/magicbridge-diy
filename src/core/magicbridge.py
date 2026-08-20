@@ -3084,12 +3084,13 @@ async def api_tailscale_get(request):
                     # refreshed, and the same thing fired on every page load.
                     # A GET must not change device state; the login URL is
                     # fetched by the explicit POST action:"login" instead.
+                    # Read the URL from the log the POST action:"login" wrote,
+                    # rather than running `tailscale up` again here. Running it
+                    # from a GET killed the login the owner was in the middle of
+                    # completing: every status poll (every few seconds, from any
+                    # open tab) started a fresh `up` and aborted the previous one.
                     try:
-                        rl = subprocess.run(
-                            ["tailscale", "up", "--timeout=2s"],
-                            capture_output=True, text=True, timeout=5
-                        )
-                        out2 = rl.stdout + rl.stderr
+                        out2 = Path("/run/magicbridge/tailscale-login.log").read_text(errors="replace")
                         m2 = _re2.search(r"https://login\.tailscale\.com/\S+", out2)
                         if m2:
                             login_url = m2.group(0).rstrip(".")
@@ -3138,16 +3139,59 @@ async def api_tailscale(request):
                                   "install_cmd": "curl -fsSL https://tailscale.com/install.sh | sh"})
 
     if action == "login":
-        r = subprocess.run(
-            ["tailscale", "up", "--timeout=3s", "--accept-routes"],
-            capture_output=True, text=True, timeout=6
-        )
-        out3 = r.stdout + r.stderr
-        m3 = _re3.search(r"https://login\.tailscale\.com/\S+", out3)
-        login_url = m3.group(0).rstrip(".") if m3 else ""
+        # Start the login and LEAVE IT RUNNING. `tailscale up` prints the URL,
+        # then waits for the person to authenticate in their browser; it is that
+        # waiting process which completes the handshake and makes the node stay
+        # up. The old code ran it with --timeout=3s to scrape the URL and let it
+        # die, so the node registered while the command lived and went offline
+        # the instant it exited - the tailnet showed it connect "for a second".
+        #
+        # start_new_session detaches it from this request's process group, so it
+        # also survives a panel restart while the owner is still on the Tailscale
+        # page. Output goes to a file we can poll for the URL.
+        _ts_log = "/run/magicbridge/tailscale-login.log"
+        try:
+            Path("/run/magicbridge").mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        # Clear any earlier attempt first: a still-running `up` holds the client
+        # lock, which is why a second try reported an error instead of a URL.
+        try:
+            subprocess.run(["pkill", "-f", "tailscale up"], capture_output=True, timeout=5)
+        except Exception:
+            pass
+        try:
+            _lf = open(_ts_log, "w")
+        except Exception:
+            _lf = subprocess.DEVNULL
+        try:
+            subprocess.Popen(["tailscale", "up", "--accept-routes"],
+                             stdout=_lf, stderr=subprocess.STDOUT,
+                             start_new_session=True)
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)})
+
+        # Poll briefly for the URL it prints. This is the ONLY thing we wait for;
+        # the process keeps running afterwards.
+        login_url, out3 = "", ""
+        for _ in range(24):                      # up to ~6s
+            await asyncio.sleep(0.25)
+            try:
+                out3 = Path(_ts_log).read_text(errors="replace")
+            except Exception:
+                out3 = ""
+            m3 = _re3.search(r"https://login\.tailscale\.com/\S+", out3)
+            if m3:
+                login_url = m3.group(0).rstrip(".")
+                break
+            # already authenticated (e.g. a key was used): up exits silently
+            if "Success" in out3:
+                break
         return web.json_response({
-            "ok": True, "login_url": login_url,
-            "out": out3[-300:], "connected": r.returncode == 0
+            "ok": True, "login_url": login_url, "out": out3[-300:],
+            "pending": bool(login_url),
+            "hint": ("Open the link and approve the device. Keep this page open - "
+                     "the device finishes connecting on its own." if login_url else ""),
         })
 
     if action == "up":

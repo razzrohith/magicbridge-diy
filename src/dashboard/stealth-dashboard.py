@@ -2984,10 +2984,26 @@ def api_apply():
             return jsonify({"ok": False, "error": "DuckDNS update failed, check hostname and token"})
 
         elif act == "ts_up":
-            subprocess.Popen(["tailscale","up","--accept-routes"],
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Detached, output kept, and NOT killed. `tailscale up` blocks until
+            # the person authenticates, and that waiting process is what makes
+            # the node stay up - so it must outlive this request. Discarding its
+            # output also meant a node that never came up looked identical to one
+            # that did; the URL/errors now land in a log the panels can read.
+            try:
+                os.makedirs("/run/magicbridge", exist_ok=True)
+                _lf = open("/run/magicbridge/tailscale-login.log", "w")
+            except Exception:
+                _lf = subprocess.DEVNULL
+            try:
+                subprocess.run(["pkill", "-f", "tailscale up"], capture_output=True, timeout=5)
+            except Exception:
+                pass
+            subprocess.Popen(["tailscale", "up", "--accept-routes"],
+                             stdout=_lf, stderr=subprocess.STDOUT,
+                             start_new_session=True)
             _log_sess("Tailscale reconnect triggered")
-            return jsonify({"ok": True})
+            return jsonify({"ok": True, "note": "If a login link is needed it appears "
+                                                "in the Tailscale panel shortly."})
 
         elif act == "ts_funnel_on":
             # Was subprocess.Popen (fire-and-forget) - returned ok:True the
