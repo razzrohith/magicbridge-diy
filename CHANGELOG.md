@@ -12,6 +12,11 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.5.1
+
+- Tidied the Custom name box: the "Save name" button no longer wraps onto two
+  lines, and it sits neatly next to Clear.
+
 ## 1.5.0
 
 - You can now give the device your own name to reach it by. In Settings,

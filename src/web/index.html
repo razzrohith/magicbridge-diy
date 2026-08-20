@@ -957,8 +957,8 @@ body:not(.fs) .fs-hud{display:none!important}
           <input class="sinput wifi-field" type="text" id="mdns-alias" placeholder="e.g. studio  →  studio.local" autocomplete="off" spellcheck="false" maxlength="32">
           <div class="snote" style="margin:6px 0">Lets you open the device by a name you pick, on your own WiFi. Choose something plain, never a name that hints it is a control box. Leave empty for full stealth.</div>
           <div style="display:flex;gap:6px">
-            <button class="sbtn suc" style="flex:1" onclick="mdnsSave()">Save name</button>
-            <button class="sbtn" onclick="mdnsClear()" title="Remove the custom name">Clear</button>
+            <button class="sbtn suc" style="flex:2;min-width:0;white-space:nowrap" onclick="mdnsSave()">Save name</button>
+            <button class="sbtn" style="flex:1;min-width:0;white-space:nowrap" onclick="mdnsClear()" title="Remove the custom name">Clear</button>
           </div>
           <div id="mdns-msg" style="display:none;margin-top:6px;font-size:10px;padding:4px 6px;border-radius:4px"></div>
         </div>
