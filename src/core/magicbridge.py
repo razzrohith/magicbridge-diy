@@ -1906,11 +1906,19 @@ class HidAutoDisconnect:
             if not self._is_bound():
                 continue  # already disconnected
             idle_for = time.time() - _last_real_input[0]
-            if idle_for < self.idle_minutes * 60:
+            # Jitter the unbind point so the plug/unplug cadence never lands on a
+            # round, predictable mark that lines up with usage. Auto-disconnect is
+            # a TRADE-OFF, not a pure stealth win: it removes the always-present
+            # device, but each cycle is a USB arrival/removal the target can log,
+            # and a receiver that repeatedly vanishes is its own anomaly. It is
+            # off by default for that reason; the jitter softens the cadence for
+            # those who do enable it.
+            threshold = self.idle_minutes * 60 + _jrand.uniform(-45, 120)
+            if idle_for < threshold:
                 continue
             try:
                 _usb_w("UDC", "")
-                log.info("hid-autodisconnect: unbound gadget after %dm idle", self.idle_minutes)
+                log.info("hid-autodisconnect: unbound gadget after ~%dm idle", self.idle_minutes)
             except Exception:
                 log.warning("hid-autodisconnect: unbind failed", exc_info=True)
 
@@ -4572,9 +4580,16 @@ def _upd_classify(changed):
     return "incremental"
 
 def _upd_incremental(changed, repo_dir):
-    """Copy just the changed runtime files to their live paths. Returns
-    (copied, services_to_restart, reload_nginx, failed)."""
+    """Copy just the changed runtime files to their live paths, WITH a rollback
+    safety net. Each file is backed up before it is overwritten, and every
+    deployed *.py is byte-compiled afterwards; if any fails to compile the whole
+    set is restored and the update reports failure instead of restarting into a
+    broken backend. A syntax/parse error in a deployed magicbridge.py would
+    otherwise crash-loop the live unit (Restart=always) with a dead UI, leaving
+    SSH/reflash as the only recovery - exactly the physical-access event stealth
+    exists to avoid. Returns (copied, services_to_restart, reload_nginx, failed)."""
     import shutil as _sh
+    import py_compile as _pyc
     copied, restarts, reload_nginx = [], set(), False
     # Files we were supposed to deploy and could not. A missing source used to
     # be skipped SILENTLY: the update then reported success and stamped the
@@ -4582,6 +4597,13 @@ def _upd_incremental(changed, repo_dir):
     # file. That is the same "reports done, isn't" failure the stamp exists to
     # prevent - and the stamp would have hidden it.
     failed = []
+    backups = {}   # dst -> backup path, so a bad deploy can be rolled back
+
+    def _restore_all():
+        for _dst, _bak in backups.items():
+            try: _sh.copyfile(_bak, _dst)
+            except Exception: log.error("update: ROLLBACK of %s failed", _dst)
+
     for f in changed:
         if f in _UPD_FILE_MAP:
             dst, svc = _UPD_FILE_MAP[f]
@@ -4589,6 +4611,10 @@ def _upd_incremental(changed, repo_dir):
             if os.path.isfile(src):
                 try:
                     os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    if os.path.isfile(dst) and dst not in backups:
+                        _bak = dst + ".mbbak"
+                        _sh.copyfile(dst, _bak)
+                        backups[dst] = _bak
                     _sh.copyfile(src, dst)
                     if dst.startswith("/usr/local/bin"):
                         os.chmod(dst, 0o755)
@@ -4607,6 +4633,38 @@ def _upd_incremental(changed, repo_dir):
             if os.path.isdir(s):
                 _sh.copytree(s, _UPD_INSTALL_DIR + "/web/static", dirs_exist_ok=True)
                 if "static/" not in copied: copied.append("static/")
+
+    # A copy failure mid-batch (e.g. SD card full) leaves a partial file live.
+    # Roll the WHOLE set back too, so the incremental deploy is all-or-nothing.
+    if failed:
+        _restore_all()
+        for _bak in backups.values():
+            try: os.remove(_bak)
+            except Exception: pass
+        return [], set(), False, failed
+
+    # Compile-gate every Python file just deployed. If any is broken, roll the
+    # WHOLE set back so the running (healthy) code is never restarted into a
+    # crash-loop, and report it as failed so nothing gets stamped.
+    compile_failed = []
+    for f in copied:
+        dst = _UPD_FILE_MAP.get(f, (None,))[0]
+        if dst and dst.endswith(".py"):
+            try:
+                _pyc.compile(dst, doraise=True)
+            except Exception as e:
+                log.error("update: %s failed to compile after deploy: %s", dst, e)
+                compile_failed.append(f)
+    if compile_failed:
+        _restore_all()
+        for _bak in backups.values():
+            try: os.remove(_bak)
+            except Exception: pass
+        return [], set(), False, [c + " (reverted: would not compile)" for c in compile_failed]
+
+    for _bak in backups.values():          # success -> drop the backups
+        try: os.remove(_bak)
+        except Exception: pass
     return copied, restarts, reload_nginx, failed
 
 
@@ -4756,6 +4814,17 @@ async def api_update(request):
     # Fetch so origin reflects GitHub, see what changed, and size the update.
     # Off-loop: a network fetch/pull would otherwise freeze every client's input.
     await _run_off_loop(["git", "-C", REPO_DIR, "fetch", "--quiet"], capture_output=True, text=True, timeout=25)
+    # Resolve the EXACT target sha ONCE, right after the fetch, and pin everything
+    # (diff, fast-forward, stamp) to it. Previously the diff used origin/BRANCH,
+    # then `git pull` did its own fetch and advanced HEAD - so a commit landing
+    # between the two would leave files from that in-between commit uncopied while
+    # the stamp still claimed the newer HEAD was fully deployed ("up to date" over
+    # a unit missing files). Pinning to _target makes the copied set and the
+    # stamped commit identical by construction.
+    _target = _sp.run(["git", "-C", REPO_DIR, "rev-parse", f"origin/{BRANCH}"],
+                      capture_output=True, text=True, timeout=10).stdout.strip()
+    if not _target:                      # ref not resolvable (never fetched?) -> use the branch name
+        _target = f"origin/{BRANCH}"
     # Diff from what is DEPLOYED, not from HEAD - otherwise an install that died
     # after the pull looks like "Already up to date" and can never be retried.
     _base = _deployed_commit()
@@ -4765,7 +4834,7 @@ async def api_update(request):
     if _deploy_unknown:
         _base = _sp.run(["git", "-C", REPO_DIR, "rev-parse", "HEAD"],
                         capture_output=True, text=True, timeout=10).stdout.strip()
-    _diff = _sp.run(["git", "-C", REPO_DIR, "diff", "--name-only", f"{_base}..origin/{BRANCH}"],
+    _diff = _sp.run(["git", "-C", REPO_DIR, "diff", "--name-only", f"{_base}..{_target}"],
                     capture_output=True, text=True, timeout=10)
     changed = [x for x in _diff.stdout.split("\n") if x.strip()]
     if not changed and not _deploy_unknown:
@@ -4776,8 +4845,9 @@ async def api_update(request):
     mode = (forced if forced in ("full", "incremental")
             else ("full" if _deploy_unknown else _upd_classify(changed)))
 
-    # Pull to latest (the source tree for both paths). Off-loop: ~60s worst case.
-    r = await _run_off_loop(["git", "-C", REPO_DIR, "pull", "--ff-only"], capture_output=True, text=True, timeout=60)
+    # Fast-forward the working tree to the EXACT sha we diffed against (no second
+    # network fetch, so nothing can move under us). Off-loop: local, quick.
+    r = await _run_off_loop(["git", "-C", REPO_DIR, "merge", "--ff-only", _target], capture_output=True, text=True, timeout=60)
     out = (r.stdout + r.stderr).strip()
     if r.returncode != 0:
         return web.json_response({"ok": False, "out": out, "restarted": False})
@@ -4786,9 +4856,15 @@ async def api_update(request):
         # Structural change: run the idempotent installer DETACHED (own transient
         # unit) so it applies deps/config.txt/services/new files and survives the
         # magicbridge restart it triggers. OLED shows progress; log -> update.log.
-        upd_log = "/var/log/magicbridge-update.log"
+        # RAM-only log: /var/log/magicbridge-ram is a tmpfs (install.sh mounts it),
+        # so the update log - which install.sh fills with this unit's LAN IP and
+        # hostname - never persists to the SD card. Matches the session and HDMI
+        # logs. umask 077 keeps it 600; we also purge any stale on-disk log a
+        # previous build wrote to the old rootfs path.
+        upd_log = "/var/log/magicbridge-ram/magicbridge-update.log"
         _full_sh = (
-            "mkdir -p /run/magicbridge; "
+            "umask 077; mkdir -p /run/magicbridge /var/log/magicbridge-ram; "
+            "rm -f /var/log/magicbridge-update.log; "
             "printf '@UPDATING Upgrading' > /run/magicbridge/oled-status; "   # animated on the OLED
             # MB_SELF_UPDATE=1 tells install.sh NOT to rebuild/restart the USB
             # gadget if it's already up (S7): a routine update must not
@@ -4837,10 +4913,10 @@ async def api_update(request):
             "out": out + "\nFAILED to deploy: " + ", ".join(failed) +
                    "\nNothing was stamped; the update still shows as pending. Retry it.",
         })
-    # Copies succeeded -> this commit really is deployed. Stamp it, or the next
-    # status check falls back to HEAD and the "unverified" prompt never clears.
-    _set_deployed(_sp.run(["git", "-C", REPO_DIR, "rev-parse", "HEAD"],
-                          capture_output=True, text=True, timeout=10).stdout.strip())
+    # Copies succeeded AND compiled -> this commit really is deployed. Stamp the
+    # EXACT sha we diffed and fast-forwarded to (not a fresh rev-parse HEAD),
+    # so the stamped commit and the copied file set can never disagree.
+    _set_deployed(_target)
     cmds = []
     if reload_nginx: cmds.append("nginx -t && systemctl reload nginx")
     for svc in ("stealth-dashboard", "mb-oled", "magicbridge"):

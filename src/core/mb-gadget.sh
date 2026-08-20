@@ -33,7 +33,12 @@ SER=""
 EXTRA_IFACE="true"
 MOUSE_MODE="relative"   # relative (boot mouse, stealthiest) | absolute (pointer)
 BCD_USB="0x0200"
-BCD_DEV="0x0100"
+# A real Logitech c52b receiver reports a firmware release (e.g. 12.03), never
+# 1.00 - the bare gadget default. A device claiming Logitech VID/PID with
+# bcdDevice 1.00 is internally inconsistent and marks it as emulated to any host
+# that fingerprints the (VID,PID,bcdDevice) tuple. Config-overridable so a preset
+# can carry the exact release for its identity.
+BCD_DEV="0x1203"
 
 if [[ -f "$CONFIG_FILE" ]]; then
     _py() { python3 -c "
@@ -51,11 +56,16 @@ except: print('$2')
     SER=$(_py serial "")
     EXTRA_IFACE=$(_py extra_iface "true")
     MOUSE_MODE=$(_py mouse_mode "relative")
+    BCD_DEV=$(_py bcdDevice "0x1203")
 fi
 MOUSE_MODE=$(echo "$MOUSE_MODE" | tr '[:upper:]' '[:lower:]')
 # Normalize case (Python may print True/False) so the comparison below
 # works regardless of how the value ended up stored in config.json.
 EXTRA_IFACE=$(echo "$EXTRA_IFACE" | tr '[:upper:]' '[:lower:]')
+# bcdDevice must be a 0xNNNN hex the kernel's integer parser accepts, or writing
+# it aborts the gadget build (dead HID). A preset that ever set a human form like
+# "12.03" would break enumeration; coerce anything invalid back to the default.
+[[ "$BCD_DEV" =~ ^0x[0-9a-fA-F]{4}$ ]] || BCD_DEV="0x1203"
 
 # Load kernel modules
 modprobe libcomposite 2>/dev/null || { echo "mb-gadget: WARNING libcomposite not loaded"; true; }
@@ -121,6 +131,14 @@ printf '%s' "$SER"  > "$GADGET_DIR/strings/0x409/serialnumber"
 # Configuration descriptor
 mkdir -p "$GADGET_DIR/configs/c.1/strings/0x409"
 echo "Config 1" > "$GADGET_DIR/configs/c.1/strings/0x409/configuration"
+# bmAttributes 0xa0 = bus-powered + Remote Wakeup supported. A real keyboard/
+# mouse receiver (incl. 046d:c52b) can wake a sleeping host from input and
+# advertises that here; the gadget default 0x80 (no remote wakeup) is both a
+# descriptor-level mismatch a passive read catches and a behavioural oddity (a
+# real receiver wakes the PC, ours wouldn't). We never actually emit a wakeup
+# signal, so this only aligns the descriptor with a genuine receiver. Written
+# before UDC bind, like MaxPower.
+echo "0xa0"     > "$GADGET_DIR/configs/c.1/bmAttributes" 2>/dev/null || true
 echo "98"       > "$GADGET_DIR/configs/c.1/MaxPower"   # ~98 mA: matches a real
 # Logitech Unifying Receiver's config descriptor. 250 mA was a generic-gadget
 # value the target could read (it already parses this descriptor for VID/PID) -

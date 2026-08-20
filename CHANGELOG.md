@@ -12,6 +12,22 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.7.0
+
+- Stronger privacy on your own network. The device no longer carries its product
+  name in its security certificate or in any network name it publishes, so
+  nothing on your Wi-Fi can tell what it is. Devices already in the field refresh
+  their certificate automatically with this update.
+- The mouse and keyboard it presents to the other computer now match a real
+  wireless receiver even more closely. This takes effect the next time the device
+  restarts, and never interrupts the other computer.
+- The admin page now locks out repeated wrong-password attempts, and its sign-in
+  screen no longer hints at what the device is.
+- Updates are safer. If an update file were ever bad, the device now rolls back
+  on its own instead of going offline, and a software-only update installs in
+  seconds.
+- Housekeeping logs are kept in memory only and never written to the card.
+
 ## 1.6.0
 
 - New jiggler style, "Human". Instead of a tiny nudge, the pointer makes long,

@@ -278,17 +278,32 @@ cp "$SRC_DIR/src/core/oled.py"        "$INSTALL_DIR/core/"   # OLED status panel
 # EDID blob: caps ANY source at 1080p50 (the Pi 4B 2-CSI-lane ceiling), applied
 # at boot by mb-hdmi-init. Without it the TC358743 has no EDID after reboot and
 # the source sends no signal.
+# Give THIS install a unique EDID monitor serial (B6), but PRESERVE an existing
+# per-unit serial across upgrades. A real DELL P2419H never changes its serial;
+# re-randomizing on every full upgrade makes the target log a phantom "new
+# monitor" each time (an anomaly and a weak cross-time correlation signal). So:
+# read any current serial FIRST, deploy the repo blob (to carry an identity
+# change), then stamp the PRESERVED serial back in - minting a fresh one only
+# when the unit had none or still carried the shared baked default 0x00000001.
+_edid_live="$INSTALL_DIR/edid/mb-edid-1080p50.hex"
+PREV_SER=""
+if [[ -f "$_edid_live" ]]; then
+    PREV_SER=$(python3 -c "
+import re,sys
+b=[int(x,16) for x in re.findall(r'[0-9a-fA-F]{2}', open(sys.argv[1]).read())]
+print('0x%08x'%(b[12]|(b[13]<<8)|(b[14]<<16)|(b[15]<<24)) if len(b)>=128 else '')
+" "$_edid_live" 2>/dev/null || true)
+fi
 cp "$SRC_DIR/src/edid/mb-edid-1080p50.hex" "$INSTALL_DIR/edid/"
-# Give THIS install a unique EDID monitor serial right here (B6), so every
-# install path - direct curl|bash AND net-install-via-mb-firstboot - ships a
-# per-unit serial instead of the shared baked 0x00000001. The identity stays a
-# genuine "DELL P2419H"; only bytes 12-15 (+ checksum) change. mb-firstboot-late
-# still re-randomizes on the distributable-image path as a safety net.
-python3 - "$INSTALL_DIR/edid/mb-edid-1080p50.hex" <<'PY' 2>/dev/null || true
+python3 - "$INSTALL_DIR/edid/mb-edid-1080p50.hex" "$PREV_SER" <<'PY' 2>/dev/null || true
 import random, re, sys
-p=sys.argv[1]; b=[int(x,16) for x in re.findall(r'[0-9a-fA-F]{2}', open(p).read())]
+p=sys.argv[1]; prev=(sys.argv[2] if len(sys.argv)>2 else "")
+b=[int(x,16) for x in re.findall(r'[0-9a-fA-F]{2}', open(p).read())]
 if len(b) >= 128:
-    ser=random.randint(0x01000000, 0xfffffffe)
+    try: pv=int(prev,16)
+    except Exception: pv=0
+    keep = bool(pv) and pv != 0x00000001
+    ser = pv if keep else random.randint(0x01000000, 0xfffffffe)
     b[12],b[13],b[14],b[15]=ser&0xFF,(ser>>8)&0xFF,(ser>>16)&0xFF,(ser>>24)&0xFF
     b[127]=(256-(sum(b[0:127])%256))%256
     assert sum(b[0:128])%256==0
@@ -297,7 +312,7 @@ if len(b) >= 128:
             if not blk: continue
             for i in range(0,len(blk),16): f.write(" ".join("%02x"%x for x in blk[i:i+16])+"\n")
             f.write("\n")
-    print("EDID serial personalized -> 0x%08x" % ser)
+    print("EDID serial %s -> 0x%08x" % ("preserved" if keep else "personalized", ser))
 PY
 
 # Web UI
@@ -368,7 +383,7 @@ if [[ ! -f "$CONFIG_DIR/config.json" ]]; then
   },
   "mac_persist":   {},
   "mac_autospoof": true,
-  "mdns_alias":    "magicbridge",
+  "mdns_alias":    "",
   "duckdns":       {}
 }
 CONF
@@ -404,7 +419,12 @@ DEFAULTS = {
     },
     "mac_persist": {},
     "mac_autospoof": True,
-    "mdns_alias": "magicbridge",
+    # Stealth default: NO LAN-visible product name. Publishing "magicbridge.local"
+    # by default is a plain product tell in the router's client list (and units
+    # collide as magicbridge-2.local, leaking fleet size). This backfill only
+    # ADDS the key when missing, so a unit that already set an alias (or a value
+    # the owner chose) keeps it - owners opt IN to a friendly name via the panel.
+    "mdns_alias": "",
     "duckdns": {},
 }
 
@@ -577,23 +597,45 @@ fi
 CERT="$CONFIG_DIR/ssl/cert.pem"
 KEY="$CONFIG_DIR/ssl/key.pem"
 
+# B5 + S1: CN and SAN carry ONLY this unit's hostname, never a hardcoded
+# "magicbridge.local". A branded name anywhere in the cert is a pre-auth TLS
+# beacon: any LAN peer runs `openssl s_client -connect ip:443` (no login) and
+# reads the product name straight out of the SubjectAltName, defeating the whole
+# disguise. The cert is self-signed, so it never gives a browser a green lock
+# regardless of SAN; matching a name buys nothing, while carrying the brand
+# costs the disguise. So: hostname.local + 127.0.0.1 only.
+CN_HOST="$(hostname 2>/dev/null)"; [ -n "$CN_HOST" ] || CN_HOST="localhost"
+_regen_cert=0
 if [[ ! -f "$CERT" ]]; then
+    _regen_cert=1
+elif openssl x509 -in "$CERT" -noout -text 2>/dev/null | grep -qi "magicbridge.local"; then
+    # An older cert on a live unit still carries the branded SAN. Re-issue it so
+    # the fix actually reaches units already in the field. nginx reload below
+    # picks up the new cert; the target is never involved (this is LAN/:443 only).
+    info "Re-issuing TLS cert to drop the branded name from its SAN..."
+    _regen_cert=1
+fi
+if [[ "$_regen_cert" == 1 ]]; then
     info "Generating self-signed TLS certificate..."
-    # B5: CN = this unit's hostname, not a hardcoded "magicbridge.local". A
-    # fleet-wide identical branded CN is a pre-auth TLS beacon that outs every
-    # clone as MagicBridge to any ssl-cert scan. magicbridge.local stays a SAN
-    # so browsing to it still validates. (mb-secret-reset regenerates this
-    # per-unit on first boot of a flashed image; this is the install-time cert.)
-    CN_HOST="$(hostname 2>/dev/null)"; [ -n "$CN_HOST" ] || CN_HOST="localhost"
-    openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
-        -keyout "$KEY" -out "$CERT" \
-        -subj "/CN=${CN_HOST}" \
-        -addext "subjectAltName=DNS:${CN_HOST}.local,DNS:magicbridge.local,IP:127.0.0.1" \
-        2>/dev/null
-    chmod 600 "$KEY"
-    ok "TLS cert generated (10-year, self-signed, CN=${CN_HOST})"
+    # Write to temp files and move into place ONLY if both are non-empty, so a
+    # failed/interrupted openssl can never leave a truncated cert (which would
+    # take nginx :443 down on the next reboot). Never aborts the install; on
+    # failure the existing cert is kept untouched.
+    _ct="${CERT}.new"; _kt="${KEY}.new"
+    if openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+            -keyout "$_kt" -out "$_ct" \
+            -subj "/CN=${CN_HOST}" \
+            -addext "subjectAltName=DNS:${CN_HOST}.local,IP:127.0.0.1" 2>/dev/null \
+            && [[ -s "$_ct" && -s "$_kt" ]]; then
+        chmod 600 "$_kt"
+        mv -f "$_ct" "$CERT"; mv -f "$_kt" "$KEY"
+        ok "TLS cert generated (10-year, self-signed, CN=${CN_HOST}, no brand in SAN)"
+    else
+        rm -f "$_ct" "$_kt" 2>/dev/null || true
+        warn "TLS cert (re)generation failed - keeping the existing certificate"
+    fi
 else
-    ok "TLS cert already exists, skipping"
+    ok "TLS cert already exists and is brand-free, skipping"
 fi
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -841,6 +883,22 @@ if [[ ! -f "$NM_PS" ]] || ! grep -q "wifi.powersave = 2" "$NM_PS" 2>/dev/null; t
     ok "Wi-Fi power-save disabled (latency jitter fix)"
 fi
 
+# ── Pin IPv6 address generation (no EUI-64 MAC leak) ──────────────────────────
+# The box is reachable over IPv6 (nginx listens on [::]:443, firewall opens v6),
+# so its v6 address is a visible surface. If any interface fell back to EUI-64
+# SLAAC, the address would embed the interface MAC (the tell-tale ff:fe in the
+# middle) - exposing the spoofed NIC bytes AND marking the host as a Linux/
+# EUI-64 box rather than a Windows PC (which uses random IIDs). Pin stable-
+# privacy so that never happens. reload only (no restart): takes effect on the
+# next connection/reboot, never drops the live link. Same mechanism as above.
+NM_V6="/etc/NetworkManager/conf.d/ipv6-privacy.conf"
+if [[ ! -f "$NM_V6" ]] || ! grep -q "addr-gen-mode" "$NM_V6" 2>/dev/null; then
+    mkdir -p /etc/NetworkManager/conf.d
+    printf '[connection]\nipv6.addr-gen-mode=stable-privacy\nipv6.ip6-privacy=2\n' > "$NM_V6"
+    systemctl reload NetworkManager 2>/dev/null || true
+    ok "IPv6 address generation pinned to stable-privacy (no EUI-64 MAC leak)"
+fi
+
 # ── Wi-Fi latency dispatcher: enforce power-save OFF live + fq_codel on wlan0 ──
 # The NM drop-in above sets the policy, but a `reload` does not re-apply it to an
 # already-active connection, so the radio can keep parking until the next
@@ -923,7 +981,39 @@ fi
 systemctl unmask avahi-daemon 2>/dev/null || true
 systemctl unmask avahi-daemon.socket 2>/dev/null || true
 systemctl enable avahi-daemon
-systemctl restart avahi-daemon
+
+# Pin the mDNS surface to ADDRESS RECORDS ONLY. The box must advertise just the
+# A record for its Windows-style hostname, never a Linux _workstation._tcp
+# service or an OS/arch HINFO record that contradicts the disguise. avahi has no
+# conf.d, so edit the conf in place - but do it LIVE-SAFE: back up first, and if
+# avahi will not come back up with the new conf, restore the original. This can
+# never abort the install or lose hostname.local resolution on a running unit.
+AVAHI_CONF="/etc/avahi/avahi-daemon.conf"
+if [[ -f "$AVAHI_CONF" ]]; then
+    cp "$AVAHI_CONF" "${AVAHI_CONF}.mb-bak" 2>/dev/null || true
+    python3 - "$AVAHI_CONF" <<'PY' 2>/dev/null || true
+import configparser, sys
+p=sys.argv[1]
+c=configparser.ConfigParser()
+c.read(p)
+if not c.has_section("publish"): c.add_section("publish")
+c["publish"]["publish-workstation"]="no"
+c["publish"]["publish-hinfo"]="no"
+c["publish"]["disable-user-service-publishing"]="yes"
+# MUST keep address publishing on, or hostname.local stops resolving.
+c["publish"]["publish-addresses"]="yes"
+# avahi expects key=value (no spaces around '='); configparser defaults to
+# "key = value", which avahi's own INI parser rejects.
+with open(p,"w") as f: c.write(f, space_around_delimiters=False)
+PY
+fi
+if ! systemctl restart avahi-daemon 2>/dev/null; then
+    warn "avahi failed to start with the hardened conf - restoring the original"
+    [[ -f "${AVAHI_CONF}.mb-bak" ]] && cp "${AVAHI_CONF}.mb-bak" "$AVAHI_CONF" || true
+    systemctl restart avahi-daemon 2>/dev/null || true
+else
+    ok "avahi mDNS surface hardened (address record only, no workstation/HINFO)"
+fi
 ok "Hostname '$HOSTNAME_NEW.local' active (blends in as an ordinary PC)"
 
 # mb-mdns-alias reads "mdns_alias" from config ONCE, at start. On an upgrade the

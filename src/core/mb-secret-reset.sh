@@ -63,10 +63,13 @@ CURHN="$(hostname 2>/dev/null || true)"
 #    validates.
 info "regenerating TLS certificate (CN=$CURHN)"
 mkdir -p /etc/magicbridge/ssl
+# SAN carries ONLY this unit's hostname + loopback. No "magicbridge.local":
+# the cert is self-signed (never a trusted match anyway), so a brand name in it
+# buys nothing and leaks the product to any unauthenticated :443 ssl-cert scan.
 openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
     -keyout /etc/magicbridge/ssl/key.pem -out /etc/magicbridge/ssl/cert.pem \
     -subj "/CN=${CURHN:-localhost}" \
-    -addext "subjectAltName=DNS:${CURHN:-localhost}.local,DNS:magicbridge.local,IP:127.0.0.1" 2>/dev/null || true
+    -addext "subjectAltName=DNS:${CURHN:-localhost}.local,IP:127.0.0.1" 2>/dev/null || true
 chmod 600 /etc/magicbridge/ssl/key.pem 2>/dev/null || true
 [ -s /etc/magicbridge/ssl/cert.pem ] && [ -s /etc/magicbridge/ssl/key.pem ] || fail "TLS cert/key not regenerated"
 
@@ -108,6 +111,7 @@ c["auth"]={"main_password_hash":_mkhash("magicbridge"),"main_secret_key":secrets
            "password_hash":_mkhash("stealthbridge"),"secret_key":secrets.token_hex(32)}
 c.pop("duckdns",None); c.pop("tailscale",None)
 c.pop("mac_persist",None)
+c.pop("mdns_alias",None)   # clone comes up brand-free; install backfill re-adds "" (no LAN name tell)
 if isinstance(c.get("ai"),dict): c["ai"].pop("keys",None)
 if isinstance(c.get("usb"),dict): c["usb"]["serial"]=""   # regenerated from MAC
 json.dump(c,open(p,"w"),indent=2)
@@ -230,7 +234,13 @@ try: c = json.load(open(CFG))
 except Exception: c = {}
 if not c.get("mac_autospoof", True) or c.get("mac_persist"):
     sys.exit(2)                       # opt-out, or already chosen -> leave it
-oui = secrets.choice(OUIS); wifi = rmac(oui); eth = rmac(oui)
+# Two DIFFERENT vendor OUIs for wlan vs eth. A real laptop pairs one vendor's
+# Wi-Fi (e.g. Intel) with a different-vendor wired NIC (e.g. Realtek); giving
+# both interfaces the same OUI is a faint "minted together" tell to anyone who
+# sees both on the LAN.
+oui_w = secrets.choice(OUIS)
+oui_e = secrets.choice([o for o in OUIS if o != oui_w])
+wifi = rmac(oui_w); eth = rmac(oui_e)
 persist = {"wlan0": wifi}
 try:
     for n in sorted(os.listdir("/sys/class/net")):

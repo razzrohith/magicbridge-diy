@@ -184,13 +184,22 @@ def _client_ip() -> str:
     return (request.headers.get("X-Real-IP") or
             request.remote_addr or "").split(",")[0].strip()
 
+_LOGIN_LOCK_THRESHOLD = 8       # consecutive fails before a HARD refusal
+_LOGIN_LOCK_SECONDS   = 300     # 5-minute lockout window (mirrors the main panel)
+_login_lock_until: dict = {}    # ip -> monotonic deadline until which logins are refused
+
+def _lock_remaining(ip: str) -> float:
+    """Seconds until this ip may try again, or 0. This is a TRUE refusal, not a
+    sleep. Flask serves threaded, so a sleep-only throttle just runs N sleeps
+    concurrently and never actually stops a parallel guess run against the panel
+    that controls the whole identity. A monotonic deadline + immediate 429 does."""
+    return max(0.0, _login_lock_until.get(ip, 0.0) - time.monotonic())
+
 def _apply_delay(ip: str):
+    # Small escalating delay for SUB-threshold fails only; past the threshold the
+    # hard lockout (checked at the top of login()) refuses immediately instead.
     n = _login_fails.get(ip, 0)
-    # Escalating delay, then a hard lockout window past the threshold so the
-    # throttle can actually stop a sustained guess run (not just slow it).
-    if n >= 8:
-        time.sleep(30)
-    elif n > 0:
+    if 0 < n < _LOGIN_LOCK_THRESHOLD:
         time.sleep(min(n, 10))
 
 def _record_fail(ip: str):
@@ -200,9 +209,18 @@ def _record_fail(ip: str):
         try: _login_fails.pop(next(iter(_login_fails)))
         except (StopIteration, KeyError): pass
     _login_fails[ip] = _login_fails.get(ip, 0) + 1
+    if _login_fails[ip] >= _LOGIN_LOCK_THRESHOLD:
+        _login_lock_until[ip] = time.monotonic() + _LOGIN_LOCK_SECONDS
+    # Bound the lock dict too (like _login_fails): purge already-expired entries
+    # so a churn of distinct peer IPs can't grow it without limit.
+    if len(_login_lock_until) > 512:
+        _now = time.monotonic()
+        for _k in [k for k, v in _login_lock_until.items() if v <= _now]:
+            _login_lock_until.pop(_k, None)
 
 def _record_ok(ip: str):
     _login_fails.pop(ip, None)
+    _login_lock_until.pop(ip, None)
 
 # Password helpers
 # Last-resort bootstrap value only. install.sh (fresh DIY install) and
@@ -1196,7 +1214,7 @@ LOGIN_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>MagicBridge Stealth</title>
+<title>MagicBridge</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{min-height:100%;background:#0d1117;
@@ -1272,7 +1290,7 @@ button:focus{outline:2px solid #388bfd;outline-offset:3px}
     <h1>MagicBridge</h1>
     <span class="ping" aria-hidden="true" title="System online"></span>
   </div>
-  <p class="sub">Stealth configuration panel</p>
+  <p class="sub">Sign in</p>
   {% if error %}
   <div class="err" role="alert" aria-live="assertive">{{ error }}</div>
   {% endif %}
@@ -2444,6 +2462,12 @@ def login():
         ip = _client_ip()
         if request.form.get("_csrf") != session.get("login_csrf"):
             return render_template_string(LOGIN_HTML, error="Invalid request.", csrf=_fresh_login_csrf()), 400
+        lr = _lock_remaining(ip)
+        if lr > 0:
+            _al.info(f"Login refused (locked) from {ip}, {int(lr)}s left")
+            return render_template_string(LOGIN_HTML,
+                error=f"Too many attempts. Locked for {int(lr)+1}s.",
+                csrf=_fresh_login_csrf()), 429
         _apply_delay(ip)
         pw     = request.form.get("pw", "")
         stored = cfg.get("auth", {}).get("password_hash", "")

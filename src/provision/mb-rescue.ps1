@@ -24,13 +24,26 @@
 param(
   [string]$PiIp    = "192.168.73.1",
   [string]$User    = "raj",
-  [string]$Password= "lol",
+  # REQUIRED for -Fix. Every shipped unit gets a UNIQUE random OS password on
+  # first boot; the old "lol" default only ever worked on the builder's own dev
+  # Pi. Pass the per-unit password from magicbridge-password.txt on the SD card's
+  # boot partition.
+  [string]$Password= "",
   [string]$Report  = "$env:USERPROFILE\Desktop\magicbridge-rescue-report.txt",
   [switch]$Fix
 )
 
 function Say($m){ Write-Host $m }
 Say "MagicBridge rescue - target $PiIp  (report -> $Report)"
+
+if ($Fix -and [string]::IsNullOrEmpty($Password)) {
+  Say "ERROR: -Fix needs -Password. Use the per-unit password from"
+  Say "       magicbridge-password.txt on the SD card's boot partition."
+  Say "Note: if first boot FAILED before setup finished, the account may still be"
+  Say "      locked (no password set) - SSH login will not work at all; in that"
+  Say "      case recover by editing the boot markers on the card directly."
+  exit 1
+}
 
 # --- reachability ----------------------------------------------------------
 if (-not (Test-Connection -ComputerName $PiIp -Count 2 -Quiet -ErrorAction SilentlyContinue)) {
