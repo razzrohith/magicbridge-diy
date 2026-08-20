@@ -12,6 +12,14 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.7.5
+
+- When a new version is available, opening or refreshing the page now shows a
+  small "update available" note in the top-right corner for a few seconds, then
+  it disappears on its own. Tap it to go straight to the update screen. The
+  device checks for this quietly in the background, so it costs nothing while you
+  are watching the screen.
+
 ## 1.7.4
 
 - The jiggler now waits a full 2 minutes of you being idle before it takes back

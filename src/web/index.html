@@ -600,6 +600,19 @@ body:not(.fs) .fs-hud{display:none!important}
   opacity:0;transition:opacity .2s;pointer-events:none;z-index:700;
   white-space:nowrap;max-width:90vw;overflow:hidden;text-overflow:ellipsis;box-shadow:var(--sh)}
 #toast.on{opacity:1}
+/* Top-right "update available" nudge: shows briefly on load then auto-vanishes.
+   Cyan accent so it reads as informational (not an error). Click opens Update. */
+#upd-nudge{position:fixed;top:calc(var(--topH) + 10px);right:14px;z-index:950;
+  max-width:min(300px,86vw);padding:9px 12px;border-radius:9px;cursor:pointer;
+  background:rgba(34,211,238,.14);border:1px solid rgba(34,211,238,.42);color:#8beefc;
+  font-size:12px;line-height:1.35;display:flex;align-items:center;gap:9px;
+  box-shadow:0 10px 28px rgba(0,0,0,.5);
+  opacity:0;transform:translateY(-8px);pointer-events:none;
+  transition:opacity .25s ease,transform .25s ease}
+#upd-nudge.on{opacity:1;transform:translateY(0);pointer-events:auto}
+#upd-nudge .un-ico{font-size:14px;flex-shrink:0}
+#upd-nudge .un-x{margin-left:2px;padding:0 4px;color:#8beefc;opacity:.7;font-size:14px;line-height:1}
+#upd-nudge .un-x:hover{opacity:1}
 
 /* ===== Mobile / narrow-viewport overrides (phones, small tablets) =====
    Nothing above this block changes for desktop. Everything here only
@@ -6088,6 +6101,34 @@ refreshHidAutoDcStatus();
 // bandwidth racing the video stream it was about to display, and popped
 // "Check failed" when it lost that race. The System tab still checks when
 // opened, and the Check for updates button is always there.
+//
+// Instead, on load we read the CHEAP cached hint (action:"hint" does NO git /
+// no network) and, if an update is known, show a small top-right nudge that
+// auto-vanishes after a few seconds. The device refreshes that cache on its own
+// in the background (every couple of hours), so this costs nothing per load.
+let _updNudgeT=null;
+function hideUpdateNudge(){ const el=document.getElementById('upd-nudge'); if(el) el.classList.remove('on'); clearTimeout(_updNudgeT); }
+function showUpdateNudge(v){
+  let el=document.getElementById('upd-nudge');
+  if(!el){ el=document.createElement('div'); el.id='upd-nudge'; el.setAttribute('role','status'); el.setAttribute('aria-live','polite'); document.body.appendChild(el); }
+  el.innerHTML='';
+  const ico=document.createElement('span'); ico.className='un-ico'; ico.textContent='⬆'; el.appendChild(ico);
+  const t=document.createElement('span'); t.textContent='Update available'+(v?(' · v'+v):'')+' — tap to install'; el.appendChild(t);
+  const x=document.createElement('span'); x.className='un-x'; x.textContent='✕';
+  x.setAttribute('role','button'); x.setAttribute('aria-label','Dismiss'); el.appendChild(x);
+  x.onclick=(e)=>{ e.stopPropagation(); hideUpdateNudge(); };
+  el.onclick=()=>{ hideUpdateNudge(); try{ railGo('system','update'); }catch(e){ try{ toggleSidebar(); showTab('system'); }catch(_){} } };
+  el.classList.add('on');
+  clearTimeout(_updNudgeT); _updNudgeT=setTimeout(hideUpdateNudge, 6000);   // vanish after 6s
+}
+(async()=>{ try{
+  const r=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'hint'})});
+  const d=await r.json();
+  if(d && d.ok && d.available && d.new_version && d.new_version!==d.version){
+    showUpdateNudge(d.new_version);
+    const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='rdot warn';
+  }
+}catch(e){} })();
 oledUpdatePreview();
 refreshOledSettings();
 refreshWolSettings();

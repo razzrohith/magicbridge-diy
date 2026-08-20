@@ -4701,6 +4701,58 @@ def _upd_incremental(changed, repo_dir):
     return copied, restarts, reload_nginx, failed
 
 
+# Cached update-available hint. Refreshed by a low-frequency background poller
+# (and by any full status check), and read by the page on load via
+# action:"hint" - a cheap, NO-network lookup. This lets the UI show a brief
+# "update available" nudge without the git-fetch-on-every-load that the front end
+# deliberately avoids (that fetch races the video stream on a congested uplink).
+_UPDATE_HINT = {"available": False, "new_version": "", "version": "", "checked_at": 0.0}
+
+def _refresh_update_hint(do_fetch=True):
+    """Recompute _UPDATE_HINT by comparing the DEPLOYED commit to origin/main.
+    Blocking (subprocess/git) - call from a thread / _call_off_loop. do_fetch
+    pulls origin refs from GitHub first (the only network part); without it, the
+    compare uses whatever the last fetch left (instant, free)."""
+    import subprocess as _s
+    RD, BR = "/opt/magicbridge-repo", "main"
+    try:
+        if not os.path.isdir(os.path.join(RD, ".git")):
+            return
+        if do_fetch:
+            _s.run(["git", "-C", RD, "fetch", "--quiet"], capture_output=True, text=True, timeout=25)
+        remote = _s.run(["git", "-C", RD, "rev-parse", f"origin/{BR}"],
+                        capture_output=True, text=True, timeout=10).stdout.strip()
+        local = _deployed_commit()
+        if not local or _s.run(["git", "-C", RD, "cat-file", "-e", local + "^{commit}"],
+                               capture_output=True, timeout=10).returncode != 0:
+            local = _s.run(["git", "-C", RD, "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=10).stdout.strip()
+        behind = _s.run(["git", "-C", RD, "rev-list", "--count", f"{local}..origin/{BR}"],
+                        capture_output=True, text=True, timeout=10).stdout.strip()
+        try: nb = int(behind or 0)
+        except ValueError: nb = 0
+        avail = bool(local and remote and local != remote and nb > 0)
+        curv = (_read_at_commit(RD, local, "VERSION", _s).strip() or VERSION)
+        newv = (_read_at_commit(RD, f"origin/{BR}", "VERSION", _s).strip() or curv) if avail else curv
+        _UPDATE_HINT.update({"available": avail, "new_version": newv,
+                             "version": curv, "checked_at": time.time()})
+    except Exception:
+        log.debug("update-hint refresh failed", exc_info=True)
+
+
+async def _update_hint_poller():
+    """Low-frequency background update check so the page can nudge on load
+    without a per-load git fetch. First check shortly after boot (so a freshly
+    updated unit knows soon), then every few hours."""
+    await asyncio.sleep(90)                        # let boot/video settle first
+    while True:
+        try:
+            await _call_off_loop(_refresh_update_hint, True)
+        except Exception:
+            log.debug("update-hint poll error", exc_info=True)
+        await asyncio.sleep(2 * 3600)              # every 2 hours
+
+
 async def api_update(request):
     """POST /api/update: pull from GitHub and redeploy.
 
@@ -4726,6 +4778,12 @@ async def api_update(request):
     try: d = await request.json()
     except: pass
     action = d.get("action", "update")
+
+    # Cheap, NO-network hint the page reads on load: the cached update-available
+    # state. Deliberately BEFORE _ensure_clone/any git so it never clones or
+    # fetches - a zero-cost nudge lookup.
+    if action == "hint":
+        return web.json_response({"ok": True, **_UPDATE_HINT})
 
     def _ensure_clone():
         if not os.path.isdir(os.path.join(REPO_DIR, ".git")):
@@ -4825,6 +4883,12 @@ async def api_update(request):
                 # No changelog entry for this release: say so plainly rather than
                 # falling back to commit subjects, which is what we are replacing.
                 notes = ["Maintenance and reliability improvements."]
+        # Refresh the cheap on-load hint cache whenever a full check runs.
+        try:
+            _UPDATE_HINT.update({"available": update_available, "new_version": new_ver,
+                                 "version": cur_ver, "checked_at": time.time()})
+        except Exception:
+            pass
         return {
             "ok": True,
             "version": cur_ver,                  # e.g. "1.1.0"
@@ -5292,6 +5356,7 @@ async def main():
     # Enforces session revocation on sockets that are already open (see the
     # function's docstring for why the per-message check is not enough).
     asyncio.create_task(_revoke_sweeper())
+    asyncio.create_task(_update_hint_poller())   # low-frequency update check for the on-load nudge
 
     _ensure_auth_defaults()
     _ensure_usb_defaults()
