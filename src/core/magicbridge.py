@@ -3035,10 +3035,11 @@ async def api_mdns_settings(request: web.Request) -> web.Response:
         "alias": alias,
         "url": ("https://%s.local/" % alias) if alias else "",
         "stealth": (alias == ""),
-        "note": (("Now reachable at %s.local on your WiFi. It can take a few "
-                  "seconds to appear." % alias) if alias
+        "note": (("Reachable at %s.local from a device on the SAME WiFi as the "
+                  "box (give it a few seconds to appear). Away from home, or over "
+                  "Tailscale, use the device's IP address instead." % alias) if alias
                  else ("Custom name cleared. The device stays reachable at "
-                       "%s.local." % hostname)),
+                       "%s.local on the same WiFi, or by its IP." % hostname)),
         "out": restart_out[-200:],
     })
 

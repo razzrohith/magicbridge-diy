@@ -18,6 +18,13 @@ or understand.
   can carry. On the low-latency mode it uses a little more bandwidth for a
   cleaner picture, which helps most on dark screens.
 
+## 1.7.8
+
+- Made the custom name honest about where it works: the ".local" name only
+  reaches the box from a device on the same WiFi. Away from home or over
+  Tailscale, use the device's IP address. The old message wrongly implied it
+  worked everywhere.
+
 ## 1.7.7
 
 - Shortened the password-change screens on the control page and the admin page

@@ -991,7 +991,7 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="srow" style="margin-bottom:6px"><span class="sk">Reach it at</span><span class="sv" id="mdns-url" style="font-weight:700">-</span></div>
           <label class="wifi-label" for="mdns-alias">Name (letters, numbers, hyphens)</label>
           <input class="sinput wifi-field" type="text" id="mdns-alias" placeholder="e.g. studio  →  studio.local" autocomplete="off" spellcheck="false" maxlength="32">
-          <div class="snote" style="margin:6px 0">A name to open the device by on your WiFi. Keep it plain, nothing that hints at a control box. Leave empty for full stealth.</div>
+          <div class="snote" style="margin:6px 0">A name to open the box by from the same WiFi as it (not over Tailscale, use the IP for that). Keep it plain, nothing that hints at a control box. Leave empty for full stealth.</div>
           <div style="display:flex;gap:6px">
             <button class="sbtn pri" style="flex:2;min-width:0;white-space:nowrap" onclick="mdnsSave()">Save name</button>
             <button class="sbtn" style="flex:1;min-width:0;white-space:nowrap" onclick="mdnsClear()" title="Remove the custom name">Clear</button>
