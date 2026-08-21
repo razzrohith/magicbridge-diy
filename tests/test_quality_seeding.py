@@ -34,11 +34,11 @@ CH = [r"C:\Program Files\Google\Chrome\Application\chrome.exe",
       "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/google-chrome"]
 
 # (quality the device reports, option the dropdown must select)
-# _MJPEG_Q is {20:20, 26:16, 30:12, 34:9, 40:6}, so these are nearest-rung:
-#   10 -> 9  (option 34), because |9-10| = 1 beats |6-10| = 4
-#   25 -> 20 (option 20), the sharpest rung
+# _MJPEG_Q is {16:24, 20:20, 26:16, 30:12, 34:9, 40:6}, so these are nearest-rung:
+#   10 -> 9  (option 34), because |9-10| = 1 beats |12-10| = 2
+#   25 -> 24 (option 16 "Max"), the sharpest rung now (|24-25|=1 beats |20-25|=5)
 CASES = [(12, "30"), (9, "34"), (6, "40"), (16, "26"),
-         (20, "20"), (10, "34"), (25, "20")]
+         (20, "20"), (10, "34"), (25, "16")]
 
 
 def main():

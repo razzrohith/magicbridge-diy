@@ -874,6 +874,7 @@ body:not(.fs) .fs-hud{display:none!important}
           </div>
           <div class="srow" style="margin-top:6px"><span class="sk">Picture quality</span>
             <select class="ssel" id="sel-quality" style="width:auto;margin:0" onchange="applyVideo()">
+              <option value="16">Max - best quality</option>
               <option value="20">Sharp - fast link</option>
               <option value="26">Clear</option>
               <option value="30" selected>Balanced</option>
@@ -3325,7 +3326,7 @@ const _BW_MINQP = {low: 40, bal: 30, sharp: 20};
 // min_qp option value -> the MJPEG --quality it means. MUST match MJPEG_LADDER
 // in magicbridge.py (tests/test_quality_tables_agree.py enforces that). Declared
 // at top level because both applyVideo() and the dropdown seeding need it.
-const _MJPEG_Q = {20:20, 26:16, 30:12, 34:9, 40:6};
+const _MJPEG_Q = {16:24, 20:20, 26:16, 30:12, 34:9, 40:6};
 const _BW_MJPEG = {
   low:   {fps: 10, quality: 10},   // ~7 Mbit/s at 1080p
   bal:   {fps: 20, quality: 12},   // ~16 Mbit/s

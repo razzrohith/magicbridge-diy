@@ -2569,7 +2569,7 @@ _adapt_lock = asyncio.Lock()
 # to MORE bandwidth than it left the factory with, and the adapter could never
 # ease off past 14 to reach the safe value it started on. The middle rung is 12
 # so the panel's default selection matches the factory exactly.
-MJPEG_LADDER = [20, 16, 12, 9, 6]       # sharp -> coarse
+MJPEG_LADDER = [24, 20, 16, 12, 9, 6]   # sharp -> coarse ('Max' rung 24 added)
 
 
 def _adapt_ctx():

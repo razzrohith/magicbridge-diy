@@ -12,6 +12,12 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.7.8
+
+- Added a "Max" picture quality above "Sharp", for the crispest image your link
+  can carry. On the low-latency mode it uses a little more bandwidth for a
+  cleaner picture, which helps most on dark screens.
+
 ## 1.7.7
 
 - Shortened the password-change screens on the control page and the admin page
