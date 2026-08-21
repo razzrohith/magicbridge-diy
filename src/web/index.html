@@ -363,6 +363,25 @@ body:not(.fs) .fs-hud{display:none!important}
 .snote{font-size:10px;color:var(--muted);line-height:1.6;
   padding:7px 9px;background:rgba(255,255,255,.02);border:1px solid var(--border);
   border-radius:var(--r);margin-bottom:8px}
+/* Consumer-style software updater */
+.upd-row{display:flex;align-items:center;gap:12px;margin:6px 0 2px}
+.upd-icon{width:36px;height:36px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;
+  border-radius:50%;font-size:18px;background:rgba(16,185,129,.14);color:var(--green)}
+.upd-icon.avail{background:rgba(34,211,238,.16);color:var(--accent)}
+.upd-icon.err{background:rgba(244,63,94,.14);color:var(--red)}
+.upd-icon.busy{background:rgba(255,255,255,.06);color:var(--muted)}
+.upd-headline{font-size:14px;font-weight:600;color:var(--text)}
+.upd-sub{font-size:12px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.upd-notes{margin:12px 0 2px;padding:11px 13px;background:var(--surf2);
+  border:1px solid var(--border);border-radius:10px}
+.upd-notes-hdr{font-size:10px;font-weight:600;color:var(--muted);margin-bottom:6px;
+  text-transform:uppercase;letter-spacing:.5px}
+.upd-notes ul{margin:0;padding-left:16px;font-size:12px;color:var(--text);line-height:1.65}
+.upd-progress{font-size:12px;color:var(--sub);margin-top:10px;padding:8px 11px;
+  background:var(--surf2);border:1px solid var(--border);border-radius:8px}
+.upd-check{display:block;width:100%;margin-top:10px;background:transparent;border:none;
+  color:var(--accent-l);font-size:12px;cursor:pointer;padding:6px;border-radius:var(--r)}
+.upd-check:hover{background:rgba(255,255,255,.04)}
 
 /* WiFi add/update network: bigger, clearer, easier to hit on touch */
 /* Collapsible section. Native <details>, so it works with no JS and stays
@@ -1242,22 +1261,23 @@ body:not(.fs) .fs-hud{display:none!important}
 
         <div class="sys-cat" data-cat="update">
         <div class="scard">
-          <div class="scard-title"><span class="dot-yel" style="background:var(--accent)"></span>Software Update</div>
-          <div class="snote" style="margin-bottom:8px">Updates from GitHub. Big changes reinstall, about a minute.</div>
-          <div class="srow"><span class="sk">Status</span><span class="sv" id="sys-avail">-</span></div>
-          <div class="srow"><span class="sk">Version</span><span class="sv" id="sys-ver">-</span></div>
-          <!-- Build id is the git hash. Kept for support questions, deliberately
-               small and secondary: the operator's version is v1.2, not a hash. -->
-          <div class="srow"><span class="sk">Build</span><span class="sv" id="sys-build" style="font-family:monospace;font-size:10px;color:var(--muted)">-</span></div>
-          <!-- What's new: short one-line summary of EVERY pending commit, not just
-               the latest. Full-width block so long text never collides with a label. -->
-          <div id="sys-whatsnew" style="display:none;margin:10px 0 4px">
-            <div class="sk" id="sys-whatsnew-hdr" style="margin-bottom:5px">What's new</div>
-            <ul id="sys-whatsnew-list" style="margin:0;padding-left:18px;font-size:11px;color:var(--text);line-height:1.65"></ul>
+          <div class="scard-title"><span class="dot-acc"></span>Software Update</div>
+          <!-- Clean, consumer-style updater: an icon + one-line status + one
+               action. No commit counts, file counts or build hashes on screen. -->
+          <div class="upd-row">
+            <div id="upd-icon" class="upd-icon">↻</div>
+            <div style="flex:1;min-width:0">
+              <div id="upd-headline" class="upd-headline">Checking for updates…</div>
+              <div id="upd-sub" class="upd-sub">MagicBridge</div>
+            </div>
           </div>
-          <div id="sys-update-out" style="display:none;font-size:10px;background:var(--surf2);border:1px solid var(--border);border-radius:4px;padding:6px;margin:6px 0;white-space:pre-wrap;max-height:120px;overflow:auto;font-family:monospace;color:var(--muted)"></div>
-          <button class="sbtn" onclick="sysCheckVer(true)" style="margin-top:6px">↺ Check for updates</button>
-          <button class="sbtn suc" id="sys-update-btn" onclick="sysUpdate()" style="margin-top:4px">⬆ Update now</button>
+          <div id="sys-whatsnew" class="upd-notes" style="display:none">
+            <div class="upd-notes-hdr" id="sys-whatsnew-hdr">What's new</div>
+            <ul id="sys-whatsnew-list"></ul>
+          </div>
+          <div id="sys-update-out" class="upd-progress" style="display:none"></div>
+          <button class="sbtn suc" id="sys-update-btn" onclick="sysUpdate()" style="display:none;margin-top:12px">Update</button>
+          <button class="upd-check" id="upd-check-btn" onclick="sysCheckVer(true)">Check for updates</button>
         </div>
         </div>
 
@@ -4919,64 +4939,56 @@ async function wifiConnect(btn){
 // and pops "Check failed" at someone who never asked for an update check.
 async function sysCheckVer(userInitiated){
   try{
+    const _bh=document.getElementById('upd-headline'), _bi=document.getElementById('upd-icon');
+    if(_bh) _bh.textContent='Checking for updates…';
+    if(_bi){ _bi.textContent='↻'; _bi.className='upd-icon busy'; }
     const r=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'status'})});
     const d=await r.json();
-    const _vEl=document.getElementById('sys-ver');
-    if(_vEl && d.version){
-      _vEl.textContent = (d.update_available && d.new_version && d.new_version!==d.version)
-        ? ('v'+d.version+'  →  v'+d.new_version)
-        : ('v'+d.version);
-    }
-    const _bEl=document.getElementById('sys-build');
-    if(_bEl) _bEl.textContent = d.build_id || '-';
-    // Guarded. The Branch row was removed from this card in 0b8b7d3 (the update
-    // panel now shows release versions, not git detail) but this line kept
-    // dereferencing it, so getElementById returned null and .textContent threw
-    // a TypeError. It sits inside sysCheckVer's try/catch, so the whole check
-    // died silently and the operator just got "Check failed" - with a perfectly
-    // healthy backend and working GitHub connectivity behind it.
-    const _brEl=document.getElementById('sys-branch');
-    if(_brEl && d.branch) _brEl.textContent=d.branch;
-    const avail=document.getElementById('sys-avail');
-    const btn=document.getElementById('sys-update-btn');
+    const icon=document.getElementById('upd-icon');
+    const head=document.getElementById('upd-headline');
+    const sub =document.getElementById('upd-sub');
+    const btn =document.getElementById('sys-update-btn');
+    const ud  =document.getElementById('sys-dot-update');
     if(d.update_available){
-      const n=d.commits_behind||1, quick=(d.mode==='incremental');
-      avail.textContent=(quick?'Quick update':'Full upgrade')+' ('+n+' commit'+(n===1?'':'s')+')';
-      avail.className='sv warn';
-      btn.textContent=quick?('Quick Update ('+(d.changed||0)+' file'+(d.changed===1?'':'s')+')'):'Full Upgrade (reinstall)';
-      btn.classList.add('pulse');
-      btn.disabled=false;
-      btn.dataset.mode=d.mode||'full';
-      const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='rdot warn';
+      if(icon){ icon.textContent='↑'; icon.className='upd-icon avail'; }
+      if(head) head.textContent='Update available';
+      if(sub)  sub.textContent = d.new_version ? ('Version '+d.new_version+' is ready') : 'A new version is ready';
+      if(btn){ btn.textContent='Update'; btn.style.display=''; btn.classList.add('pulse'); btn.disabled=false; btn.dataset.mode=d.mode||'full'; }
+      if(ud) ud.className='rdot warn';
     }else{
-      avail.textContent='Up to date';
-      avail.className='sv ok';
-      btn.textContent='✓ Up to date';       // distinct from the grey "Check" button, and inert
-      btn.classList.remove('pulse');
-      btn.disabled=true;
-      const ud=document.getElementById('sys-dot-update'); if(ud) ud.className='rdot ok';
+      if(icon){ icon.textContent='✓'; icon.className='upd-icon'; }
+      if(head) head.textContent='You’re up to date';
+      if(sub)  sub.textContent = 'MagicBridge v'+(d.version||'');
+      if(btn){ btn.style.display='none'; btn.classList.remove('pulse'); btn.disabled=true; }
+      if(ud) ud.className='rdot ok';
     }
-    // Release notes for the incoming version, written for the operator. These
-    // come from CHANGELOG.md now, not from commit subjects: raw subjects name
-    // files and functions and read as developer noise on a shipped product.
+    // Release notes for the incoming version, from CHANGELOG.md (owner-facing,
+    // not commit subjects). Only shown when there is an update.
     const wn=document.getElementById('sys-whatsnew'), wnl=document.getElementById('sys-whatsnew-list');
     if(wn&&wnl){
       const pend=Array.isArray(d.pending)?d.pending:[];
       if(d.update_available&&pend.length){
         const hdr=document.getElementById('sys-whatsnew-hdr');
-        if(hdr) hdr.textContent = d.new_version ? ("What's new in v"+d.new_version) : "What's new";
-        const items=pend.slice(0,8).map(x=>String(x).trim()).filter(Boolean);
+        if(hdr) hdr.textContent = d.new_version ? ("What’s new in v"+d.new_version) : "What’s new";
+        const items=pend.slice(0,6).map(x=>String(x).trim()).filter(Boolean);
         wnl.innerHTML=items.map(s=>'<li>'+_escHtml(s)+'</li>').join('')
-          +(pend.length>8?'<li>…and '+(pend.length-8)+' more</li>':'');
+          +(pend.length>6?'<li>and more…</li>':'');
         wn.style.display='';
       }else{
         wnl.innerHTML=''; wn.style.display='none';
       }
     }
-    const out=document.getElementById('sys-update-out');
-    if(out){ out.textContent=d.out||''; out.style.display=d.out?'block':'none'; }
+    // sys-update-out is used by sysUpdate() for live progress only; keep the raw
+    // status text out of the resting view.
   }catch(e){
-    if(userInitiated) toast('Check failed');
+    // Clean, non-technical failure state, only when the operator asked.
+    if(userInitiated){
+      const eh=document.getElementById('upd-headline'), ei=document.getElementById('upd-icon');
+      if(eh) eh.textContent='Couldn’t check for updates';
+      if(ei){ ei.textContent='!'; ei.className='upd-icon err'; }
+      const es=document.getElementById('upd-sub'); if(es) es.textContent='Check your connection and try again';
+      toast('Check failed');
+    }
     // Silent otherwise: an automatic check that could not reach GitHub is not an
     // event the operator needs to see, and on a bad link it fires constantly.
   }
@@ -5000,7 +5012,7 @@ async function sysUpdate(){
     // restarts services; skipping it here means a no-op click never touches
     // GitHub's write path or bounces the running services for nothing.
     toast('✓ Already up to date - nothing to pull');
-    if(out){out.textContent='Already up to date ('+(d0.version||'')+')';out.style.display='block';}
+    if(out){out.textContent='Already up to date.';out.style.display='block';}
     return;
   }
 
@@ -5009,7 +5021,7 @@ async function sysUpdate(){
       +(quick?'restart only the changed service':'reinstall + restart everything')
       +'?\nThis briefly disconnects you.'))return;
   toast(quick?'Quick update…':'Full upgrade…',quick?15000:30000);
-  out.textContent='Pulling from GitHub…';out.style.display='block';
+  out.textContent='Downloading and installing…';out.style.display='block';
   try{
     const r=await fetch('/api/update',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'update'})});
     const d=await r.json();

@@ -18,6 +18,13 @@ or understand.
   can carry. On the low-latency mode it uses a little more bandwidth for a
   cleaner picture, which helps most on dark screens.
 
+## 1.8.2
+
+- Cleaned up the Update screen to look like a normal app updater: a simple
+  status ("You're up to date" or "Update available"), the version, what's new,
+  and a single Update button. Removed the technical bits (commit counts, file
+  counts, build IDs) that a customer does not need to see.
+
 ## 1.8.1
 
 - Paste popup refinements: when you press Paste it now stays in the middle and
