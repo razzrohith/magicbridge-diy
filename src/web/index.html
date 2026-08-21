@@ -431,6 +431,8 @@ body:not(.fs) .fs-hud{display:none!important}
 .sys-cat{display:none}
 .sys-cat.active{display:block}
 
+.upd-core{display:flex;align-items:center;gap:9px;font-size:14px;font-weight:600;color:var(--text);padding:4px 0 2px}
+.upd-core .gsd{width:9px;height:9px;border-radius:50%;background:var(--green);flex:0 0 auto}
 /* Hero gauge: circular CPU-temp dial, HUD signature element */
 .gauge-wrap{display:flex;align-items:center;gap:16px;padding:6px 4px 14px;flex-wrap:wrap}
 .gauge-ring-box{position:relative;width:104px;height:104px;flex-shrink:0}
@@ -873,12 +875,9 @@ body:not(.fs) .fs-hud{display:none!important}
       <!-- Stream tab -->
       <div class="tab active" id="panel-stream">
         <div class="scard">
-          <div class="scard-title"><span class="dot-acc"></span>Live</div>
+          <div class="scard-title"><span class="dot-acc"></span>Stream</div>
           <div class="srow"><span class="sk">Status</span><span class="sv" id="s-stream">-</span></div>
-          <div class="srow"><span class="sk">Ping</span><span class="sv ac" id="s-lat">-</span></div>
-          <div class="srow"><span class="sk">Video FPS</span><span class="sv ac" id="s-vfps">-</span></div>
-          <div class="srow"><span class="sk">Temp</span><span class="sv" id="s-temp">-</span></div>
-          <div class="srow"><span class="sk">Uptime</span><span class="sv" id="s-uptime">-</span></div>
+          <div class="srow"><span class="sk">Video</span><span class="sv ac" id="s-vfps">-</span></div>
           <div class="srow" id="s-audio-row" style="display:none"><span class="sk">Audio</span><span class="sv" id="s-audio">-</span></div>
           <button class="sbtn" onclick="takeScreenshot()" style="margin-top:6px">📷 Screenshot</button>
           <button class="sbtn" id="rec-btn" onclick="toggleRecord()" style="margin-top:4px">🔴 Record clip</button>
@@ -1170,28 +1169,8 @@ body:not(.fs) .fs-hud{display:none!important}
 
         <div class="sys-cat active" data-cat="monitoring">
         <div class="scard">
-          <div class="scard-title"><span class="dot-yel"></span>At a Glance</div>
-          <div class="gauge-wrap">
-            <div class="gauge-ring-box">
-              <svg viewBox="0 0 104 104">
-                <circle class="gauge-track" cx="52" cy="52" r="44"/>
-                <circle class="gauge-val" id="gauge-temp-ring" cx="52" cy="52" r="44"
-                  stroke-dasharray="276.5" stroke-dashoffset="276.5"/>
-              </svg>
-              <div class="gauge-center">
-                <div class="gauge-num" id="gauge-temp-num">-</div>
-                <div class="gauge-unit">CPU TEMP</div>
-              </div>
-            </div>
-            <div class="gauge-info">
-              <div class="gauge-label">Core Status</div>
-              <div class="gauge-status" id="gauge-status"><span class="gsd"></span><span id="gauge-status-txt">Reading…</span></div>
-              <div class="stat-tiles" style="margin-top:10px">
-                <div class="stat-tile"><div class="stat-tile-k">Power</div><div class="stat-tile-v" id="gauge-power">-</div></div>
-                <div class="stat-tile"><div class="stat-tile-k">Uptime</div><div class="stat-tile-v" id="gauge-uptime">-</div></div>
-              </div>
-            </div>
-          </div>
+          <div class="scard-title"><span class="dot-yel"></span>System</div>
+          <div class="gauge-status upd-core" id="gauge-status"><span class="gsd"></span><span id="gauge-status-txt">Reading…</span></div>
         </div>
         <div class="scard">
           <div class="scard-title"><span class="dot-yel"></span>Connections</div>
@@ -1199,7 +1178,6 @@ body:not(.fs) .fs-hud{display:none!important}
           <div class="srow"><span class="sk">HID Mouse</span><span class="sv" id="ss-hms">-</span></div>
           <div class="srow"><span class="sk">Video</span><span class="sv" id="ss-dev">-</span></div>
           <div class="srow"><span class="sk">Stream</span><span class="sv" id="ss-str">-</span></div>
-          <div class="srow"><span class="sk">Connected</span><span class="sv" id="ss-cl">0</span></div>
           <div id="ss-viewers"></div>
           <button class="sbtn" onclick="refreshStatus()" style="margin-top:6px">Refresh</button>
         </div>
@@ -1210,14 +1188,9 @@ body:not(.fs) .fs-hud{display:none!important}
             <span class="sv" id="ph-power"><span id="ph-power-text">-</span><span class="ph-warn" id="ph-power-warn" style="display:none" onclick="this.classList.toggle('show')">⚠<span class="ph-tip">Under-voltage detected on the 5V input. This Pi is powered through the GPIO 5V pins from a 5V/3A barrel adapter - a weak adapter or a thin/long cable can't supply enough current under load. Try the original supply on a short, thick cable directly into the wall (not a hub/extension).</span></span></span>
           </div>
           <div class="srow"><span class="sk">Power state</span><span class="sv" id="ph-state">-</span></div>
-          <div class="srow">
-            <span class="sk">CPU temp</span>
-            <span class="sv" id="ph-temp"><span id="ph-temp-text">-</span><span class="ph-warn" id="ph-temp-warn" style="display:none" onclick="this.classList.toggle('show')">⚠<span class="ph-tip">The Pi is thermally throttling right now - CPU clock is being reduced to cool down. Check airflow/case ventilation.</span></span></span>
-          </div>
           <div class="srow"><span class="sk">CPU load</span><span class="sv" id="ph-load">-</span></div>
           <div class="srow"><span class="sk">CPU clock</span><span class="sv" id="ph-clock">-</span></div>
           <div class="srow"><span class="sk">Memory</span><span class="sv" id="ph-mem">-</span></div>
-          <div class="srow"><span class="sk">Uptime</span><span class="sv" id="ph-uptime">-</span></div>
           <div class="srow"><span class="sk">magicbridge</span><span class="tag" id="ph-svc-mb">-</span></div>
           <div class="srow"><span class="sk">stealth-dashboard</span><span class="tag" id="ph-svc-sd">-</span></div>
           <div class="srow"><span class="sk">ustreamer</span><span class="tag" id="ph-svc-us">-</span></div>
@@ -2001,8 +1974,7 @@ function onMsg(d){
   if(d.type==='pong'){
     const _sent = (typeof d.t === 'number' && d.t > 0) ? d.t : _pt;
     const ms=Date.now()-_sent;
-    document.getElementById('sv-lat').textContent=ms+'ms';
-    document.getElementById('s-lat').textContent=ms+' ms';
+    const _lv=document.getElementById('sv-lat'); if(_lv) _lv.textContent=ms+'ms';
     _railSpark(ms);
   }
   if(d.type==='status') applyStatus(d);
@@ -4266,10 +4238,9 @@ async function sessKick(sid){
 }
 
 function applyStatus(d){
-  if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';document.getElementById('sv-temp').textContent=t;document.getElementById('s-temp').textContent=t;
+  if(d.temp_c!=null){const t=d.temp_c.toFixed(1)+'°C';const _st=document.getElementById('sv-temp'); if(_st) _st.textContent=t;
     const ct=document.getElementById('chip-temp'); if(ct){ct.classList.remove('lv-g','lv-a','lv-r');ct.classList.add('lv-'+(d.temp_c>75?'r':d.temp_c>65?'a':'g'));}}
   if(d.uptime){
-    document.getElementById('s-uptime').textContent=d.uptime;
     const uc=document.getElementById('sv-uptime'); if(uc) uc.textContent=d.uptime.trim();
   }
   // Who's connected now: top-bar count chip + the System-tab device list.
@@ -4338,7 +4309,7 @@ function applyStatus(d){
       else{arow.style.display='none';}
     }
   }
-  if(d.clients!=null) document.getElementById('ss-cl').textContent=String(d.clients);
+  if(d.clients!=null){ const _cl=document.getElementById('ss-cl'); if(_cl) _cl.textContent=String(d.clients); }
   if(d.display){
     const g=(id,v)=>{const e=document.getElementById(id); if(e) e.textContent=v||'-';};
     g('disp-name',d.display.name); g('disp-mfr',d.display.mfr);
@@ -4420,27 +4391,17 @@ function applyPowerHealth(d){
   const tempWarn=document.getElementById('ph-temp-warn');
   if(tempWarn) tempWarn.style.display=p.temp_limit_now?'inline-block':'none';
 
-  // HUD gauge (Monitoring category "At a Glance" card)
-  const gNum=document.getElementById('gauge-temp-num');
-  const gRing=document.getElementById('gauge-temp-ring');
+  // Core status rollup (Monitor "System" card). Temp lives in the top bar now,
+  // so this is a plain health verdict, computed from temp + throttle state.
   const gStatTxt=document.getElementById('gauge-status-txt');
   const gStat=document.getElementById('gauge-status');
-  if(gNum && d.temp_c!=null){
-    gNum.textContent=d.temp_c.toFixed(1)+'°';
-    const CIRC=276.5, pct=Math.max(0,Math.min(1,d.temp_c/90));
-    if(gRing) gRing.style.strokeDashoffset=String(CIRC*(1-pct));
-    let hot=(p.throttled_now||p.temp_limit_now)||d.temp_c>=80;
-    let warm=!hot && d.temp_c>=65;
-    const col=hot?'var(--red)':(warm?'var(--yellow)':'var(--cyan)');
-    if(gRing) gRing.style.stroke=col;
+  if(d.temp_c!=null && (gStatTxt||gStat)){
+    const hot=(p.throttled_now||p.temp_limit_now)||d.temp_c>=80;
+    const warm=!hot && d.temp_c>=65;
     if(gStatTxt) gStatTxt.textContent=hot?'Throttling / hot':(warm?'Running warm':'Nominal');
     if(gStat){const dot=gStat.querySelector('.gsd'); const c=hot?'var(--red)':(warm?'var(--yellow)':'var(--green)');
       gStat.style.color=c; if(dot) dot.style.background=c;}
   }
-  const gPow=document.getElementById('gauge-power');
-  if(gPow) gPow.textContent=(d.watts_in!=null&&d.volts_in!=null)?d.volts_in.toFixed(1)+'V · NOM':(_phStateLabel[p.state]||'-');
-  const gUp=document.getElementById('gauge-uptime');
-  if(gUp&&d.uptime) gUp.textContent=d.uptime;
 
   const loadEl=document.getElementById('ph-load');
   if(loadEl) loadEl.textContent=(d.load_pct!=null)?d.load_pct+'% (avg '+d.load1+')':'-';

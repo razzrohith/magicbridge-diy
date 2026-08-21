@@ -12,6 +12,15 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.8.3
+
+- Tidied the readouts so each number shows in one place. Temperature, uptime,
+  and ping now live only in the top bar, where you can always see them, instead
+  of being repeated inside the Stream and Monitor panels. The temperature up top
+  turns amber, then red, if the device runs warm. The Monitor panel keeps the
+  details you cannot see up top: connections, CPU load and clock, memory, input
+  power, and running services.
+
 ## 1.7.8
 
 - Added a "Max" picture quality above "Sharp", for the crispest image your link
