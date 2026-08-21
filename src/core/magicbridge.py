@@ -5202,6 +5202,24 @@ async def main():
     except Exception as e:
         log.warning("could not remove stale WoL cron: %s", e)
 
+    # Anonymity model (MAGICBRIDGE_SYSTEM.md 2): nothing usage/location-
+    # identifying persists on the SD card; logs live only in the RAM tmpfs.
+    # Older builds wrote a few install/provision logs to the card, and the
+    # provisioning one can hold WiFi SSIDs. Best-effort remove any a pre-fix
+    # unit left behind. The services that write these all run before this one
+    # (mb-firstboot/mb-provision are Before=magicbridge.service, and
+    # mb-firstboot-late self-disables after its single run), so this never
+    # races a live writer.
+    for _stale_log in ("/var/log/magicbridge-firstboot.log",
+                       "/var/log/magicbridge-firstboot-late.log",
+                       "/var/log/magicbridge-provision.log"):
+        try:
+            os.remove(_stale_log)
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            log.warning("could not remove stale SD log %s: %s", _stale_log, e)
+
     # Load config
     cfg = {}
     try:

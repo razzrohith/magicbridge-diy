@@ -23,12 +23,14 @@ WIFI_FILE="/etc/magicbridge/.provision-wifi"
 # up on, which is location-identifying, and the anonymity model says nothing
 # usage/location-identifying may persist on the SD card. The tmpfs is mounted
 # via fstab at local-fs.target, long before this service (After=NetworkManager)
-# runs, so it is always available here. Falls back to the card path only if the
-# tmpfs somehow is not mounted, so a diagnostic still exists in that rare case.
+# runs, so it is always available here. If it somehow is not mounted, fall back
+# to /run (another tmpfs, always present), never the SD card, so an SSID can
+# never land on the card even in that rare case; a diagnostic still exists.
 if findmnt -rno TARGET /var/log/magicbridge-ram >/dev/null 2>&1; then
     LOG="/var/log/magicbridge-ram/mb-provision.log"
 else
-    LOG="/var/log/magicbridge-provision.log"
+    mkdir -p /run/magicbridge 2>/dev/null || true
+    LOG="/run/magicbridge/mb-provision.log"
 fi
 # Generic, per-unit setup SSID (B3): the old "MagicBridge-Setup" beaconed the
 # product name over the air (on the real Pi MAC), a branded leak bypassing every
@@ -419,7 +421,9 @@ mb_boot_report() {
       tail -60 "$LOG" 2>/dev/null | sed "s/'[^']*'/'<redacted>'/g"
       echo
       echo "===== last 40 lines: first boot (network names redacted) ====="
-      tail -40 /var/log/magicbridge-firstboot.log 2>/dev/null | sed "s/'[^']*'/'<redacted>'/g"
+      # first-boot log now lives in the RAM tmpfs; fall back to the old SD path
+      # for a unit still on the pre-fix firstboot script.
+      { tail -40 /run/magicbridge/firstboot.log 2>/dev/null || tail -40 /var/log/magicbridge-firstboot.log 2>/dev/null; } | sed "s/'[^']*'/'<redacted>'/g"
     } > "$B/magicbridge-setup-report.txt" 2>/dev/null || true
     sync
 }

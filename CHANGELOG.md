@@ -12,6 +12,13 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.8.5
+
+- Privacy housekeeping: the device's own setup and WiFi-setup logs now stay in
+  memory instead of being saved to the SD card, so nothing about where or how
+  you use it is left on the card. On this update it also clears any such logs an
+  earlier version had written.
+
 ## 1.8.4
 
 - Removed the "Target Computer" panel: the saved MAC address, the "Wake PC"

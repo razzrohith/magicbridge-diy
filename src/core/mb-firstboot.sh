@@ -18,7 +18,10 @@ DONE_FLAG="/etc/magicbridge/.firstboot-done"
 REPO_URL="https://github.com/razzrohith/magicbridge-diy"
 BRANCH="main"
 REPO_DIR="/opt/magicbridge-repo"
-LOG="/var/log/magicbridge-firstboot.log"
+# Log to the RAM tmpfs, never the SD card: the anonymity model keeps install
+# and usage traces off the card. /run is a tmpfs already mounted at this point.
+mkdir -p /run/magicbridge 2>/dev/null || true
+LOG="/run/magicbridge/firstboot.log"
 exec >>"$LOG" 2>&1
 echo "[$(date)] mb-firstboot starting"
 
