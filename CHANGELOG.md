@@ -12,6 +12,13 @@ Versioning, matching how the updater classifies an update:
 Keep the newest release at the top. Each bullet is one line an owner can act on
 or understand.
 
+## 1.8.4
+
+- Removed the "Target Computer" panel: the saved MAC address, the "Wake PC"
+  button, and the wake schedule. It was not part of how this device is used, so
+  it is gone from Settings. If an earlier version had a wake schedule saved, the
+  device clears that leftover timer for you on this update.
+
 ## 1.8.3
 
 - Tidied the readouts so each number shows in one place. Temperature, uptime,

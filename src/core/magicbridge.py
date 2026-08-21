@@ -3062,178 +3062,6 @@ async def api_oled_reset(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "config": dict(OLED_DEFAULTS)})
 
 
-# Wake-on-LAN. Stored under a "wol" key in the same shared CONFIG_PATH,
-# following the identical read/merge/write pattern as OLED_DEFAULTS above.
-# Sending the magic packet needs no saved state on the Pi beyond the MAC -
-# it's a fire-and-forget UDP broadcast, not a persistent connection.
-WOL_DEFAULTS = {
-    "mac": "",
-    "broadcast": "255.255.255.255",
-    "port": 9,
-}
-
-
-def _wol_normalize_mac(raw: str) -> str:
-    """Accepts AA:BB:CC:DD:EE:FF, AA-BB-CC-DD-EE-FF or bare hex; returns
-    colon-separated uppercase form, or raises ValueError if not a MAC."""
-    cleaned = str(raw).strip().replace("-", ":").replace(".", ":")
-    parts = cleaned.split(":") if ":" in cleaned else [cleaned[i:i+2] for i in range(0, len(cleaned), 2)]
-    hexonly = "".join(parts)
-    if len(hexonly) != 12 or any(c not in "0123456789abcdefABCDEF" for c in hexonly):
-        raise ValueError("Not a valid MAC address")
-    hexonly = hexonly.upper()
-    return ":".join(hexonly[i:i+2] for i in range(0, 12, 2))
-
-
-def _wol_send_packet(mac: str, broadcast: str = "255.255.255.255", port: int = 9) -> None:
-    import socket as _socket
-    mac_bytes = bytes.fromhex(mac.replace(":", ""))
-    packet = b"\xff" * 6 + mac_bytes * 16
-    sock = _socket.socket(_socket.AF_INET, _socket.SOCK_DGRAM)
-    try:
-        sock.setsockopt(_socket.SOL_SOCKET, _socket.SO_BROADCAST, 1)
-        sock.sendto(packet, (broadcast, port))
-    finally:
-        sock.close()
-
-
-async def api_wol_settings(request: web.Request) -> web.Response:
-    if request.method == "GET":
-        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
-        wol_cfg = dict(WOL_DEFAULTS)
-        wol_cfg.update(cfg.get("wol", {}))
-        return web.json_response({"ok": True, "config": wol_cfg, "defaults": WOL_DEFAULTS})
-
-    try:
-        d = await request.json()
-    except Exception:
-        return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
-
-    incoming = {}
-    if "mac" in d:
-        raw = str(d.get("mac") or "").strip()
-        if raw == "":
-            incoming["mac"] = ""
-        else:
-            try:
-                incoming["mac"] = _wol_normalize_mac(raw)
-            except ValueError:
-                return web.json_response({"ok": False, "error": "Invalid MAC address format"}, status=400)
-    if "broadcast" in d:
-        # Must be a literal IPv4 address. The MAC beside this is strictly
-        # normalised, but broadcast used to be any 64-char string handed straight
-        # to sock.sendto() - so a HOSTNAME here would make a stealth device
-        # perform a real DNS lookup (against the anonymity model's "no surprise
-        # DNS" rule) and then unicast a magic packet containing the target
-        # machine's real MAC to whatever it resolved to, potentially off-LAN.
-        # WoL is only meaningful on the local broadcast domain, so no hostname
-        # support is needed or wanted.
-        import ipaddress as _ipa
-        _b = str(d.get("broadcast") or WOL_DEFAULTS["broadcast"]).strip()[:64]
-        try:
-            _ipa.IPv4Address(_b)
-        except Exception:
-            return web.json_response(
-                {"ok": False, "error": "Broadcast must be an IPv4 address (e.g. 255.255.255.255)"},
-                status=400)
-        incoming["broadcast"] = _b
-    if "port" in d:
-        try:
-            incoming["port"] = max(1, min(65535, int(d["port"])))
-        except Exception:
-            pass
-
-    try:
-        cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
-        merged = dict(WOL_DEFAULTS)
-        merged.update(cfg.get("wol", {}))
-        merged.update(incoming)
-        cfg["wol"] = merged
-        Path(CONFIG_PATH).parent.mkdir(parents=True, exist_ok=True)
-        _write_config(cfg)
-    except Exception as e:
-        return web.json_response({"ok": False, "error": "Could not save: " + str(e)}, status=500)
-
-    return web.json_response({"ok": True, "config": merged})
-
-
-async def api_wol_wake(request: web.Request) -> web.Response:
-    """POST /api/wol/wake: send the magic packet to the saved MAC."""
-    cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
-    wol_cfg = dict(WOL_DEFAULTS)
-    wol_cfg.update(cfg.get("wol", {}))
-    mac = wol_cfg.get("mac", "")
-    if not mac:
-        return web.json_response({"ok": False, "error": "No MAC address saved yet"}, status=400)
-    try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, _wol_send_packet, mac, wol_cfg.get("broadcast", "255.255.255.255"), wol_cfg.get("port", 9))
-    except Exception as e:
-        return web.json_response({"ok": False, "error": "Could not send packet: " + str(e)}, status=500)
-    return web.json_response({"ok": True, "mac": mac})
-
-
-def _write_wol_cron(schedules) -> None:
-    """Rewrite /etc/cron.d/mb-wol from the saved schedules. Each is
-    {time:'HH:MM', days:'*'|'1-5'|'0,6', enabled}. No schedules -> remove the
-    file. cron.d entries need the user field (root) and each line a newline."""
-    path = "/etc/cron.d/mb-wol"
-    body = ["# MagicBridge scheduled Wake-on-LAN (managed by the web UI)\n",
-            "SHELL=/bin/sh\nPATH=/usr/bin:/bin\n"]
-    n = 0
-    for s in (schedules or []):
-        if not isinstance(s, dict) or not s.get("enabled", True):
-            continue
-        t = str(s.get("time", "")).strip()
-        if ":" not in t:
-            continue
-        try:
-            hh, mm = (int(x) for x in t.split(":", 1))
-            assert 0 <= hh < 24 and 0 <= mm < 60
-        except Exception:
-            continue
-        days = str(s.get("days", "*")).strip() or "*"
-        if any(c not in "0123456789,-*" for c in days):   # cron day field only
-            days = "*"
-        body.append(f"{mm} {hh} * * {days} root /usr/bin/python3 "
-                    f"/opt/magicbridge/core/magicbridge.py --send-wol >/dev/null 2>&1\n")
-        n += 1
-    try:
-        if n == 0:
-            if os.path.exists(path):
-                os.remove(path)
-            return
-        Path(path).write_text("".join(body))
-        os.chmod(path, 0o644)
-    except Exception as e:
-        log.warning("could not write WoL cron: %s", e)
-
-
-async def api_wol_schedule(request: web.Request) -> web.Response:
-    """GET/POST /api/wol/schedule: manage recurring Wake-on-LAN times (cron)."""
-    cfg = json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}
-    wol = cfg.get("wol", {})
-    if request.method == "GET":
-        return web.json_response({"ok": True, "schedules": wol.get("schedules", []),
-                                  "mac": wol.get("mac", "")})
-    try:
-        d = await request.json()
-    except Exception:
-        return web.json_response({"ok": False, "error": "bad json"}, status=400)
-    scheds = d.get("schedules", [])
-    if not isinstance(scheds, list) or len(scheds) > 20:
-        return web.json_response({"ok": False, "error": "invalid schedules"}, status=400)
-    wol["schedules"] = scheds
-    cfg["wol"] = wol
-    try:
-        _write_config(cfg)
-    except Exception as e:
-        return web.json_response({"ok": False, "error": str(e)}, status=500)
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _write_wol_cron, scheds)
-    return web.json_response({"ok": True, "schedules": scheds})
-
-
 # Target keyboard layout. See hid.py's CHAR_MAPS comment for the underlying
 # reason this exists: HID usage codes are physical-position, not character,
 # so the paste/AI-typed-text feature needs to know what layout the TARGET OS
@@ -5309,11 +5137,6 @@ def build_app() -> web.Application:
     app.router.add_get("/api/mdns/settings",   api_mdns_settings)
     app.router.add_post("/api/mdns/settings",  api_mdns_settings)
     app.router.add_post("/api/oled/reset",     api_oled_reset)
-    app.router.add_get("/api/wol/settings",    api_wol_settings)
-    app.router.add_post("/api/wol/settings",   api_wol_settings)
-    app.router.add_post("/api/wol/wake",       api_wol_wake)
-    app.router.add_get("/api/wol/schedule",    api_wol_schedule)
-    app.router.add_post("/api/wol/schedule",   api_wol_schedule)
     app.router.add_get("/api/keyboard/settings",  api_keyboard_settings)
     app.router.add_post("/api/keyboard/settings", api_keyboard_settings)
     app.router.add_post("/api/power",     api_power)
@@ -5366,6 +5189,18 @@ async def main():
 
     _ensure_auth_defaults()
     _ensure_usb_defaults()
+
+    # One-time cleanup for units upgraded from a build that had Wake-on-LAN.
+    # Older releases wrote /etc/cron.d/mb-wol to run `magicbridge.py --send-wol`
+    # on a schedule; that flag is gone now, so a leftover entry would relaunch a
+    # whole server on schedule. Drop the stale file (and its on-disk trace) if
+    # present. Best-effort: never let it hold up startup.
+    try:
+        os.remove("/etc/cron.d/mb-wol")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        log.warning("could not remove stale WoL cron: %s", e)
 
     # Load config
     cfg = {}
@@ -5540,14 +5375,12 @@ if __name__ == "__main__":
             _sys.exit(1)
         _sys.exit(0)
     if "--send-wol" in _sys.argv:
-        # Entry point for the scheduled-WoL cron job: read the saved target MAC
-        # and fire one magic packet, then exit. No server, no event loop.
+        # Wake-on-LAN was removed. A pre-removal install may still have a
+        # /etc/cron.d/mb-wol entry that runs this flag; make it a harmless
+        # self-clean and exit, so it can never fall through to a second server.
         try:
-            _c = (json.loads(Path(CONFIG_PATH).read_text()) if Path(CONFIG_PATH).exists() else {}).get("wol", {})
-            _mac = _wol_normalize_mac(_c.get("mac", ""))
-            _wol_send_packet(_mac, _c.get("broadcast", "255.255.255.255"), int(_c.get("port", 9)))
-            print("scheduled WoL sent to", _mac)
-        except Exception as _e:
-            print("scheduled WoL error:", _e)
+            os.remove("/etc/cron.d/mb-wol")
+        except OSError:
+            pass
         _sys.exit(0)
     asyncio.run(main())
