@@ -18,6 +18,14 @@ or understand.
   can carry. On the low-latency mode it uses a little more bandwidth for a
   cleaner picture, which helps most on dark screens.
 
+## 1.8.0
+
+- Redesigned Paste in fullscreen. Instead of a bar at the bottom, it now opens
+  as a small popup in the middle of the screen with a gentle pop, with Paste,
+  Cancel, and Close. When you press Paste, the popup slides down a bit and
+  shrinks so you can watch the text appear on the other computer, then returns
+  to the middle for the next one.
+
 ## 1.7.9
 
 - Fixed the custom name not resolving on any device. A privacy tightening in an
