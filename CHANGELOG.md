@@ -18,6 +18,13 @@ or understand.
   can carry. On the low-latency mode it uses a little more bandwidth for a
   cleaner picture, which helps most on dark screens.
 
+## 1.7.9
+
+- Fixed the custom name not resolving on any device. A privacy tightening in an
+  earlier version accidentally switched off the exact mechanism the custom name
+  uses to announce itself on your WiFi. It now announces again. If you set a
+  name and it stopped working, update and it comes back.
+
 ## 1.7.8
 
 - Made the custom name honest about where it works: the ".local" name only

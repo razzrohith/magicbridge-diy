@@ -999,7 +999,13 @@ c.read(p)
 if not c.has_section("publish"): c.add_section("publish")
 c["publish"]["publish-workstation"]="no"
 c["publish"]["publish-hinfo"]="no"
-c["publish"]["disable-user-service-publishing"]="yes"
+# MUST be "no": the custom-name feature (mb-mdns-alias) publishes the owner's
+# ".local" name with `avahi-publish -a`, which is a D-Bus ADDRESS registration.
+# disable-user-service-publishing=yes disables user services AND those addresses,
+# so setting it "yes" (as an earlier build did) silently broke the custom name on
+# every device. Explicitly "no" here also un-breaks units that already got the
+# bad value. The stealth win is publish-workstation/hinfo=no above, not this.
+c["publish"]["disable-user-service-publishing"]="no"
 # MUST keep address publishing on, or hostname.local stops resolving.
 c["publish"]["publish-addresses"]="yes"
 # avahi expects key=value (no spaces around '='); configparser defaults to
@@ -1012,7 +1018,7 @@ if ! systemctl restart avahi-daemon 2>/dev/null; then
     [[ -f "${AVAHI_CONF}.mb-bak" ]] && cp "${AVAHI_CONF}.mb-bak" "$AVAHI_CONF" || true
     systemctl restart avahi-daemon 2>/dev/null || true
 else
-    ok "avahi mDNS surface hardened (address record only, no workstation/HINFO)"
+    ok "avahi mDNS surface hardened (no workstation/HINFO records; address publishing kept for the custom name)"
 fi
 ok "Hostname '$HOSTNAME_NEW.local' active (blends in as an ordinary PC)"
 
