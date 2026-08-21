@@ -18,6 +18,14 @@ or understand.
   can carry. On the low-latency mode it uses a little more bandwidth for a
   cleaner picture, which helps most on dark screens.
 
+## 1.8.1
+
+- Paste popup refinements: when you press Paste it now stays in the middle and
+  just shrinks (instead of sliding down), so it is out of your way but still
+  centered. And clicking anywhere on the screen stops the paste right away, so
+  you can interrupt a long paste the moment you want to. Mouse movement alone
+  does not interrupt it, only a click.
+
 ## 1.8.0
 
 - Redesigned Paste in fullscreen. Instead of a bar at the bottom, it now opens

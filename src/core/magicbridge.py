@@ -2134,6 +2134,13 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                             _cx = threading.Event(); _bulk_cancels.append(_cx)
                             loop.run_in_executor(None, lambda tx=text,dl=delay,hu=human,cx=_cx: keyboard.send_text(tx,dl,hu,cancel=cx))
 
+                    elif t == "paste_cancel":
+                        # Operator clicked to interrupt: stop any in-flight typing
+                        # by firing every pending cancel event for this session.
+                        for _cx in list(_bulk_cancels):
+                            _cx.set()
+                        _bulk_cancels.clear()
+
                 except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                     pass
 

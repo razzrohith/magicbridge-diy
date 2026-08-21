@@ -187,7 +187,9 @@ body.fs #topbar,body.fs #botbar,body.fs #sidebar,body.fs #railnav{display:none!i
   transform:translate(-50%,-50%) scale(.86);
   transition:opacity .2s ease, transform .34s cubic-bezier(.34,1.56,.64,1), top .3s ease}
 #fs-bot.vis{transform:translate(-50%,-50%) scale(1)}
-#fs-bot.vis.sending{top:80%;transform:translate(-50%,-50%) scale(.8);opacity:.92}
+/* While pasting: stay CENTERED, just shrink and fade a little so you can see
+   the text landing on the remote behind it. */
+#fs-bot.vis.sending{transform:translate(-50%,-50%) scale(.72);opacity:.88}
 .fh-x{position:absolute;top:8px;right:10px;width:26px;height:26px;border-radius:8px;
   background:transparent;border:none;color:var(--muted);font-size:14px;cursor:pointer;line-height:1}
 .fh-x:hover{background:rgba(255,255,255,.1);color:var(--text)}
@@ -3170,6 +3172,7 @@ function fsPaste(){
   }
 }
 function fsClosePaste(){
+  if(_pasteInFlight) stopPaste();   // Cancel / ✕ during a paste also stops the typing
   _fsbotPinned=false;
   const b=document.getElementById('fs-bot'); if(b){ b.classList.remove('vis'); b.classList.remove('sending'); }
   const i=document.getElementById('fh-input');
@@ -3197,22 +3200,27 @@ async function fhSend(){
   const sv=document.getElementById('fh-speed').value;
   const btn=document.getElementById('fh-send'), selEl=document.getElementById('fh-speed');
   const modal=document.getElementById('fs-bot');
-  _pasteInFlight=true; if(btn)btn.disabled=true; if(selEl)selEl.disabled=true;
-  // Drop the popup down + shrink it so the operator can watch the text land on
-  // the remote screen while it types. Returns to centre when the paste finishes.
+  _pasteInFlight=true; _pasteAbort=false; if(btn)btn.disabled=true; if(selEl)selEl.disabled=true;
+  // Shrink the popup (stays centred) so the operator can see the text land on
+  // the remote behind it. Returns to full size when the paste finishes.
   if(modal) modal.classList.add('sending');
   try{
     toast('Sending…',4000);
     let ok;
     if(sv==='human'){ ok=await humanTypePaste(txt); }
-    else { const spd=parseFloat(sv); ok=send({type:'paste',text:txt,delay:spd}); if(ok) await sleep(txt.length*spd*1000+500); }
-    // Never clear the box on a failed send: that text is the user's, and during
-    // a WiFi blip this used to destroy it while toasting "Sent".
-    if(!ok){ toast('Not connected, text kept'); return; }
-    inp.value=''; toast('Sent ✓');
+    else {
+      const spd=parseFloat(sv);
+      ok=send({type:'paste',text:txt,delay:spd});
+      // Abort-aware wait: a click (stopPaste) breaks out early instead of
+      // blocking here for the full estimated typing time.
+      if(ok){ const total=txt.length*spd*1000+500; let w=0; while(w<total && !_pasteAbort){ await sleep(80); w+=80; } }
+    }
+    if(_pasteAbort){ /* operator stopped it; stopPaste already toasted */ }
+    else if(!ok){ toast('Not connected, text kept'); }   // WiFi blip: keep the user's text
+    else { inp.value=''; toast('Sent ✓'); }
   } finally {
     _pasteInFlight=false; if(btn)btn.disabled=false; if(selEl)selEl.disabled=false;
-    if(modal) modal.classList.remove('sending');   // back to centre, ready for the next paste
+    if(modal) modal.classList.remove('sending');   // back to full size, ready for the next paste
   }
 }
 document.getElementById('fh-input').addEventListener('keydown',e=>{
@@ -3286,9 +3294,11 @@ document.addEventListener('click',e=>{if(!document.getElementById('cwrap').conta
 function combo(codes){const ok=send({type:'combo',codes});_cmOpen=false;document.getElementById('cmenu').classList.remove('on');toast(ok?codes.join('+'):'Not connected');}
 
 // Paste (human-jitter mode)
+let _pasteAbort=false;   // set by stopPaste() when the operator clicks to interrupt
 async function humanTypePaste(txt){
   // Break into chunks to avoid WS flooding; each char gets random delay
   for(const ch of txt){
+    if(_pasteAbort) return false;                 // operator clicked to stop
     // Bail the moment the socket drops instead of silently discarding the
     // rest of the text and still reporting success.
     if(!send({type:'paste',text:ch,delay:0})) return false;
@@ -3303,12 +3313,28 @@ async function humanTypePaste(txt){
 let _pasteInFlight=false;   // guards BOTH paste bars: a second tap during a slow
                             // send used to launch a second concurrent type, so the
                             // remote PC received the text twice, interleaved.
+function stopPaste(){
+  if(!_pasteInFlight) return;
+  _pasteAbort=true;                                // breaks the human loop + the wait
+  try{ send({type:'paste_cancel'}); }catch(e){}    // tells the Pi to stop typing now
+  toast('Paste stopped');
+}
+// A CLICK (mouse or tap), NOT mouse movement, interrupts an in-flight paste.
+// Clicks on the popup's own controls are ignored. Capture phase so it fires
+// promptly; the click otherwise proceeds normally (the user clicked on purpose).
+function _pasteInterrupt(e){
+  if(!_pasteInFlight) return;
+  if(e.target && e.target.closest && e.target.closest('#fs-bot')) return;
+  stopPaste();
+}
+document.addEventListener('mousedown', _pasteInterrupt, true);
+document.addEventListener('touchstart', _pasteInterrupt, true);
 async function sendPaste(){
   if(_pasteInFlight) return;
   const txt=document.getElementById('pinput').value; if(!txt) return;
   const sv=document.getElementById('speedsel').value;
   const btn=document.getElementById('psend'), selEl=document.getElementById('speedsel');
-  _pasteInFlight=true; if(btn)btn.disabled=true; if(selEl)selEl.disabled=true;
+  _pasteInFlight=true; _pasteAbort=false; if(btn)btn.disabled=true; if(selEl)selEl.disabled=true;
   try{
     toast('Sending…',5000);
     let ok;
@@ -3317,10 +3343,11 @@ async function sendPaste(){
     } else {
       const spd=parseFloat(sv);
       ok=send({type:'paste',text:txt,delay:spd});
-      if(ok) await sleep(txt.length*spd*1000+500);
+      if(ok){ const total=txt.length*spd*1000+500; let w=0; while(w<total && !_pasteAbort){ await sleep(80); w+=80; } }
     }
-    if(!ok){ toast('Not connected, text kept'); return; }
-    document.getElementById('pinput').value=''; toast('Sent ✓');
+    if(_pasteAbort){ /* operator stopped it */ }
+    else if(!ok){ toast('Not connected, text kept'); }
+    else { document.getElementById('pinput').value=''; toast('Sent ✓'); }
   } finally {
     _pasteInFlight=false; if(btn)btn.disabled=false; if(selEl)selEl.disabled=false;
   }
